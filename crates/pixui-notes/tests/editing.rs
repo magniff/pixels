@@ -1071,3 +1071,44 @@ fn a_find_does_not_run_off_the_line() {
         "the z on the next line is not a candidate"
     );
 }
+
+// -------------------------------------------------------------- note filter
+
+fn note(body: &str, path: Option<&str>) -> pixui_notes::Note {
+    pixui_notes::Note {
+        path: path.map(std::path::PathBuf::from),
+        buffer: Buffer::from_text(body),
+    }
+}
+
+#[test]
+fn an_empty_filter_keeps_everything() {
+    let n = note("# Title\n\nbody", Some("a.md"));
+    assert!(pixui_notes::note_matches(&n, ""));
+}
+
+#[test]
+fn the_filter_looks_at_the_title_the_filename_and_the_body() {
+    let n = note("# Shopping\n\nmilk and honey", Some("groceries.md"));
+    assert!(pixui_notes::note_matches(&n, "shopping"), "the title");
+    assert!(pixui_notes::note_matches(&n, "groceries"), "the filename");
+    assert!(
+        pixui_notes::note_matches(&n, "honey"),
+        "and the body — what you half-remember is rarely in the title"
+    );
+    assert!(!pixui_notes::note_matches(&n, "bicycle"));
+}
+
+#[test]
+fn the_filter_ignores_case() {
+    let n = note("# Vim Keys\n\nMotions", Some("vim-keys.md"));
+    assert!(pixui_notes::note_matches(&n, "vim"));
+    assert!(pixui_notes::note_matches(&n, "motions"));
+}
+
+#[test]
+fn a_note_with_no_file_still_filters_on_its_text() {
+    let n = note("scratch thoughts", None);
+    assert!(pixui_notes::note_matches(&n, "thoughts"));
+    assert!(!pixui_notes::note_matches(&n, "untitled"));
+}

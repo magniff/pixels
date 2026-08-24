@@ -20,6 +20,9 @@ struct Scene {
     /// Typed one per frame, so vim's pending-key parsing runs for real.
     script: Vec<Press>,
     mouse: Point,
+    /// Click at `mouse` before the script runs, for scenes that need focus
+    /// somewhere first.
+    click_first: bool,
     settle: u32,
     /// Canvas size. Under `Scaling::Adaptive` this is what a resized window
     /// produces, so varying it here shows exactly what resizing does.
@@ -69,6 +72,7 @@ fn main() -> std::io::Result<()> {
             name: "01-editor",
             script: vec![],
             mouse: Point::new(430, 120),
+            click_first: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -76,6 +80,7 @@ fn main() -> std::io::Result<()> {
             name: "02-insert",
             script: [keys("Go"), keys("A new thought, typed in insert mode.")].concat(),
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -83,6 +88,7 @@ fn main() -> std::io::Result<()> {
             name: "03-visual",
             script: keys("jjjvwwwl"),
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -90,6 +96,7 @@ fn main() -> std::io::Result<()> {
             name: "04-command",
             script: keys(":w notes-are-files"),
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -97,6 +104,7 @@ fn main() -> std::io::Result<()> {
             name: "05-open-dialog",
             script: [keys(":e"), keys("\n"), keys("jj")].concat(),
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -104,6 +112,7 @@ fn main() -> std::io::Result<()> {
             name: "06-save-dialog",
             script: [keys(":new"), keys("\n"), keys(":w"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -113,6 +122,7 @@ fn main() -> std::io::Result<()> {
             name: "07-resized",
             script: vec![],
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 40,
             canvas: (1050, 620),
         },
@@ -121,6 +131,16 @@ fn main() -> std::io::Result<()> {
             name: "10-search",
             script: keys("/pixui\n"),
             mouse: Point::new(153, 200),
+            click_first: false,
+            settle: 30,
+            canvas: (768, 470),
+        },
+        // Typing in the sidebar filter narrows the list live.
+        Scene {
+            name: "11-filter",
+            script: keys("export"),
+            mouse: Point::new(80, 44),
+            click_first: true,
             settle: 30,
             canvas: (768, 470),
         },
@@ -129,6 +149,7 @@ fn main() -> std::io::Result<()> {
             name: "09-visual-block",
             script: [keys("11G"), ctrl('v'), keys("jjj"), keys("llllllll")].concat(),
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -137,6 +158,7 @@ fn main() -> std::io::Result<()> {
             name: "08-text-object",
             script: [keys("GA \"quoted words\" here\x1b"), keys("hhhhhhci\"")].concat(),
             mouse: Point::new(-9, -9),
+            click_first: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -159,12 +181,24 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         };
 
+        // Frames 2 and 3 are the optional click; typing starts at 5.
         let total = 5 + scene.script.len() as u32 + scene.settle;
         for f in 0..total {
             input.time = f as f32 / 60.0;
             input.mouse = scene.mouse;
             input.keys.clear();
             input.mods = Mods::default();
+            input.mouse_pressed = false;
+            input.mouse_released = false;
+            if scene.click_first {
+                if f == 2 {
+                    input.mouse_down = true;
+                    input.mouse_pressed = true;
+                } else if f == 3 {
+                    input.mouse_down = false;
+                    input.mouse_released = true;
+                }
+            }
             if f >= 5 {
                 if let Some(press) = scene.script.get((f - 5) as usize) {
                     input.keys.push(press.key);

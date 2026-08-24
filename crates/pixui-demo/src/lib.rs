@@ -139,38 +139,8 @@ pub fn frame(ui: &mut Ui, state: &mut Demo) {
 // ---------------------------------------------------------------------- chrome
 
 fn draw_titlebar(ui: &mut Ui, rect: Rect, state: &Demo) {
-    let th = *ui.theme;
-    ui.canvas
-        .gradient_rect(rect, th.accent.lo, th.accent.face, true);
-    ui.canvas
-        .hline(rect.x, rect.bottom() - 1, rect.w, th.panel_border);
-
-    // A slow pulse across the bar, drawn straight onto the canvas. This is the
-    // escape hatch: widgets do not have to cover every case.
-    let phase = (ui.input.time * 26.0) as i32 % (rect.w + 40);
-    for i in 0..40 {
-        let x = phase - 40 + i;
-        let t = i as f32 / 40.0;
-        if x >= rect.x && x < rect.right() {
-            ui.canvas.vline(
-                x,
-                rect.y,
-                rect.h - 1,
-                th.accent.hi.lerp(th.accent.face, 1.0 - t * t),
-            );
-        }
-    }
-
-    let label = Rect::new(rect.x + 6, rect.y, rect.w - 12, rect.h - 1);
-    ui.draw_text_in_shadow(
-        label,
-        "PIXUI // CONTROL DECK",
-        th.ink,
-        th.accent.hi,
-        Align::Left,
-    );
-    let right = format!("{:>2} FPS", state.fps.round() as i32);
-    ui.draw_text_in_shadow(label, &right, th.ink, th.accent.hi, Align::Right);
+    let fps = format!("{:>3} FPS", state.fps.round() as i32);
+    ui.title_bar(rect, "PIXUI CONTROL DECK", Some(&fps));
 }
 
 fn draw_statusbar(ui: &mut Ui, rect: Rect, state: &Demo) {

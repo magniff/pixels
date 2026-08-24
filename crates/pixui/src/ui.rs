@@ -107,6 +107,9 @@ pub struct UiState {
     anims: HashMap<Id, WidgetAnim>,
     scrolls: HashMap<Id, ScrollState>,
     texts: HashMap<Id, TextState>,
+    /// The text field that last held focus, so an application can tell whether
+    /// typing belongs to a field or to its own key handling.
+    text_focus: Option<Id>,
     focus_order: Vec<Id>,
     frame: u64,
 }
@@ -521,6 +524,24 @@ impl<'a> Ui<'a> {
     pub fn set_scroll_state(&mut self, id: Id, mut scroll: ScrollState) {
         scroll.touched = self.state.frame;
         self.state.scrolls.insert(id, scroll);
+    }
+
+    /// Whether a text field currently owns the keyboard.
+    ///
+    /// Read this *before* dispatching keys to your own handling: an application
+    /// with its own key bindings — a modal editor, a game — has to know when
+    /// the user is typing into a field instead. The answer is carried over from
+    /// the previous frame, which is exact, because focus only ever changes on a
+    /// click or a Tab, and neither of those is a keystroke you would lose.
+    pub fn text_input_active(&self) -> bool {
+        self.state
+            .text_focus
+            .is_some_and(|id| self.state.focus == Some(id))
+    }
+
+    /// Record that a text field holds the keyboard this frame.
+    pub(crate) fn set_text_focus(&mut self, id: Id) {
+        self.state.text_focus = Some(id);
     }
 
     /// Caret state for a text field, or a fresh one if it is new this frame.

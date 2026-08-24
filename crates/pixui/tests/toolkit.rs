@@ -262,6 +262,7 @@ impl Harness {
     }
 
     fn frame<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> R {
+        self.canvas.clear(Color::hex(0x000000));
         let mut ui = Ui::begin(&mut self.canvas, &self.input, &self.theme, &mut self.state);
         let r = f(&mut ui);
         ui.finish();
@@ -1040,4 +1041,97 @@ fn a_cursor_at_the_edge_does_not_write_out_of_bounds() {
             Color::hex(0x111111),
         );
     }
+}
+
+// ---------------------------------------------------------------- text input
+
+#[test]
+fn a_focused_text_field_claims_the_keyboard() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::new();
+
+    assert!(
+        !h.frame(|ui| ui.text_input_active()),
+        "nothing is focused yet"
+    );
+
+    // Click into the field.
+    h.input.mouse = Point::new(20, 7);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+
+    // An application asks this *before* dispatching its own keys.
+    assert!(
+        h.frame(|ui| ui.text_input_active()),
+        "an app with its own bindings has to know the user is typing into a field"
+    );
+}
+
+#[test]
+fn typing_into_a_focused_field_edits_it() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::new();
+
+    h.input.mouse = Point::new(20, 7);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+
+    for c in "hi".chars() {
+        h.input.keys.push(Key::Char(c));
+        h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+    }
+    assert_eq!(text, "hi");
+
+    h.input.keys.push(Key::Backspace);
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+    assert_eq!(text, "h");
+}
+
+#[test]
+fn an_unfocused_field_ignores_keys() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::new();
+    h.input.keys.push(Key::Char('x'));
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+    assert_eq!(
+        text, "",
+        "keys belong to whoever has focus, and nothing does"
+    );
+}
+
+// ----------------------------------------------------------------- title bar
+
+#[test]
+fn a_title_bar_survives_a_title_too_long_for_it() {
+    let mut h = Harness::new();
+    // Must not panic, and must not paint outside the strip.
+    h.frame(|ui| {
+        ui.title_bar(
+            Rect::new(0, 0, 60, 13),
+            "AN EXTREMELY LONG APPLICATION NAME",
+            Some("ALSO-A-LONG-FILE-NAME.MD"),
+        )
+    });
+    assert_eq!(
+        h.canvas.get_px(10, 40),
+        Color::hex(0x000000),
+        "nothing is drawn below the bar"
+    );
+}
+
+#[test]
+fn a_title_bar_without_a_badge_is_fine() {
+    let mut h = Harness::new();
+    h.frame(|ui| ui.title_bar(Rect::new(0, 0, 120, 13), "PIXUI", None));
 }

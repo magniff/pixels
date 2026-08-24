@@ -85,6 +85,8 @@ pub struct Notes {
     pub status: String,
     /// First visible line in the editor.
     pub scroll: usize,
+    /// Live filter for the note list, typed into the sidebar's search box.
+    pub filter: String,
     /// Sidebar width, once the user has dragged it.
     ///
     /// `None` means "follow the canvas", which is the right default and stays
@@ -139,6 +141,7 @@ impl Notes {
             notes_dir,
             status: "j/k MOVE  i INSERT  /  SEARCH  :w SAVE  :e OPEN  :help".into(),
             scroll: 0,
+            filter: String::new(),
             sidebar_w: None,
         }
     }
@@ -331,7 +334,8 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     // Keys go to the editor only when no dialog is up; the dialog takes the
     // keyboard for itself while it is open.
-    if !modal {
+    // A focused text field owns the keyboard; the editor gets what is left.
+    if !modal && !ui.text_input_active() {
         handle_keys(ui, app);
     }
 
@@ -403,28 +407,13 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
 // -------------------------------------------------------------------- chrome
 
 fn draw_titlebar(ui: &mut Ui, rect: Rect, app: &Notes) {
-    let th = *ui.theme;
-    ui.canvas
-        .gradient_rect(rect, th.accent.lo, th.accent.face, true);
-    ui.canvas
-        .hline(rect.x, rect.bottom() - 1, rect.w, th.panel_border);
-
-    let label = Rect::new(rect.x + 6, rect.y, rect.w - 12, rect.h - 1);
-    ui.draw_text_in_shadow(label, "PIXUI NOTES", th.ink, th.accent.hi, Align::Left);
-
     let note = app.note();
-    let name = format!(
+    let badge = format!(
         "{}{}",
         note.filename(),
         if note.buffer.dirty { " *" } else { "" }
     );
-    ui.draw_text_in_shadow(
-        label,
-        &name.to_uppercase(),
-        th.ink,
-        th.accent.hi,
-        Align::Right,
-    );
+    ui.title_bar(rect, "PIXUI NOTES", Some(&badge.to_uppercase()));
 }
 
 fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {
@@ -470,10 +459,43 @@ fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {
 
 // ------------------------------------------------------------------- sidebar
 
+/// Whether a note matches the sidebar filter.
+///
+/// Title, filename and body all count: searching a note vault for a word you
+/// half-remember is the common case, and it is rarely in the title.
+pub fn note_matches(note: &Note, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if note.title().to_lowercase().contains(needle)
+        || note.filename().to_lowercase().contains(needle)
+    {
+        return true;
+    }
+    note.buffer
+        .lines()
+        .iter()
+        .any(|line| line.to_lowercase().contains(needle))
+}
+
 fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     let th = *ui.theme;
     let inner = ui.panel(rect, "NOTES");
-    let (list, footer) = inner.split_bottom(17);
+    let (search, rest) = inner.split_top(17);
+    let (list, footer) = rest.split_bottom(17);
+
+    // ---- filter box --------------------------------------------------
+    // The list below simply reads the current string every frame, so it
+    // updates as you type with nothing to wire up.
+    let mut filter = std::mem::take(&mut app.filter);
+    let field = Rect::new(search.x, search.y, search.w, 15);
+    ui.text_field_hint_at(field, "filter", &mut filter, "SEARCH NOTES");
+    app.filter = filter;
+
+    let needle = app.filter.trim().to_lowercase();
+    let shown: Vec<usize> = (0..app.notes.len())
+        .filter(|&i| note_matches(&app.notes[i], &needle))
+        .collect();
 
     // Fit the preview text to whatever width the sidebar ended up, allowing for
     // the scrollbar gutter and the row's own padding.
@@ -481,7 +503,12 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
 
     let mut select = None;
     ui.scroll_area(list, "notes", |ui| {
-        for (i, note) in app.notes.iter().enumerate() {
+        if shown.is_empty() {
+            ui.label_dim("  NO MATCHES");
+            return;
+        }
+        for &i in &shown {
+            let note = &app.notes[i];
             let selected = i == app.current;
             let preview = markdown::preview(note.buffer.lines(), 2, cols);
             let h = 13 + preview.len() as i32 * 8;
@@ -506,10 +533,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
 
             let ink = if selected { th.accent.ink } else { th.ink };
             let title = Rect::new(row.x + 4, row.y + 1, row.w - 8, 9);
-            // Bold titles, which is what the faux-bold in the font is for.
             let t = note.title();
-            let w = pixui::font::text_width_styled(&t, true).min(title.w);
-            let _ = w;
             pixui::font::draw_text_styled(ui.canvas, title.x, title.y + 1, &t, ink, true);
 
             if note.buffer.dirty {
@@ -545,6 +569,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                 });
                 app.current = app.notes.len() - 1;
                 app.scroll = 0;
+                app.filter.clear();
                 app.status = "NEW NOTE".into();
             }
             let cell = ui.alloc_rest();

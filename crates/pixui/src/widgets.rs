@@ -119,23 +119,25 @@ impl Ui<'_> {
             inner = rest;
             self.canvas
                 .fill_chamfer(strip, th.panel_title, (m.chamfer - 1).max(0));
-            // A dithered fade across the strip keeps a flat fill from looking dead.
-            self.canvas.gradient_rect(
-                strip.inset_xy(1, 1),
-                th.panel_title,
-                th.panel_title.shade(0.18),
-                false,
-            );
+            // A lit top edge rather than a dithered fade. The fade put an
+            // ordered-dither checkerboard directly behind 5x7 letterforms, and
+            // the bright halo under each glyph doubled every stroke; together
+            // they read as mush at this size.
+            let lit = strip.w - m.chamfer * 2;
+            if lit > 0 {
+                self.canvas.hline(
+                    strip.x + m.chamfer,
+                    strip.y,
+                    lit,
+                    th.panel_title.shade(0.28),
+                );
+            }
             self.canvas
                 .hline(strip.x, strip.bottom(), strip.w, th.panel_border);
+
             let text = strip.translate(m.text_pad, 0);
-            self.draw_text_in_shadow(
-                text,
-                title,
-                th.panel_title_ink,
-                th.panel_title.shade(0.30),
-                Align::Left,
-            );
+            let y = text.y + (text.h - font::GLYPH_H) / 2;
+            font::draw_text_styled(self.canvas, text.x, y, title, th.panel_title_ink, true);
         }
         inner.inset(m.pad)
     }
@@ -163,12 +165,28 @@ impl Ui<'_> {
 
     /// A text field at an explicit rect.
     pub fn text_field_at(&mut self, rect: Rect, name: &str, text: &mut String) -> Response {
+        self.text_field_hint_at(rect, name, text, "")
+    }
+
+    /// A text field showing `hint` in place of empty text.
+    pub fn text_field_hint_at(
+        &mut self,
+        rect: Rect,
+        name: &str,
+        text: &mut String,
+        hint: &str,
+    ) -> Response {
         let th = *self.theme;
         let m = th.metrics;
         let id = self.id(name);
 
         let mut resp = self.interact(id, rect);
         self.focusable(id);
+        if resp.focused {
+            // Let the application know typing belongs here, not to its own
+            // key handling.
+            self.set_text_focus(id);
+        }
         if resp.hovered {
             self.request_cursor(Cursor::Text);
         }
@@ -240,6 +258,9 @@ impl Ui<'_> {
 
         self.clipped(inner, |ui| {
             let y = rect.y + (rect.h - font::GLYPH_H) / 2;
+            if text.is_empty() && !resp.focused && !hint.is_empty() {
+                font::draw_text(ui.canvas, inner.x, y, hint, th.ink_light.shade(-0.35));
+            }
             font::draw_text(ui.canvas, inner.x - st.scroll, y, text, th.ink_light);
 
             // A caret that blinks only while focused, and holds solid for a
@@ -261,6 +282,51 @@ impl Ui<'_> {
         self.set_text_state(id, st);
         resp.rect = rect;
         resp
+    }
+
+    // ------------------------------------------------------------ title bar
+
+    /// An application title strip: a small mark, a bold title, and an optional
+    /// recessed badge on the right for a document name or a readout.
+    ///
+    /// Deliberately flat. The obvious treatment — a dithered gradient behind
+    /// the text, with a bright one-pixel halo under each glyph — puts an
+    /// ordered-dither checkerboard directly behind 5x7 letterforms and then
+    /// doubles every stroke. At this size that reads as mush. A solid face with
+    /// a lit top edge gives the same sense of a raised bar and leaves the text
+    /// alone.
+    pub fn title_bar(&mut self, rect: Rect, title: &str, badge: Option<&str>) {
+        let th = *self.theme;
+        self.canvas.fill_rect(rect, th.accent.face);
+        self.canvas.hline(rect.x, rect.y, rect.w, th.accent.hi);
+        self.canvas
+            .hline(rect.x, rect.bottom() - 1, rect.w, th.panel_border);
+
+        let y = rect.y + (rect.h - 1 - font::GLYPH_H) / 2;
+
+        // A small mark, so the strip reads as an application's rather than as
+        // one more panel heading.
+        let mark = Rect::new(rect.x + 5, y + 1, 5, 5);
+        self.canvas.fill_rect(mark, th.ink);
+        self.canvas.fill_rect(mark.inset(1), th.accent.hi);
+
+        // Reserve the badge first, so a long title is clipped rather than
+        // running underneath it.
+        let mut title_right = rect.right() - 6;
+        if let Some(text) = badge {
+            let w = font::advance_width(text) + 10;
+            let chip = Rect::new(rect.right() - w - 3, rect.y + 2, w, rect.h - 5);
+            self.canvas.fill_chamfer(chip, th.accent.lo, 1);
+            let inner = Rect::new(chip.x, rect.y, chip.w - 5, rect.h - 1);
+            self.draw_text_in(inner, text, th.neutral.hi, Align::Right);
+            title_right = chip.x - 4;
+        }
+
+        let title_x = mark.right() + 5;
+        let area = Rect::from_min_max(title_x, rect.y, title_right.max(title_x), rect.bottom());
+        self.clipped(area, |ui| {
+            font::draw_text_styled(ui.canvas, title_x, y, title, th.ink, true);
+        });
     }
 
     // -------------------------------------------------------------- splitters

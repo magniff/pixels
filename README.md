@@ -30,6 +30,8 @@ The whole point of this workspace is the boundary between the two crates.
 | Text entry, caret, modality | yes | — |
 | Drawn mouse pointer | yes | — |
 | Draggable splitters | yes | which pane, and how wide |
+| Title bar, text field, placeholder | yes | the words in them |
+| Knowing a field owns the keyboard | yes | what to do about it |
 | **Dependencies** | `winit`, `softbuffer`, `wgpu` | `pixui` — and nothing else |
 
 That last row is the part you don't have to take on faith. Both apps have
@@ -132,6 +134,7 @@ A markdown editor with a modal (vim-style) editing engine.
 | **Find** | `f F t T` to a character on the line, `;` `,` to repeat |
 | **Search** | `/` and `?`, `n` `N` to repeat, `*` for the word under the cursor |
 | **Zoom** | `Cmd`/`Ctrl` with `+`, `-`, `0` — handled by the toolkit, not the app |
+| **Sidebar** | a live filter box; matches on title, filename *and* body |
 
 Normal mode is *parsed*, not switch-cased, because vim's grammar really is a
 grammar: `[count] operator [count] motion`. Keystrokes accumulate in a pending
@@ -266,6 +269,20 @@ the frame. When the backend owned those passes, the snapshot harnesses had to
 reimplement them — two drivers that could disagree about whether the pointer is
 drawn over the scanlines or under them. Anything driving the lifecycle by hand
 now sets `Input::draw_pointer` and gets the same result.
+
+**Nothing dithered goes behind text.** `gradient_rect` uses ordered dithering,
+which is the right way to fake a gradient out of a small palette — and exactly
+the wrong thing to put behind 5x7 letterforms, because the checkerboard lands
+between the strokes. The same went for the one-pixel bright halo under each
+glyph, which doubles every stroke at this size. Title bars and panel headings
+are now a solid face with a lit top edge, which reads as raised just as well and
+leaves the text alone.
+
+**An app with its own key bindings needs to know when a field has the
+keyboard.** `Ui::text_input_active` answers that, carried over from the previous
+frame — which is exact rather than approximate, because focus only ever moves on
+a click or a Tab, and neither is a keystroke that could be lost in between. The
+note editor consults it before handing anything to vim.
 
 **The pointer is drawn, not borrowed.** The system pointer is rendered by the
 compositor at the display's real resolution, so beside chunky upscaled pixels it
