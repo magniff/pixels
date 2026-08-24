@@ -31,6 +31,7 @@ The whole point of this workspace is the boundary between the two crates.
 | Drawn mouse pointer | yes | — |
 | Draggable splitters | yes | which pane, and how wide |
 | Title bar, text field, placeholder | yes | the words in them |
+| Search field, icons, double-click | yes | what a double-click means |
 | Knowing a field owns the keyboard | yes | what to do about it |
 | **Dependencies** | `winit`, `softbuffer`, `wgpu` | `pixui` — and nothing else |
 
@@ -135,6 +136,7 @@ A markdown editor with a modal (vim-style) editing engine.
 | **Search** | `/` and `?`, `n` `N` to repeat, `*` for the word under the cursor |
 | **Zoom** | `Cmd`/`Ctrl` with `+`, `-`, `0` — handled by the toolkit, not the app |
 | **Sidebar** | a live filter box; matches on title, filename *and* body |
+| **Mouse** | click to place the caret, drag to select, double-click a note to rename |
 
 Normal mode is *parsed*, not switch-cased, because vim's grammar really is a
 grammar: `[count] operator [count] motion`. Keystrokes accumulate in a pending
@@ -277,6 +279,14 @@ between the strokes. The same went for the one-pixel bright halo under each
 glyph, which doubles every stroke at this size. Title bars and panel headings
 are now a solid face with a lit top edge, which reads as raised just as well and
 leaves the text alone.
+
+**A field that appears has to claim focus before its own hit testing.** A
+rename box opened by a double click is expected to take typing immediately.
+Setting focus after drawing it leaves it unfocused for one frame — and that is
+exactly the frame the first keystroke arrives in, so it goes to the application
+instead. In the note editor that meant the first character of a rename landing
+in the document. `text_field_grab_at` claims focus up front, and puts the caret
+after any text already there.
 
 **An app with its own key bindings needs to know when a field has the
 keyboard.** `Ui::text_input_active` answers that, carried over from the previous

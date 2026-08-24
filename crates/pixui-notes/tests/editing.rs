@@ -1112,3 +1112,83 @@ fn a_note_with_no_file_still_filters_on_its_text() {
     assert!(pixui_notes::note_matches(&n, "thoughts"));
     assert!(!pixui_notes::note_matches(&n, "untitled"));
 }
+
+// -------------------------------------------------------------------- rename
+
+/// A vault in its own directory, so the tests cannot tread on each other.
+fn vault(tag: &str) -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from("target/rename-tests").join(tag);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn renaming_a_note_moves_its_file() {
+    let dir = vault("moves");
+    let mut app = pixui_notes::Notes::open(dir.clone());
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "welcome.md")
+        .expect("the vault is seeded");
+
+    app.rename_note(i, "greetings");
+    assert_eq!(app.notes[i].filename(), "greetings.md", ".md is supplied");
+    assert!(
+        dir.join("greetings.md").exists(),
+        "the file moved with the name"
+    );
+    assert!(!dir.join("welcome.md").exists(), "and did not stay behind");
+}
+
+#[test]
+fn renaming_onto_an_existing_note_refuses() {
+    let dir = vault("collides");
+    let mut app = pixui_notes::Notes::open(dir.clone());
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "welcome.md")
+        .unwrap();
+
+    app.rename_note(i, "ideas.md");
+    assert_eq!(
+        app.notes[i].filename(),
+        "welcome.md",
+        "silently replacing a note the user cannot get back is not an option"
+    );
+    assert!(dir.join("welcome.md").exists());
+    assert!(app.status.to_lowercase().contains("exists"));
+}
+
+#[test]
+fn an_empty_name_is_rejected() {
+    let dir = vault("empty");
+    let mut app = pixui_notes::Notes::open(dir);
+    let before = app.notes[0].filename();
+    app.rename_note(0, "   ");
+    assert_eq!(app.notes[0].filename(), before);
+}
+
+#[test]
+fn naming_a_note_that_was_never_saved_writes_it() {
+    let dir = vault("unsaved");
+    let mut app = pixui_notes::Notes::open(dir.clone());
+    app.notes.push(pixui_notes::Note {
+        path: None,
+        buffer: Buffer::from_text("scratch"),
+    });
+    let i = app.notes.len() - 1;
+
+    app.rename_note(i, "scratch");
+    assert!(
+        dir.join("scratch.md").exists(),
+        "there was no file to move, so make one"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("scratch.md")).unwrap(),
+        "scratch"
+    );
+    assert!(!app.notes[i].buffer.dirty, "and it counts as saved");
+}

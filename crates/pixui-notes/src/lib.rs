@@ -53,7 +53,8 @@ pub struct Note {
 }
 
 impl Note {
-    fn title(&self) -> String {
+    /// The note's display name: its first heading, else its file stem.
+    pub fn title(&self) -> String {
         let derived = markdown::derive_title(self.buffer.lines());
         if derived == "UNTITLED" {
             if let Some(p) = &self.path {
@@ -67,7 +68,8 @@ impl Note {
         derived.to_uppercase()
     }
 
-    fn filename(&self) -> String {
+    /// The file this note lives in, or a placeholder if it has never been saved.
+    pub fn filename(&self) -> String {
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
@@ -87,6 +89,12 @@ pub struct Notes {
     pub scroll: usize,
     /// Live filter for the note list, typed into the sidebar's search box.
     pub filter: String,
+    /// Where a pointer drag in the editor started, while it is in progress.
+    pub drag_anchor: Option<text::Cursor>,
+    /// A note being renamed in place: which one, and the name so far.
+    pub renaming: Option<(usize, String)>,
+    /// Set on the frame a rename begins, to move focus into its field.
+    focus_rename: bool,
     /// Sidebar width, once the user has dragged it.
     ///
     /// `None` means "follow the canvas", which is the right default and stays
@@ -142,6 +150,9 @@ impl Notes {
             status: "j/k MOVE  i INSERT  /  SEARCH  :w SAVE  :e OPEN  :help".into(),
             scroll: 0,
             filter: String::new(),
+            drag_anchor: None,
+            renaming: None,
+            focus_rename: false,
             sidebar_w: None,
         }
     }
@@ -252,7 +263,8 @@ impl Notes {
             "help" => {
                 self.status = "MOTIONS hjkl w b e 0 $ gg G f t ; , | EDIT i a o x dd cw \
                      yy p u C-r | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then \
-                     d y c o, I A on a block | FIND / ? n N * | :w :e :q :qa"
+                     d y c o | FIND / ? n N * | MOUSE click to place, drag to select, \
+                     double-click a note to rename | :w :e :q :qa"
                     .into();
             }
             "" => {}
@@ -276,6 +288,52 @@ impl Notes {
         self.current = self.current.min(self.notes.len() - 1);
         self.scroll = 0;
         self.status = "CLOSED".into();
+    }
+
+    /// Rename a note, moving the file with it.
+    ///
+    /// A note that has never been saved has no file to move, so it simply
+    /// adopts the name and gets written; that is what the user meant.
+    pub fn rename_note(&mut self, index: usize, name: &str) {
+        let mut name = name.trim().to_string();
+        if name.is_empty() {
+            self.status = "NAME REQUIRED".into();
+            return;
+        }
+        if !name.contains('.') {
+            name.push_str(".md");
+        }
+        let dest = self.notes_dir.join(&name);
+        let current = self.notes[index].path.clone();
+        if current.as_deref() == Some(dest.as_path()) {
+            return;
+        }
+        // Refuse to rename onto something that is already there rather than
+        // silently replacing a note the user cannot get back.
+        if dest.exists() {
+            self.status = format!("{name} ALREADY EXISTS").to_uppercase();
+            return;
+        }
+        match current {
+            Some(old) => match std::fs::rename(&old, &dest) {
+                Ok(()) => {
+                    self.notes[index].path = Some(dest);
+                    self.status = format!("RENAMED TO {name}").to_uppercase();
+                }
+                Err(e) => self.status = format!("RENAME FAILED: {e}").to_uppercase(),
+            },
+            None => {
+                let text = self.notes[index].buffer.to_text();
+                match std::fs::write(&dest, text) {
+                    Ok(()) => {
+                        self.notes[index].path = Some(dest);
+                        self.notes[index].buffer.mark_saved();
+                        self.status = format!("SAVED AS {name}").to_uppercase();
+                    }
+                    Err(e) => self.status = format!("WRITE FAILED: {e}").to_uppercase(),
+                }
+            }
+        }
     }
 
     fn open_save_dialog(&mut self) {
@@ -489,7 +547,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     // updates as you type with nothing to wire up.
     let mut filter = std::mem::take(&mut app.filter);
     let field = Rect::new(search.x, search.y, search.w, 15);
-    ui.text_field_hint_at(field, "filter", &mut filter, "SEARCH NOTES");
+    ui.search_field_at(field, "filter", &mut filter, "SEARCH NOTES");
     app.filter = filter;
 
     let needle = app.filter.trim().to_lowercase();
@@ -502,21 +560,33 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     let cols = ((list.w - 20) / pixui::font::ADVANCE).max(8) as usize;
 
     let mut select = None;
+    let mut begin_rename = None;
+    let mut commit_rename = None;
+    let mut cancel_rename = false;
+
     ui.scroll_area(list, "notes", |ui| {
         if shown.is_empty() {
             ui.label_dim("  NO MATCHES");
             return;
         }
         for &i in &shown {
-            let note = &app.notes[i];
+            // Copy what the row needs before drawing, so nothing holds a
+            // borrow of the note list while the rename field mutates state.
+            let title = app.notes[i].title();
+            let dirty = app.notes[i].buffer.dirty;
+            let preview = markdown::preview(app.notes[i].buffer.lines(), 2, cols);
+            let renaming = matches!(app.renaming, Some((idx, _)) if idx == i);
+
             let selected = i == app.current;
-            let preview = markdown::preview(note.buffer.lines(), 2, cols);
             let h = 13 + preview.len() as i32 * 8;
             let row = ui.alloc(h);
             let id = ui.id(&format!("note{i}"));
             let resp = ui.interact(id, row);
             if resp.clicked {
                 select = Some(i);
+            }
+            if resp.double_clicked {
+                begin_rename = Some(i);
             }
 
             let face = if selected {
@@ -532,13 +602,39 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
             }
 
             let ink = if selected { th.accent.ink } else { th.ink };
-            let title = Rect::new(row.x + 4, row.y + 1, row.w - 8, 9);
-            let t = note.title();
-            pixui::font::draw_text_styled(ui.canvas, title.x, title.y + 1, &t, ink, true);
+            let title_at = Rect::new(row.x + 4, row.y + 1, row.w - 8, 9);
 
-            if note.buffer.dirty {
-                ui.canvas
-                    .fill_rect(Rect::new(row.right() - 5, row.y + 3, 3, 3), th.danger.face);
+            if renaming {
+                // The title is replaced in place by a field, so the row keeps
+                // its shape and the rename reads as editing *this* note.
+                let field = Rect::new(row.x + 2, row.y + 1, row.w - 4, 11);
+                let mut name = match app.renaming.take() {
+                    Some((_, n)) => n,
+                    None => String::new(),
+                };
+                let grab = app.focus_rename;
+                app.focus_rename = false;
+                ui.text_field_grab_at(field, "rename", &mut name, "", grab);
+                if ui.input.key_pressed(pixui::Key::Enter) {
+                    commit_rename = Some((i, name));
+                } else if ui.input.key_pressed(pixui::Key::Escape) {
+                    cancel_rename = true;
+                } else {
+                    app.renaming = Some((i, name));
+                }
+            } else {
+                pixui::font::draw_text_styled(
+                    ui.canvas,
+                    title_at.x,
+                    title_at.y + 1,
+                    &title,
+                    ink,
+                    true,
+                );
+                if dirty {
+                    ui.canvas
+                        .fill_rect(Rect::new(row.right() - 5, row.y + 3, 3, 3), th.danger.face);
+                }
             }
 
             for (n, line) in preview.iter().enumerate() {
@@ -548,10 +644,31 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                 } else {
                     th.ink_soft
                 };
-                pixui::font::draw_text(ui.canvas, title.x, y, line, dim);
+                pixui::font::draw_text(ui.canvas, title_at.x, y, line, dim);
             }
         }
     });
+
+    if let Some(i) = begin_rename {
+        // Seed with the current file name, or the derived title for a note
+        // that has never been saved.
+        let seed = app.notes[i]
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("{}.md", slug(&app.notes[i].title())));
+        app.renaming = Some((i, seed));
+        app.focus_rename = true;
+    }
+    if let Some((i, name)) = commit_rename {
+        app.rename_note(i, &name);
+        app.renaming = None;
+    }
+    if cancel_rename {
+        app.renaming = None;
+        app.status = "RENAME CANCELLED".into();
+    }
 
     if let Some(i) = select {
         app.current = i;
@@ -582,6 +699,40 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
 
 // -------------------------------------------------------------------- editor
 
+/// Map a point in the editor to a position in the buffer.
+///
+/// The inverse of the drawing loop: walk logical lines from the scroll
+/// position, counting the visual rows each one wraps into, until the row under
+/// the pointer is reached. Wrapping is derived from the raw text, so this and
+/// the renderer cannot disagree about where a character is.
+fn position_at(
+    buf: &Buffer,
+    scroll: usize,
+    cols: usize,
+    origin: pixui::Point,
+    p: pixui::Point,
+) -> text::Cursor {
+    let target_row = ((p.y - origin.y) / pixui::font::LINE_H).max(0) as usize;
+    let mut row = 0usize;
+    let mut line = scroll;
+    while line < buf.line_count() {
+        let ranges = markdown::wrap_ranges(buf.line(line), cols);
+        if row + ranges.len() > target_row {
+            let (from, to) = ranges[target_row - row];
+            // Floor rather than round: clicking a character should land *on*
+            // it, since the caret in normal mode is a block over a character
+            // rather than a bar between two.
+            let rel = ((p.x - origin.x) / pixui::font::ADVANCE).max(0) as usize;
+            return text::Cursor::new(line, (from + rel).min(to));
+        }
+        row += ranges.len();
+        line += 1;
+    }
+    // Below the last line: the end of the buffer.
+    let last = buf.line_count().saturating_sub(1);
+    text::Cursor::new(last, buf.line_len(last))
+}
+
 fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     let th = *ui.theme;
     let area = Rect::new(rect.x, rect.y, rect.w - 5, rect.h);
@@ -596,6 +747,42 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     let i = app.current.min(app.notes.len() - 1);
     let cursor = app.notes[i].buffer.cursor;
     let total = app.notes[i].buffer.line_count();
+
+    // ---- pointer --------------------------------------------------------
+    // Done before the caret-follow below, so a click sets the caret and the
+    // scrolling then keeps it visible, rather than the two fighting.
+    let origin = pixui::Point::new(inner.x + GUTTER, inner.y);
+    let editor_id = ui.id("editor");
+    let resp = ui.interact(editor_id, inner);
+    if resp.hovered {
+        ui.request_cursor(pixui::Cursor::Text);
+    }
+    if resp.held {
+        let i = app.current.min(app.notes.len() - 1);
+        let at = position_at(
+            &app.notes[i].buffer,
+            app.scroll,
+            cols,
+            origin,
+            ui.input.mouse,
+        );
+        if ui.input.mouse_pressed {
+            app.drag_anchor = Some(at);
+            app.vim.click_at(&mut app.notes[i].buffer, at);
+        } else if let Some(anchor) = app.drag_anchor {
+            app.vim.drag_to(&mut app.notes[i].buffer, anchor, at);
+            // Dragging past an edge scrolls, or a selection could never reach
+            // past what happens to be on screen.
+            if ui.input.mouse.y < inner.y {
+                app.scroll = app.scroll.saturating_sub(1);
+            } else if ui.input.mouse.y > inner.bottom() {
+                app.scroll += 1;
+            }
+        }
+    }
+    if ui.input.mouse_released {
+        app.drag_anchor = None;
+    }
 
     // ---- keep the caret on screen ---------------------------------------
     // Lines wrap, so "how far down is the caret" is a count of *visual* rows,

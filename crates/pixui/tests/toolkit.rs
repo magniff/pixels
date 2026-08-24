@@ -1135,3 +1135,138 @@ fn a_title_bar_without_a_badge_is_fine() {
     let mut h = Harness::new();
     h.frame(|ui| ui.title_bar(Rect::new(0, 0, 120, 13), "PIXUI", None));
 }
+
+// ------------------------------------------------------------ double clicks
+
+/// Press and release at `at`, returning the response from the release frame.
+fn click_at(h: &mut Harness, rect: Rect, at: Point, name: &str) -> pixui::Response {
+    h.input.mouse = at;
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| {
+        let id = ui.id(name);
+        ui.interact(id, rect)
+    });
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    h.frame(|ui| {
+        let id = ui.id(name);
+        ui.interact(id, rect)
+    })
+}
+
+#[test]
+fn two_quick_clicks_on_the_same_spot_are_a_double() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 60, 20);
+
+    let first = click_at(&mut h, rect, Point::new(10, 10), "w");
+    assert!(first.clicked && !first.double_clicked);
+
+    h.input.time += 0.1;
+    let second = click_at(&mut h, rect, Point::new(10, 10), "w");
+    assert!(second.double_clicked);
+    assert!(
+        second.clicked,
+        "a double is also a click; callers should not handle both"
+    );
+}
+
+#[test]
+fn a_slow_second_click_is_two_singles() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 60, 20);
+    click_at(&mut h, rect, Point::new(10, 10), "w");
+    h.input.time += 2.0;
+    let second = click_at(&mut h, rect, Point::new(10, 10), "w");
+    assert!(!second.double_clicked, "the interval has to mean something");
+}
+
+#[test]
+fn a_second_click_somewhere_else_is_not_a_double() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 60, 20);
+    click_at(&mut h, rect, Point::new(10, 10), "w");
+    h.input.time += 0.1;
+    let second = click_at(&mut h, rect, Point::new(50, 10), "w");
+    assert!(
+        !second.double_clicked,
+        "a drifting pointer is not a double click"
+    );
+}
+
+#[test]
+fn three_clicks_are_a_double_then_a_single() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 60, 20);
+    click_at(&mut h, rect, Point::new(10, 10), "w");
+    h.input.time += 0.1;
+    assert!(click_at(&mut h, rect, Point::new(10, 10), "w").double_clicked);
+    h.input.time += 0.1;
+    assert!(
+        !click_at(&mut h, rect, Point::new(10, 10), "w").double_clicked,
+        "the double resets, or every click after the second would be one"
+    );
+}
+
+// --------------------------------------------------------------- search box
+
+#[test]
+fn the_search_clear_button_empties_the_field() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::from("something");
+
+    // The cross sits at the right-hand end of the field.
+    h.input.mouse = Point::new(113, 7);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.search_field_at(rect, "s", &mut text, "find"));
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    let resp = h.frame(|ui| ui.search_field_at(rect, "s", &mut text, "find"));
+
+    assert_eq!(text, "", "clicking the cross clears it");
+    assert!(resp.changed, "and reports the change, like typing would");
+}
+
+#[test]
+fn clicking_the_body_of_a_search_field_does_not_clear_it() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::from("keep me");
+
+    h.input.mouse = Point::new(40, 7);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.search_field_at(rect, "s", &mut text, "find"));
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    h.frame(|ui| ui.search_field_at(rect, "s", &mut text, "find"));
+    assert_eq!(text, "keep me");
+}
+
+#[test]
+fn a_field_that_grabs_focus_puts_the_caret_after_the_existing_text() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::from("name.md");
+
+    // First frame: the field appears and takes focus.
+    h.frame(|ui| ui.text_field_grab_at(rect, "f", &mut text, "", true));
+    // Second: typing should append, not prepend.
+    h.input.keys.push(Key::Char('!'));
+    h.frame(|ui| ui.text_field_grab_at(rect, "f", &mut text, "", false));
+    assert_eq!(text, "name.md!");
+}
+
+#[test]
+fn a_grabbing_field_owns_the_keyboard_from_its_very_first_frame() {
+    // Without this, the keystroke the user meant for the field goes to whatever
+    // the application does with keys instead.
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::new();
+    h.frame(|ui| ui.text_field_grab_at(rect, "f", &mut text, "", true));
+    assert!(h.frame(|ui| ui.text_input_active()));
+}

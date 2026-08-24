@@ -23,6 +23,10 @@ struct Scene {
     /// Click at `mouse` before the script runs, for scenes that need focus
     /// somewhere first.
     click_first: bool,
+    /// Make that opening click a double.
+    double_click: bool,
+    /// Press at the first point and drag to the second.
+    drag: Option<(Point, Point)>,
     settle: u32,
     /// Canvas size. Under `Scaling::Adaptive` this is what a resized window
     /// produces, so varying it here shows exactly what resizing does.
@@ -73,6 +77,8 @@ fn main() -> std::io::Result<()> {
             script: vec![],
             mouse: Point::new(430, 120),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -81,6 +87,8 @@ fn main() -> std::io::Result<()> {
             script: [keys("Go"), keys("A new thought, typed in insert mode.")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -89,6 +97,8 @@ fn main() -> std::io::Result<()> {
             script: keys("jjjvwwwl"),
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -97,6 +107,8 @@ fn main() -> std::io::Result<()> {
             script: keys(":w notes-are-files"),
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -105,6 +117,8 @@ fn main() -> std::io::Result<()> {
             script: [keys(":e"), keys("\n"), keys("jj")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -113,6 +127,8 @@ fn main() -> std::io::Result<()> {
             script: [keys(":new"), keys("\n"), keys(":w"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -123,6 +139,8 @@ fn main() -> std::io::Result<()> {
             script: vec![],
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 40,
             canvas: (1050, 620),
         },
@@ -132,6 +150,8 @@ fn main() -> std::io::Result<()> {
             script: keys("/pixui\n"),
             mouse: Point::new(153, 200),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -141,7 +161,31 @@ fn main() -> std::io::Result<()> {
             script: keys("export"),
             mouse: Point::new(80, 44),
             click_first: true,
+            double_click: false,
+            drag: None,
             settle: 30,
+            canvas: (768, 470),
+        },
+        // Double-clicking a note in the drawer renames it in place.
+        Scene {
+            name: "12-rename",
+            script: keys("about-the-toolkit"),
+            mouse: Point::new(80, 118),
+            click_first: true,
+            double_click: true,
+            drag: None,
+            settle: 30,
+            canvas: (768, 470),
+        },
+        // Dragging in the editor selects, as a mouse-driven visual mode.
+        Scene {
+            name: "13-drag-select",
+            script: vec![],
+            mouse: Point::new(340, 43),
+            click_first: false,
+            double_click: false,
+            drag: Some((Point::new(200, 43), Point::new(340, 43))),
+            settle: 20,
             canvas: (768, 470),
         },
         // A blockwise selection over the list items.
@@ -150,6 +194,8 @@ fn main() -> std::io::Result<()> {
             script: [keys("11G"), ctrl('v'), keys("jjj"), keys("llllllll")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -159,6 +205,8 @@ fn main() -> std::io::Result<()> {
             script: [keys("GA \"quoted words\" here\x1b"), keys("hhhhhhci\"")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
+            double_click: false,
+            drag: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -182,7 +230,7 @@ fn main() -> std::io::Result<()> {
         };
 
         // Frames 2 and 3 are the optional click; typing starts at 5.
-        let total = 5 + scene.script.len() as u32 + scene.settle;
+        let total = 8 + scene.script.len() as u32 + scene.settle;
         for f in 0..total {
             input.time = f as f32 / 60.0;
             input.mouse = scene.mouse;
@@ -191,16 +239,54 @@ fn main() -> std::io::Result<()> {
             input.mouse_pressed = false;
             input.mouse_released = false;
             if scene.click_first {
-                if f == 2 {
-                    input.mouse_down = true;
-                    input.mouse_pressed = true;
-                } else if f == 3 {
+                match f {
+                    2 => {
+                        input.mouse_down = true;
+                        input.mouse_pressed = true;
+                    }
+                    3 => {
+                        input.mouse_down = false;
+                        input.mouse_released = true;
+                    }
+                    // A second press and release, close enough in time to
+                    // register as a double.
+                    4 if scene.double_click => {
+                        input.mouse_down = true;
+                        input.mouse_pressed = true;
+                    }
+                    _ => {}
+                }
+                if f == 5 && scene.double_click {
                     input.mouse_down = false;
                     input.mouse_released = true;
                 }
             }
-            if f >= 5 {
-                if let Some(press) = scene.script.get((f - 5) as usize) {
+            if let Some((from, to)) = scene.drag {
+                match f {
+                    2 => {
+                        input.mouse = from;
+                        input.mouse_down = true;
+                        input.mouse_pressed = true;
+                    }
+                    3..=6 => {
+                        let t = (f - 2) as f32 / 4.0;
+                        input.mouse = Point::new(
+                            from.x + ((to.x - from.x) as f32 * t) as i32,
+                            from.y + ((to.y - from.y) as f32 * t) as i32,
+                        );
+                        input.mouse_down = true;
+                    }
+                    7 => {
+                        input.mouse = to;
+                        input.mouse_down = false;
+                        input.mouse_released = true;
+                    }
+                    _ => input.mouse = to,
+                }
+            }
+            let script_start = if scene.double_click { 7 } else { 5 };
+            if f >= script_start {
+                if let Some(press) = scene.script.get((f - script_start) as usize) {
                     input.keys.push(press.key);
                     input.mods = press.mods;
                 }

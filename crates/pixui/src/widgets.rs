@@ -9,12 +9,25 @@ use crate::anim::{smooth, WidgetAnim};
 use crate::color::Color;
 use crate::font;
 use crate::geom::Rect;
+use crate::icon;
 use crate::input::{Cursor, Key};
 use crate::layout::Align;
 use crate::theme::{Ramp, Tone};
 use crate::ui::{Response, ScrollState, Ui};
 
 const WHITE: Color = Color::hex(0xFFFFFF);
+
+/// How a text field is laid out, and whether it should claim focus.
+///
+/// Grouped rather than passed as a run of positional arguments, where the two
+/// paddings are the same type and swapping them would silently draw the text in
+/// the wrong place.
+#[derive(Clone, Copy, Default)]
+struct FieldOpts {
+    pad_left: i32,
+    pad_right: i32,
+    grab: bool,
+}
 
 /// A 7x7 tick, bit 6 leftmost.
 #[rustfmt::skip]
@@ -176,10 +189,58 @@ impl Ui<'_> {
         text: &mut String,
         hint: &str,
     ) -> Response {
+        let pad = self.theme.metrics.text_pad;
+        let opts = FieldOpts {
+            pad_left: pad,
+            pad_right: pad,
+            grab: false,
+        };
+        self.text_field_core(rect, name, text, hint, opts)
+    }
+
+    /// A text field that takes focus on the frame `grab` is true.
+    ///
+    /// For a field that appears in response to something else — a rename
+    /// started by a double click — where the user expects to type immediately.
+    /// It has to claim focus *before* its own hit testing, or it spends its
+    /// first frame unfocused and the keystroke meant for it goes wherever the
+    /// application sends keys instead.
+    pub fn text_field_grab_at(
+        &mut self,
+        rect: Rect,
+        name: &str,
+        text: &mut String,
+        hint: &str,
+        grab: bool,
+    ) -> Response {
+        let pad = self.theme.metrics.text_pad;
+        let opts = FieldOpts {
+            pad_left: pad,
+            pad_right: pad,
+            grab,
+        };
+        self.text_field_core(rect, name, text, hint, opts)
+    }
+
+    /// The text field proper, with explicit room reserved at each end.
+    ///
+    /// The padding is a parameter because a field with furniture in it — a
+    /// search glass, a clear button — needs its text to start and stop clear of
+    /// them, while the well behind still spans the whole control.
+    fn text_field_core(
+        &mut self,
+        rect: Rect,
+        name: &str,
+        text: &mut String,
+        hint: &str,
+        opts: FieldOpts,
+    ) -> Response {
         let th = *self.theme;
-        let m = th.metrics;
         let id = self.id(name);
 
+        if opts.grab {
+            self.set_focus(id);
+        }
         let mut resp = self.interact(id, rect);
         self.focusable(id);
         if resp.focused {
@@ -194,8 +255,19 @@ impl Ui<'_> {
         let mut st = self.text_state(id);
         let chars: Vec<char> = text.chars().collect();
         st.caret = st.caret.min(chars.len());
+        if opts.grab {
+            // A field that has just appeared with text already in it should put
+            // the caret after that text, not before it. Otherwise the first
+            // thing typed lands in front of what is being edited.
+            st.caret = chars.len();
+        }
 
-        let inner = rect.inset_xy(m.text_pad, 0);
+        let inner = Rect::from_min_max(
+            rect.x + opts.pad_left,
+            rect.y,
+            rect.right() - opts.pad_right,
+            rect.bottom(),
+        );
 
         // Clicking places the caret at the nearest character boundary.
         if resp.held {
@@ -252,8 +324,8 @@ impl Ui<'_> {
         self.draw_well(rect, th.well);
         if anim.focus > 0.02 {
             let ring = th.well.lerp(th.focus_ring, anim.focus);
-            self.canvas
-                .stroke_chamfer(rect, ring, (m.chamfer - 1).max(0));
+            let chamfer = (th.metrics.chamfer - 1).max(0);
+            self.canvas.stroke_chamfer(rect, ring, chamfer);
         }
 
         self.clipped(inner, |ui| {
@@ -439,6 +511,83 @@ impl Ui<'_> {
                     .fill_rect(Rect::new(x, handle.center_y() - 1, 1, 3), line);
             }
         }
+    }
+
+    /// A search field: a magnifying glass, the text, and a clear button that
+    /// appears once there is something to clear.
+    ///
+    /// `changed` is true when the text changed, whether by typing or by
+    /// clearing, so a caller can treat both the same way.
+    pub fn search_field_at(
+        &mut self,
+        rect: Rect,
+        name: &str,
+        text: &mut String,
+        hint: &str,
+    ) -> Response {
+        let th = *self.theme;
+        let glass_w = icon::size(icon::SEARCH).0;
+        let pad = th.metrics.text_pad;
+
+        let show_clear = !text.is_empty();
+        let clear_rect = Rect::new(rect.right() - 13, rect.y + 2, 11, rect.h - 4);
+
+        // The clear button claims the pointer *before* the field does. Both
+        // cover the same pixels, and whoever interacts first wins the press —
+        // otherwise clicking the cross would only move the caret.
+        let clear_id = self.scope(name, |ui| ui.id("clear"));
+        let mut cleared = false;
+        if show_clear {
+            let resp = self.interact(clear_id, clear_rect);
+            if resp.hovered {
+                self.request_cursor(Cursor::Pointer);
+            }
+            if resp.clicked {
+                // Clear before the field runs, so the box empties this frame
+                // rather than a frame late.
+                text.clear();
+                cleared = true;
+            }
+        }
+
+        let opts = FieldOpts {
+            pad_left: pad + glass_w + 2,
+            pad_right: if text.is_empty() { pad } else { 15 },
+            grab: false,
+        };
+        let mut resp = self.text_field_core(rect, name, text, hint, opts);
+        resp.changed |= cleared;
+
+        // ---- the glass ---------------------------------------------------
+        let (_, gh) = icon::size(icon::SEARCH);
+        let tint = if text.is_empty() && !resp.focused {
+            th.ink_light.shade(-0.45)
+        } else {
+            th.accent.face
+        };
+        icon::draw(
+            self.canvas,
+            rect.x + pad,
+            rect.y + (rect.h - gh) / 2,
+            icon::SEARCH,
+            tint,
+        );
+
+        // ---- the clear button --------------------------------------------
+        if !text.is_empty() {
+            let hot = self.is_hot(clear_id);
+            if hot {
+                self.canvas.fill_chamfer(clear_rect, th.well.shade(0.22), 1);
+            }
+            let ink = if hot {
+                th.danger.face
+            } else {
+                th.ink_light.shade(-0.25)
+            };
+            icon::draw_centered(self.canvas, clear_rect, icon::CROSS, ink);
+        }
+
+        resp
     }
 
     // ---------------------------------------------------------------- scroll

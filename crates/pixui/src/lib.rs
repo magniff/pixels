@@ -77,6 +77,7 @@ pub mod color;
 pub mod cursor;
 pub mod font;
 pub mod geom;
+pub mod icon;
 pub mod input;
 pub mod layout;
 pub mod theme;

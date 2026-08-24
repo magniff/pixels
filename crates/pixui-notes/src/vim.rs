@@ -277,6 +277,46 @@ impl Vim {
         })
     }
 
+    /// Place the caret from outside the key handling — a mouse click.
+    ///
+    /// The mode machine owns its own transitions, so a view that wants to move
+    /// the caret asks rather than reaching in and setting fields. Clicking
+    /// leaves visual mode, the way clicking anywhere else does.
+    pub fn click_at(&mut self, buf: &mut Buffer, at: Cursor) {
+        if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
+            return;
+        }
+        if self.visual_kind().is_some() {
+            self.mode = Mode::Normal;
+        }
+        self.pending.clear();
+        buf.move_to(at);
+        buf.clamp_cursor(self.mode == Mode::Insert);
+    }
+
+    /// Extend a selection to `at`, entering charwise visual on the way if the
+    /// drag has actually moved.
+    ///
+    /// A press that never moves is a click, not a selection, so this waits for
+    /// the pointer to leave the character it started on before switching modes.
+    pub fn drag_to(&mut self, buf: &mut Buffer, anchor: Cursor, at: Cursor) {
+        if matches!(
+            self.mode,
+            Mode::Insert | Mode::Command | Mode::Search { .. }
+        ) {
+            return;
+        }
+        if self.visual_kind().is_none() {
+            if at == anchor {
+                return;
+            }
+            self.anchor = anchor;
+            self.mode = Mode::Visual(VisualKind::Char);
+        }
+        buf.move_to(at);
+        buf.clamp_cursor(false);
+    }
+
     /// Feed one key press. Returns an event when the app has work to do.
     pub fn handle(&mut self, buf: &mut Buffer, key: Key, mods: Mods) -> Option<VimEvent> {
         match self.mode {

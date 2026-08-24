@@ -46,6 +46,12 @@ pub struct Response {
     /// A full press-and-release landed on it this frame, or it was activated
     /// from the keyboard.
     pub clicked: bool,
+    /// A second click landed on the same widget, close by and soon after.
+    ///
+    /// `clicked` is also true when this is: a double click is a click that
+    /// happens to be the second, and a caller that only cares about the first
+    /// meaning should not have to handle both.
+    pub double_clicked: bool,
     pub focused: bool,
     /// A value widget wrote a new value this frame.
     pub changed: bool,
@@ -110,6 +116,9 @@ pub struct UiState {
     /// The text field that last held focus, so an application can tell whether
     /// typing belongs to a field or to its own key handling.
     text_focus: Option<Id>,
+    /// The last click: which widget, when, and where. Enough to recognise the
+    /// next one as a double.
+    last_click: Option<(Id, f32, Point)>,
     focus_order: Vec<Id>,
     frame: u64,
 }
@@ -439,6 +448,9 @@ impl<'a> Ui<'a> {
             if self.input.mouse_released {
                 resp.clicked = inside;
                 self.state.active = None;
+                if resp.clicked {
+                    resp.double_clicked = self.register_click(id, p);
+                }
             }
         } else if self.state.active.is_none() && inside {
             resp.hovered = true;
@@ -452,6 +464,24 @@ impl<'a> Ui<'a> {
 
         resp.focused = self.state.focus == Some(id);
         resp
+    }
+
+    /// Record a click and report whether it completes a double.
+    ///
+    /// A double is reset once recognised, so three clicks are a double followed
+    /// by a single rather than two overlapping doubles.
+    fn register_click(&mut self, id: Id, at: Point) -> bool {
+        const INTERVAL: f32 = 0.40;
+        const SLOP: i32 = 3;
+        let now = self.input.time;
+        let double = self.state.last_click.is_some_and(|(prev, when, where_)| {
+            prev == id
+                && now - when < INTERVAL
+                && (where_.x - at.x).abs() <= SLOP
+                && (where_.y - at.y).abs() <= SLOP
+        });
+        self.state.last_click = if double { None } else { Some((id, now, at)) };
+        double
     }
 
     /// Register `id` in this frame's tab order and report keyboard activation.
