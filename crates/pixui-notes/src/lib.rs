@@ -33,7 +33,8 @@ use markdown::Tok;
 use text::Buffer;
 use vim::{Mode, Vim, VimEvent};
 
-const GUTTER: i32 = 22;
+/// Room for a three-digit line number plus a little breathing space.
+const GUTTER: i32 = 26;
 
 /// How wide the note list should be for a given canvas.
 ///
@@ -667,7 +668,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                             // back one puts a pixel of padding on each side.
                             let x0 = text_x + (a - from) as i32 * advance - 1;
                             ui.canvas.fill_rect(
-                                Rect::new(x0, y - 1, (b - a) as i32 * advance + 1, line_h),
+                                Rect::new(x0, y - 1, (b - a) as i32 * advance, line_h),
                                 th.accent.lo,
                             );
                         }
@@ -675,12 +676,16 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                 }
 
                 // ---- the text ----------------------------------------
-                let mut x = text_x;
+                // Position each run by its character offset rather than by
+                // accumulating widths. Styled markdown puts a dozen runs on a
+                // line, and anything that adds up per-run measurements will
+                // drift off the character grid the caret is drawn on.
+                let mut col = 0usize;
                 for span in &markdown::slice_spans(&spans, from, to) {
                     let color = token_color(&th, span.tok);
-                    x += pixui::font::draw_text_styled(
-                        ui.canvas, x, y, &span.text, color, span.bold,
-                    );
+                    let x = text_x + col as i32 * advance;
+                    col += span.text.chars().count();
+                    pixui::font::draw_text_styled(ui.canvas, x, y, &span.text, color, span.bold);
                 }
 
                 // ---- caret -------------------------------------------
@@ -693,14 +698,14 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                         // A block caret with the character redrawn on top in
                         // the inverse ink, so it stays readable underneath.
                         //
-                        // Offset by one for the same reason as the selection:
-                        // a glyph is 5 wide on a 6 pixel advance and sits at
-                        // the left of it, so a cell starting at the glyph gets
-                        // the inter-glyph gap on its right and nothing on its
-                        // left. Starting a pixel earlier and running a pixel
-                        // wider puts even padding on both sides.
+                        // The cell is the glyph plus one column of padding on
+                        // each side — expressed from `GLYPH_W` rather than the
+                        // advance so it stays centred whatever the tracking is.
+                        // A cell that simply starts at the glyph collects all
+                        // the tracking on its right and none on its left, and
+                        // reads as shunted sideways.
                         ui.canvas.fill_rect(
-                            Rect::new(cx - 1, y - 1, advance + 1, line_h),
+                            Rect::new(cx - 1, y - 1, pixui::font::GLYPH_W + 2, line_h),
                             th.accent.face,
                         );
                         let under = text.chars().nth(cursor.col).unwrap_or(' ');

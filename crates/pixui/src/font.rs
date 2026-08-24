@@ -23,8 +23,13 @@ use crate::color::Color;
 pub const GLYPH_W: i32 = 5;
 /// Ink height of a glyph cell.
 pub const GLYPH_H: i32 = 7;
-/// Horizontal step from one glyph origin to the next (one column of gap).
-pub const ADVANCE: i32 = 6;
+/// Horizontal step from one glyph origin to the next.
+///
+/// Two columns wider than the glyph. One column of tracking is enough to keep
+/// letters technically separate, but at this size `mmm` and `www` read as a
+/// single blob — and it leaves nothing for the bold weight, which is a
+/// double-strike one pixel to the right and so needs a column of its own.
+pub const ADVANCE: i32 = 7;
 /// Vertical step from one baseline to the next.
 pub const LINE_H: i32 = 9;
 
@@ -137,13 +142,18 @@ pub fn glyph(c: char) -> &'static [u8; 7] {
         .unwrap_or(&GLYPHS[('?' as u32 - FIRST) as usize])
 }
 
-/// Width in pixels of a single line, with no trailing gap.
+/// Ink width of a single line: the glyphs plus the tracking *between* them,
+/// with none trailing.
+///
+/// Not `n * ADVANCE`. That would include the tracking after the final glyph,
+/// which is exactly the sliver that makes centred text sit a pixel left of
+/// where it should.
 fn line_width(line: &str) -> i32 {
     let n = line.chars().count() as i32;
     if n == 0 {
         0
     } else {
-        n * ADVANCE - 1
+        (n - 1) * ADVANCE + GLYPH_W
     }
 }
 
@@ -173,7 +183,13 @@ pub fn draw_char(canvas: &mut Canvas, x: i32, y: i32, c: char, color: Color) {
     }
 }
 
-/// Draw `text` with its top-left at `(x, y)`. Handles `\n`. Returns the width drawn.
+/// Draw `text` with its top-left at `(x, y)`. Handles `\n`.
+///
+/// Returns the **advance**: where the next glyph would start, not how far the
+/// ink reached. Those differ by the tracking, and returning the ink extent
+/// makes every caller that accumulates widths — laying out styled runs, say —
+/// creep a pixel to the left per run until the text falls off the character
+/// grid. Use [`text_width`] when you want the ink, as centring does.
 pub fn draw_text(canvas: &mut Canvas, x: i32, y: i32, text: &str, color: Color) -> i32 {
     let mut cy = y;
     for line in text.split('\n') {
@@ -184,10 +200,24 @@ pub fn draw_text(canvas: &mut Canvas, x: i32, y: i32, text: &str, color: Color) 
         }
         cy += LINE_H;
     }
-    text_width(text)
+    advance_width(text)
 }
 
-/// Width of `text`, one pixel wider per glyph when `bold`.
+/// How far `text` advances the pen: one [`ADVANCE`] per character of its widest
+/// line, with no tracking trimmed off the end.
+pub fn advance_width(text: &str) -> i32 {
+    text.split('\n')
+        .map(|l| l.chars().count() as i32 * ADVANCE)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Ink extent of `text`, one pixel wider when `bold` — the double-strike
+/// reaches a column further right.
+///
+/// The *advance* is unaffected by weight on purpose: bold text has to sit on
+/// the same character grid as everything else, or a bold run in the middle of a
+/// line would shunt the rest of it out of step with the caret.
 pub fn text_width_styled(text: &str, bold: bool) -> i32 {
     let w = text_width(text);
     if bold && w > 0 {
@@ -215,7 +245,7 @@ pub fn draw_text_styled(
     if bold {
         draw_text(canvas, x + 1, y, text, color);
     }
-    text_width_styled(text, bold)
+    advance_width(text)
 }
 
 /// Draw `text` with a one-pixel drop shadow beneath it. On a busy background

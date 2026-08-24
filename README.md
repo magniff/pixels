@@ -210,10 +210,30 @@ Under `Adaptive` the scale is pinned in *logical points*, not physical pixels,
 so one virtual pixel stays the same physical size whatever the display density —
 and moving the window to a different-density display re-derives it.
 
-**Glyph cells are 5 wide on a 6 pixel advance.** Anything that draws a box
-around a character — a block caret, a selection — has to start one pixel before
-the glyph and run one wider, or it collects the inter-glyph gap on its right and
-nothing on its left, and reads as shunted sideways.
+**Glyphs are 5 wide on a 7 pixel advance**, so there are two columns of
+tracking. One column is enough to keep letters technically apart, but at this
+size `mmm` and `www` read as a single blob — and it leaves nothing for the bold
+weight, which is a double-strike one pixel to the right.
+
+Two measurements follow from that, and confusing them is a real bug:
+
+- `text_width` is the **ink extent**: `(n-1) * ADVANCE + GLYPH_W`, with no
+  trailing tracking. This is what centring wants.
+- `advance_width` is `n * ADVANCE`: where the next glyph starts. This is what
+  anything laying out consecutive runs wants.
+
+Returning the ink extent from a drawing call makes every caller that accumulates
+widths creep a pixel left per run. Styled markdown puts a dozen runs on a line,
+so the text walks off the character grid the caret is drawn on. The editor now
+positions each run by its character offset instead, which cannot drift at all.
+
+Bold deliberately does **not** change the advance. It has to sit on the same
+grid as everything else, or a bold run mid-line shunts the rest of it out of
+step with the caret.
+
+Anything that boxes a character — a block caret, a selection — should be
+`GLYPH_W + 2` wide starting one pixel before the glyph. Sizing it from the
+advance instead collects all the tracking on one side, and reads as shunted.
 
 **Physical pixels throughout.** Hit testing and scaling work in physical pixels,
 so a HiDPI display just yields a larger integer scale. There is no DPI factor

@@ -96,10 +96,19 @@ fn alloc_rest_consumes_exactly_what_is_left() {
 fn text_width_measures_the_widest_line() {
     assert_eq!(pixui::font::text_width(""), 0);
     assert_eq!(pixui::font::text_width("A"), pixui::font::GLYPH_W);
-    // Five glyphs: four full advances plus one glyph, with no trailing gap.
+    // Five glyphs: four full advances plus one glyph, with no trailing tracking.
     assert_eq!(
         pixui::font::text_width("HELLO"),
-        5 * pixui::font::ADVANCE - 1
+        4 * pixui::font::ADVANCE + pixui::font::GLYPH_W
+    );
+    // The advance is a whole cell per glyph, including after the last one.
+    assert_eq!(
+        pixui::font::advance_width("HELLO"),
+        5 * pixui::font::ADVANCE
+    );
+    assert!(
+        pixui::font::advance_width("HELLO") > pixui::font::text_width("HELLO"),
+        "the advance has to clear the ink, or accumulated runs collide"
     );
     assert_eq!(
         pixui::font::text_width("HI\nTHERE"),
