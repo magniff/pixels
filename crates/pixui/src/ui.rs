@@ -222,12 +222,35 @@ impl<'a> Ui<'a> {
         state.scrolls.retain(|_, s| s.touched == frame);
         state.texts.retain(|_, t| t.touched == frame);
 
-        FrameOutput {
+        let out = FrameOutput {
             cursor: self.cursor,
             theme: self.next_theme,
             quit: self.quit,
             pixel_scale: self.next_pixel_scale,
+        };
+
+        // ---- post-frame passes -------------------------------------------
+        // These belong to the toolkit, not to whoever is driving it. Leaving
+        // them to the caller meant every driver — the backend, a snapshot
+        // harness — had to reimplement them and could disagree about the order.
+        let theme = self.theme;
+        if theme.scanline > 0.0 {
+            let bounds = self.canvas.bounds();
+            self.canvas.scanlines(bounds, theme.scanline);
         }
+        // Last of all, so nothing is ever drawn over the pointer, and after the
+        // scanlines so it is not striped.
+        if input.draw_pointer && input.mouse_in_window {
+            crate::cursor::draw(
+                self.canvas,
+                input.mouse,
+                out.cursor,
+                theme.cursor_fill,
+                theme.cursor_outline,
+            );
+        }
+
+        out
     }
 
     // -------------------------------------------------------------- identity

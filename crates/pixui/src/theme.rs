@@ -167,7 +167,7 @@ impl Theme {
             },
 
             focus_ring: palette::YELLOW,
-            cursor_fill: palette::BUTTON_HI,
+            cursor_fill: Color::hex(0xFFFFFF),
             cursor_outline: palette::INK,
             scanline: 0.05,
             metrics: Metrics::default(),
@@ -221,7 +221,7 @@ impl Theme {
             ink: Color::hex(0xF5E3E1),
         };
         t.focus_ring = Color::hex(0x7FCBE8);
-        t.cursor_fill = Color::hex(0xDDEBF5);
+        t.cursor_fill = Color::hex(0xFFFFFF);
         t.cursor_outline = Color::hex(0x0B0F14);
         t
     }

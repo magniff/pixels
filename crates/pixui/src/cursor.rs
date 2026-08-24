@@ -78,51 +78,68 @@ const GRAB: Sprite = Sprite {
     hotspot: (4, 4),
 };
 
+/// Filled, like the rest. Drawn as bare outline it vanished against a dark
+/// editor pane, which is precisely where a text cursor is needed.
 #[rustfmt::skip]
 const BEAM: Sprite = Sprite {
     rows: &[
-        "XXXXX",
-        "..X..",
-        "..X..",
-        "..X..",
-        "..X..",
-        "..X..",
-        "..X..",
-        "..X..",
-        "..X..",
-        "..X..",
-        "XXXXX",
+        "XXXXXXX",
+        "X#####X",
+        "XXX#XXX",
+        "..X#X..",
+        "..X#X..",
+        "..X#X..",
+        "..X#X..",
+        "..X#X..",
+        "..X#X..",
+        "..X#X..",
+        "XXX#XXX",
+        "X#####X",
+        "XXXXXXX",
     ],
-    hotspot: (2, 5),
+    hotspot: (3, 6),
 };
 
+/// A filled body with a derived outline, like the other pointers. Drawn as
+/// pure outline it came out dark, which is the opposite of what a pointer
+/// wants to be over a dark editor pane.
 #[rustfmt::skip]
 const RESIZE_H: Sprite = Sprite {
     rows: &[
-        "....X.X....",
-        "...XX.XX...",
-        "..XX...XX..",
-        ".XXXXXXXXX.",
-        "..XX...XX..",
-        "...XX.XX...",
-        "....X.X....",
+        ".............",
+        "..XXX...XXX..",
+        ".XX#X...X#XX.",
+        "XX##XXXXX##XX",
+        "X###########X",
+        "XX##XXXXX##XX",
+        ".XX#X...X#XX.",
+        "..XXX...XXX..",
+        ".............",
     ],
-    hotspot: (5, 3),
+    hotspot: (6, 4),
 };
 
+/// A filled body with a derived outline, like the other pointers. Drawn as
+/// pure outline it came out dark, which is the opposite of what a pointer
+/// wants to be over a dark editor pane.
 #[rustfmt::skip]
 const RESIZE_V: Sprite = Sprite {
     rows: &[
-        "...X...",
-        "..XXX..",
-        ".XXXXX.",
-        "...X...",
-        "...X...",
-        ".XXXXX.",
-        "..XXX..",
-        "...X...",
+        "...XXX...",
+        "..XX#XX..",
+        ".XX###XX.",
+        ".X#####X.",
+        ".XXX#XXX.",
+        "...X#X...",
+        "...X#X...",
+        "...X#X...",
+        ".XXX#XXX.",
+        ".X#####X.",
+        ".XX###XX.",
+        "..XX#XX..",
+        "...XXX...",
     ],
-    hotspot: (3, 3),
+    hotspot: (4, 6),
 };
 
 /// The sprite for a pointer shape.

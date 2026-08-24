@@ -623,6 +623,7 @@ where
 
         self.take_zoom_shortcuts();
         self.input.pixel_scale = self.pixel_scale;
+        self.input.draw_pointer = self.config.pixel_cursor;
 
         let t_ui = Instant::now();
         self.canvas.clear(self.config.theme.background);
@@ -646,12 +647,6 @@ where
             self.set_pixel_scale(scale);
         }
 
-        let scanline = self.config.theme.scanline;
-        if scanline > 0.0 {
-            let bounds = self.canvas.bounds();
-            self.canvas.scanlines(bounds, scanline);
-        }
-
         if !self.config.pixel_cursor && out.cursor != self.applied_cursor {
             self.applied_cursor = out.cursor;
             if let Some(w) = &self.window {
@@ -664,16 +659,6 @@ where
                     Cursor::ResizeV => CursorIcon::RowResize,
                 });
             }
-        }
-        // Last of all, so nothing is ever drawn over the pointer.
-        if self.config.pixel_cursor && self.input.mouse_in_window {
-            crate::cursor::draw(
-                &mut self.canvas,
-                self.input.mouse,
-                out.cursor,
-                self.config.theme.cursor_fill,
-                self.config.theme.cursor_outline,
-            );
         }
 
         let ui_elapsed = t_ui.elapsed();

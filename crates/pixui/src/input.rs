@@ -75,6 +75,12 @@ pub struct Input {
     /// Set by the backend each frame. Read it to show a zoom indicator; change
     /// it with [`crate::Ui::request_pixel_scale`].
     pub pixel_scale: i32,
+    /// Whether the toolkit should draw the mouse pointer itself.
+    ///
+    /// Set by the backend from [`crate::Config::pixel_cursor`]. Anything
+    /// driving the frame lifecycle by hand — a snapshot harness, a test — gets
+    /// the pointer by setting this, rather than by reimplementing the pass.
+    pub draw_pointer: bool,
 }
 
 impl Input {

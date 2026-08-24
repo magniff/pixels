@@ -62,6 +62,8 @@ fn main() -> std::io::Result<()> {
 
         let mut input = Input {
             mouse_in_window: true,
+            // Ask the toolkit for its own pointer, as the backend does.
+            draw_pointer: true,
             dt: 1.0 / 60.0,
             ..Default::default()
         };
@@ -86,17 +88,6 @@ fn main() -> std::io::Result<()> {
             };
             if let Some(t) = out.theme {
                 theme = t;
-            }
-            // Mirror what the backend does after a frame, so captures show the
-            // drawn pointer the same way the running app does.
-            if input.mouse_in_window {
-                pixui::cursor::draw(
-                    &mut canvas,
-                    input.mouse,
-                    out.cursor,
-                    theme.cursor_fill,
-                    theme.cursor_outline,
-                );
             }
             input.begin_frame();
         }

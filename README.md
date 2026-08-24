@@ -260,6 +260,13 @@ overshoot on release. `anim::Spring` is under-damped on purpose, and the press
 offset is allowed to reach -1px, so the button really does pop up past its
 resting position.
 
+**Post-frame passes belong to the toolkit.** `Ui::finish` applies the scanline
+overlay and draws the pointer, rather than leaving them to whoever is driving
+the frame. When the backend owned those passes, the snapshot harnesses had to
+reimplement them — two drivers that could disagree about whether the pointer is
+drawn over the scanlines or under them. Anything driving the lifecycle by hand
+now sets `Input::draw_pointer` and gets the same result.
+
 **The pointer is drawn, not borrowed.** The system pointer is rendered by the
 compositor at the display's real resolution, so beside chunky upscaled pixels it
 looks like it belongs to a different program. `pixui` hides it and draws its own

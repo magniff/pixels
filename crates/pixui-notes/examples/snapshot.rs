@@ -153,6 +153,8 @@ fn main() -> std::io::Result<()> {
         let theme: Theme = theme();
         let mut input = Input {
             mouse_in_window: true,
+            // Ask the toolkit for its own pointer, as the backend does.
+            draw_pointer: true,
             dt: 1.0 / 60.0,
             ..Default::default()
         };
@@ -171,21 +173,13 @@ fn main() -> std::io::Result<()> {
             }
 
             canvas.clear(theme.background);
-            // Mirror what the backend does after a frame, so captures show the
-            // drawn pointer the same way the running app does.
-            let out = {
+            // The whole frame, exactly as the backend runs it. `Ui::finish`
+            // applies the toolkit's own post-frame passes — the scanlines and
+            // the drawn pointer — so there is nothing to reimplement here.
+            {
                 let mut ui = Ui::begin(&mut canvas, &input, &theme, &mut ui_state);
                 frame(&mut ui, &mut app);
-                ui.finish()
-            };
-            if input.mouse_in_window {
-                pixui::cursor::draw(
-                    &mut canvas,
-                    input.mouse,
-                    out.cursor,
-                    theme.cursor_fill,
-                    theme.cursor_outline,
-                );
+                ui.finish();
             }
             input.begin_frame();
         }
