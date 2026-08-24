@@ -201,30 +201,6 @@ pub fn run() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
-        // Caught just after cmd-N: the ring landing on the pane that took
-        // the keyboard, on its way to dissolving.
-        Scene {
-            name: "pane-flare",
-            script: cmd('n'),
-            mouse: Point::new(-9, -9),
-            click_first: false,
-            double_click: false,
-            drag: None,
-            settle: 3,
-            canvas: (768, 470),
-        },
-        // The same cue landing on the search box, which is the whole of what
-        // cmd-S aims at.
-        Scene {
-            name: "search-flare",
-            script: cmd('s'),
-            mouse: Point::new(-9, -9),
-            click_first: false,
-            double_click: false,
-            drag: None,
-            settle: 3,
-            canvas: (768, 470),
-        },
         // Cmd-N hands the keyboard to the note list, which says so with a
         // marching ring on the row j and k will move.
         Scene {

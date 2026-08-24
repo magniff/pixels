@@ -147,42 +147,6 @@ impl Ui<'_> {
             .stroke_rect_dashed(rect.inset(-2), color, 2, 2, phase);
     }
 
-    /// Say that the keyboard has just arrived somewhere.
-    ///
-    /// Draws nothing at rest, so a region that holds the focus most of the
-    /// time does not end up wearing a permanent border. Pass `arrived` on the
-    /// one frame it took the keyboard; the ring runs itself from there.
-    ///
-    /// It lands rather than fades: the outline starts a few pixels out and
-    /// contracts onto the edge as it goes, which the eye reads as one movement
-    /// towards the thing that now has the keys.
-    ///
-    /// The line itself stays solid and loses its contrast instead of its
-    /// pixels. Dithering is right for a filled area, where a checker reads as
-    /// a shade; on a one-pixel outline it just breaks the line, and a broken
-    /// line does not read as an outline at all.
-    pub fn focus_flare(&mut self, id_label: &str, rect: Rect, arrived: bool) {
-        let dt = self.input.dt;
-        let id = self.id(id_label);
-        let flare = self.with_anim(id, |a| {
-            if arrived {
-                a.flash = 1.0;
-            }
-            a.flash = smooth(a.flash, 0.0, 7.0, dt);
-            a.flash
-        });
-        if flare <= 0.03 {
-            return;
-        }
-
-        let th = *self.theme;
-        let m = th.metrics;
-        let out = (flare * 3.0).round() as i32;
-        let color = th.panel.lerp(th.focus_ring, flare);
-        self.canvas
-            .stroke_chamfer(rect.inset(-out), color, m.chamfer);
-    }
-
     /// A recessed well: the inverse of [`Ui::draw_control_face`], used for
     /// tracks and anything the eye should read as a hole rather than a lump.
     fn draw_well(&mut self, rect: Rect, fill: Color) {
