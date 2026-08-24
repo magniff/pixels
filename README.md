@@ -30,12 +30,28 @@ digits are vim's counts, and `2j` has to keep meaning two lines down.
 |---|---|
 | ![source](screenshots/visual.png) | ![preview](screenshots/preview.png) |
 
+### What it understands
+
+Both forms of heading, ATX and underlined. Emphasis with either `*` or `_`,
+single, double or triple, nesting properly so `**bold with an *italic* word**`
+is both. Strikethrough. Code spans, including ones fenced by several backticks
+so they can hold a backtick. Backslash escapes. Links inline, by reference
+(full, collapsed and shortcut), as autolinks, and as bare URLs written in
+running prose. Images. Lists — bullet, ordered, and task — nested, with items
+that run over several lines and blank lines between them. Block quotes holding
+anything a document can hold, including other quotes, lazily continued. Code
+fenced with backticks or tildes, or indented four spaces. Tables with per-
+column alignment. Horizontal rules. Hard line breaks, both ways of writing one.
+
+Not supported, and left as plain text rather than pretended at: inline and
+block HTML, footnotes and definition lists, character entities, and any script
+the 5x7 ASCII font cannot draw.
+
 Tables size to their content, fenced code keeps its own slab and is never
-re-wrapped, task lists get real checkboxes, and links lose their targets. The
+re-wrapped, task lists get real checkboxes, and links lose their targets.
 Links in the preview are clickable: one naming another note opens it, and one
 with a scheme goes to the desktop to be opened. The seeded **Markdown
-showcase** note exercises the lot — open it and flip between
-the tabs. Switching dissolves one view into the other: every pixel takes one
+showcase** note exercises the lot — open it and flip between the tabs. Switching dissolves one view into the other: every pixel takes one
 side or the other by an ordered dither, because sixteen colours have nothing
 in between to fade through. The tabs themselves ride the same spring the
 buttons do, so the one you pick rises out of the strip as the other sinks.

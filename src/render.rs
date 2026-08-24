@@ -23,12 +23,20 @@ const ADVANCE: i32 = font::ADVANCE;
 /// line having to be typed for it.
 const PARA_GAP: i32 = 5;
 const HEADING_TOP: i32 = 6;
+/// How far a quote's contents sit right of its bar.
+const QUOTE_INDENT: i32 = 10;
 
 /// Everything the layout needs that does not change between blocks.
 struct Ctx {
     th: Theme,
-    /// Width available for content, in pixels.
-    width: i32,
+    /// Width available for content, in pixels. A cell because a quote lends
+    /// its contents a narrower one and hands it back, and everything below is
+    /// reached through a shared reference.
+    width: std::cell::Cell<i32>,
+    /// Whether the blocks being drawn are inside a quote, so their prose keeps
+    /// the quieter ink a quote has always had. Only prose: a heading inside a
+    /// quote is still a heading, and code inside one is still code.
+    quoted: std::cell::Cell<bool>,
     /// A link activated this frame, on its way back out to the application.
     ///
     /// A cell rather than a return value because a link is found six calls
@@ -39,9 +47,18 @@ struct Ctx {
 }
 
 impl Ctx {
-    /// How many characters fit in `width` pixels, less an indent.
+    /// How many characters fit in the current width, less an indent.
     fn cols(&self, indent: i32) -> usize {
-        (((self.width - indent) / ADVANCE).max(4)) as usize
+        (((self.width.get() - indent) / ADVANCE).max(4)) as usize
+    }
+
+    /// Run `f` with the width reduced by `by`, then put it back.
+    fn narrowed<R>(&self, by: i32, f: impl FnOnce() -> R) -> R {
+        let was = self.width.get();
+        self.width.set(was - by);
+        let r = f();
+        self.width.set(was);
+        r
     }
 }
 
@@ -86,7 +103,8 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
     for span in spans {
         let sx = x + col * ADVANCE;
         let len = span.text.chars().count() as i32;
-        let mut color = token_color(&ctx.th, span.tok);
+        let plain = span.tok == Tok::Text && ctx.quoted.get();
+        let mut color = token_color(&ctx.th, if plain { Tok::Quote } else { span.tok });
         let cell = Rect::new(sx - 1, y - 1, len * ADVANCE, LINE_H);
 
         match span.tok {
@@ -158,13 +176,11 @@ fn measure(block: &Block, ctx: &Ctx) -> i32 {
                 .sum::<i32>()
                 + PARA_GAP
         }
-        Block::Quote(lines) => {
-            let indent = 10;
-            lines
-                .iter()
-                .map(|l| wrap(l, ctx.cols(indent)).len().max(1) as i32 * LINE_H)
-                .sum::<i32>()
-                + 4
+        Block::Quote(inner) => {
+            let indent = QUOTE_INDENT;
+            ctx.narrowed(indent, || {
+                inner.iter().map(|b| measure(b, ctx)).sum::<i32>()
+            }) + 4
                 + PARA_GAP
         }
         Block::Code { lines, .. } => lines.len().max(1) as i32 * LINE_H + 8 + PARA_GAP,
@@ -207,7 +223,8 @@ fn list_indent(items: &[Item], item: &Item) -> i32 {
 pub fn draw_document(ui: &mut Ui, blocks: &[Block], width: i32) -> Option<String> {
     let ctx = Ctx {
         th: *ui.theme,
-        width,
+        width: std::cell::Cell::new(width),
+        quoted: std::cell::Cell::new(false),
         clicked: RefCell::new(None),
     };
     if blocks.is_empty() {
@@ -297,29 +314,24 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
             }
         }
 
-        Block::Quote(lines) => {
-            let indent = 10;
+        Block::Quote(inner) => {
+            // The contents are ordinary blocks, drawn ordinarily, in a column
+            // pushed right of the bar. A quote is a place, not a style — a
+            // heading inside one is still a heading.
             let bar = Rect::new(rect.x, rect.y, 2, rect.h - PARA_GAP);
             ui.canvas.fill_rect(bar, th.accent.lo);
-            let mut y = rect.y + 2;
-            for spans in lines {
-                for (i, line) in wrap(spans, ctx.cols(indent)).iter().enumerate() {
-                    let ly = y + i as i32 * LINE_H;
-                    let mut col = 0i32;
-                    for span in line {
-                        let sx = rect.x + indent + col * ADVANCE;
-                        font::draw_text(
-                            ui.canvas,
-                            sx,
-                            ly,
-                            &span.text,
-                            token_color(&th, Tok::Quote),
-                        );
-                        col += span.text.chars().count() as i32;
-                    }
+            let indent = QUOTE_INDENT;
+            let was = ctx.quoted.replace(true);
+            ctx.narrowed(indent, || {
+                let mut y = rect.y + 2;
+                for block in inner {
+                    let h = measure(block, ctx);
+                    let at = Rect::new(rect.x + indent, y, rect.w - indent, h);
+                    draw_block(ui, at, block, ctx);
+                    y += h;
                 }
-                y += wrap(spans, ctx.cols(indent)).len().max(1) as i32 * LINE_H;
-            }
+            });
+            ctx.quoted.set(was);
         }
 
         Block::Code { lang, lines } => {

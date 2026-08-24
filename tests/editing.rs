@@ -1309,10 +1309,12 @@ fn markup_inside_a_fence_is_left_alone() {
 fn quotes_gather_their_consecutive_lines() {
     let blocks = doc("> first\n> second\n\nafter");
     match &blocks[0] {
-        Block::Quote(lines) => {
-            assert_eq!(lines.len(), 2);
-            assert_eq!(flat(&lines[1]), "second");
-        }
+        // One paragraph, not two lines: a soft wrap inside a quote is a soft
+        // wrap like any other.
+        Block::Quote(inner) => match &inner[..] {
+            [Block::Paragraph(spans)] => assert_eq!(flat(spans), "first second"),
+            other => panic!("expected one paragraph, got {other:?}"),
+        },
         other => panic!("expected a quote, got {other:?}"),
     }
 }
@@ -1438,4 +1440,401 @@ fn a_scheme_is_told_apart_from_a_relative_note() {
         None,
         "a drive letter is one character, and a scheme is not"
     );
+}
+
+// ---------------------------------------------------------------- markdown:
+// inline constructs
+
+/// The spans of the one paragraph `text` parses to.
+fn para(text: &str) -> Vec<notes::markdown::Span> {
+    match doc(text).into_iter().next() {
+        Some(Block::Paragraph(spans)) => spans,
+        other => panic!("expected a paragraph, got {other:?}"),
+    }
+}
+
+/// The token each character of a rendered paragraph carries, as one string per
+/// span, so a test can say what was emphasised without counting spans.
+fn toks(spans: &[notes::markdown::Span]) -> Vec<(String, notes::markdown::Tok, bool)> {
+    spans
+        .iter()
+        .map(|s| (s.text.clone(), s.tok, s.bold))
+        .collect()
+}
+
+#[test]
+fn a_backslash_escapes_the_character_after_it() {
+    use notes::markdown::Tok;
+    let spans = para(r"\*not italic\* and \_not either\_");
+    assert_eq!(flat(&spans), "*not italic* and _not either_");
+    assert!(
+        spans.iter().all(|s| s.tok == Tok::Text),
+        "an escaped delimiter is text, not markup"
+    );
+}
+
+#[test]
+fn a_backslash_before_anything_else_is_a_backslash() {
+    assert_eq!(flat(&para(r"C:\path\to\file")), r"C:\path\to\file");
+}
+
+#[test]
+fn underscores_emphasise_like_asterisks() {
+    use notes::markdown::Tok;
+    assert_eq!(
+        toks(&para("_slanted_")),
+        [("slanted".into(), Tok::Italic, false)]
+    );
+    assert_eq!(
+        toks(&para("__heavy__")),
+        [("heavy".into(), Tok::Bold, true)]
+    );
+}
+
+#[test]
+fn underscores_inside_a_word_are_left_alone() {
+    use notes::markdown::Tok;
+    let spans = para("call snake_case_name here");
+    assert_eq!(flat(&spans), "call snake_case_name here");
+    assert!(
+        spans.iter().all(|s| s.tok == Tok::Text),
+        "an identifier is not three words in italics"
+    );
+}
+
+#[test]
+fn a_lone_asterisk_between_spaces_is_multiplication() {
+    use notes::markdown::Tok;
+    let spans = para("2 * 3 * 4");
+    assert!(
+        spans.iter().all(|s| s.tok == Tok::Text),
+        "a delimiter run has to be followed by something to emphasise"
+    );
+}
+
+#[test]
+fn emphasis_nests_rather_than_replacing() {
+    use notes::markdown::Tok;
+    assert_eq!(
+        toks(&para("**bold with *italic* inside**")),
+        [
+            ("bold with ".into(), Tok::Bold, true),
+            ("italic".into(), Tok::Bold, true),
+            (" inside".into(), Tok::Bold, true),
+        ],
+        "the inner run is both, not whichever was parsed last"
+    );
+}
+
+#[test]
+fn a_code_span_may_hold_backticks_if_it_is_fenced_by_more() {
+    use notes::markdown::Tok;
+    let spans = para("``a ` b``");
+    assert_eq!(toks(&spans), [("a ` b".into(), Tok::Code, false)]);
+}
+
+#[test]
+fn a_code_span_drops_one_space_of_padding() {
+    assert_eq!(flat(&para("`` ` ``")), "`");
+}
+
+#[test]
+fn markup_inside_a_code_span_is_literal() {
+    use notes::markdown::Tok;
+    let spans = para("`**not bold**`");
+    assert_eq!(toks(&spans), [("**not bold**".into(), Tok::Code, false)]);
+}
+
+#[test]
+fn an_autolink_links_to_itself() {
+    let spans = para("see <https://example.com/x> for more");
+    let link = spans.iter().find(|s| s.href.is_some()).expect("a link");
+    assert_eq!(link.text, "https://example.com/x");
+    assert_eq!(link.href.as_deref(), Some("https://example.com/x"));
+}
+
+#[test]
+fn an_autolinked_address_becomes_a_mailto() {
+    let spans = para("write to <someone@example.com>");
+    let link = spans.iter().find(|s| s.href.is_some()).expect("a link");
+    assert_eq!(link.href.as_deref(), Some("mailto:someone@example.com"));
+}
+
+#[test]
+fn a_bare_url_is_linked_where_it_stands() {
+    let spans = para("go to https://example.com/a?b=c now");
+    let link = spans.iter().find(|s| s.href.is_some()).expect("a link");
+    assert_eq!(link.text, "https://example.com/a?b=c");
+    assert_eq!(flat(&spans), "go to https://example.com/a?b=c now");
+}
+
+#[test]
+fn a_bare_url_gives_back_the_punctuation_that_ends_the_sentence() {
+    let spans = para("see https://example.com.");
+    let link = spans.iter().find(|s| s.href.is_some()).expect("a link");
+    assert_eq!(link.text, "https://example.com", "the full stop is prose");
+    assert_eq!(flat(&spans), "see https://example.com.");
+}
+
+#[test]
+fn a_bare_www_host_gets_a_scheme_to_open_with() {
+    let spans = para("at www.example.com");
+    let link = spans.iter().find(|s| s.href.is_some()).expect("a link");
+    assert_eq!(link.href.as_deref(), Some("https://www.example.com"));
+}
+
+#[test]
+fn reference_links_resolve_against_their_definitions() {
+    let full = para("a [label][ref] b\n\n[ref]: https://example.com");
+    assert_eq!(
+        full.iter()
+            .find(|s| s.href.is_some())
+            .unwrap()
+            .href
+            .as_deref(),
+        Some("https://example.com")
+    );
+}
+
+#[test]
+fn a_collapsed_reference_reuses_its_own_label() {
+    let blocks = doc("see [pixui][]\n\n[pixui]: https://example.com/p");
+    let Block::Paragraph(spans) = &blocks[0] else {
+        panic!("expected a paragraph")
+    };
+    let link = spans.iter().find(|s| s.href.is_some()).expect("a link");
+    assert_eq!(link.text, "pixui");
+    assert_eq!(link.href.as_deref(), Some("https://example.com/p"));
+}
+
+#[test]
+fn a_shortcut_reference_is_just_the_label() {
+    let blocks = doc("see [pixui]\n\n[pixui]: https://example.com/p");
+    let Block::Paragraph(spans) = &blocks[0] else {
+        panic!("expected a paragraph")
+    };
+    assert_eq!(
+        spans
+            .iter()
+            .find(|s| s.href.is_some())
+            .unwrap()
+            .href
+            .as_deref(),
+        Some("https://example.com/p")
+    );
+}
+
+#[test]
+fn brackets_with_no_definition_stay_prose() {
+    let spans = para("a [label] with nothing behind it");
+    assert!(spans.iter().all(|s| s.href.is_none()));
+    assert_eq!(flat(&spans), "a [label] with nothing behind it");
+}
+
+#[test]
+fn a_definition_line_is_not_content() {
+    let blocks = doc("text\n\n[ref]: https://example.com \"a title\"");
+    assert_eq!(
+        blocks.len(),
+        1,
+        "the definition is machinery, not a paragraph"
+    );
+}
+
+#[test]
+fn a_link_title_is_read_and_dropped() {
+    let spans = para(r#"[a](https://example.com "the title")"#);
+    let link = spans.iter().find(|s| s.href.is_some()).expect("a link");
+    assert_eq!(link.href.as_deref(), Some("https://example.com"));
+    assert_eq!(flat(&spans), "a", "the title is not prose either");
+}
+
+#[test]
+fn a_destination_may_be_wrapped_in_angle_brackets() {
+    let spans = para("[a](<https://example.com/with space>)");
+    assert_eq!(
+        spans
+            .iter()
+            .find(|s| s.href.is_some())
+            .unwrap()
+            .href
+            .as_deref(),
+        Some("https://example.com/with space")
+    );
+}
+
+#[test]
+fn a_link_label_keeps_its_own_emphasis() {
+    let spans = para("[**loud** link](https://example.com)");
+    assert_eq!(flat(&spans), "loud link");
+    assert!(
+        spans.iter().all(|s| s.href.is_some()),
+        "every part of the label points at the target"
+    );
+    assert!(
+        spans.iter().any(|s| s.bold),
+        "and the bold part is still bold"
+    );
+}
+
+// ---------------------------------------------------------------- markdown:
+// block constructs
+
+#[test]
+fn a_row_of_equals_makes_the_line_above_a_heading() {
+    match &doc("A title\n=======\n\nbody")[0] {
+        Block::Heading { level, spans } => {
+            assert_eq!(*level, 1);
+            assert_eq!(flat(spans), "A title");
+        }
+        other => panic!("expected a heading, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_row_of_dashes_under_text_is_a_heading_not_a_rule() {
+    match &doc("A title\n---\n\nbody")[0] {
+        Block::Heading { level, .. } => assert_eq!(*level, 2),
+        other => panic!("expected a heading, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_row_of_dashes_on_its_own_is_still_a_rule() {
+    assert!(matches!(doc("text\n\n---\n\nmore")[1], Block::Rule));
+}
+
+#[test]
+fn four_spaces_of_indent_is_a_code_block() {
+    match &doc("text\n\n    fn main() {}\n    // and this\n\nafter")[1] {
+        Block::Code { lines, lang } => {
+            assert!(lang.is_empty(), "an indented block names no language");
+            assert_eq!(lines, &["fn main() {}", "// and this"]);
+        }
+        other => panic!("expected code, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_tilde_fence_can_hold_a_backtick_fence() {
+    match &doc("~~~\n```\nnested\n```\n~~~")[0] {
+        Block::Code { lines, .. } => assert_eq!(lines, &["```", "nested", "```"]),
+        other => panic!("expected code, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_fence_is_closed_only_by_its_own_delimiter() {
+    match &doc("````\n```\nstill inside\n```\n````")[0] {
+        Block::Code { lines, .. } => assert_eq!(lines.len(), 3),
+        other => panic!("expected code, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_heading_may_be_closed_with_hashes() {
+    match &doc("## Middle ##")[0] {
+        Block::Heading { level, spans } => {
+            assert_eq!(*level, 2);
+            assert_eq!(flat(spans), "Middle");
+        }
+        other => panic!("expected a heading, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_list_item_keeps_the_lines_that_continue_it() {
+    match &doc("- a first item that\n  runs onto a second line\n- and a second")[0] {
+        Block::List(items) => {
+            assert_eq!(items.len(), 2, "two items, not three");
+            assert_eq!(
+                flat(&items[0].spans),
+                "a first item that runs onto a second line"
+            );
+        }
+        other => panic!("expected a list, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_blank_line_between_items_does_not_split_the_list() {
+    match &doc("- one\n\n- two\n\n- three")[0] {
+        Block::List(items) => assert_eq!(items.len(), 3),
+        other => panic!("expected one list, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_quote_can_hold_anything_a_document_can() {
+    match &doc("> # Heading\n>\n> - a bullet\n> - another")[0] {
+        Block::Quote(inner) => {
+            assert!(matches!(inner[0], Block::Heading { level: 1, .. }));
+            match &inner[1] {
+                Block::List(items) => assert_eq!(items.len(), 2),
+                other => panic!("expected a list inside the quote, got {other:?}"),
+            }
+        }
+        other => panic!("expected a quote, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_quote_runs_on_without_repeating_its_marker() {
+    match &doc("> first line\nsecond line\n\nafter")[0] {
+        Block::Quote(inner) => match &inner[..] {
+            [Block::Paragraph(spans)] => assert_eq!(flat(spans), "first line second line"),
+            other => panic!("expected one paragraph, got {other:?}"),
+        },
+        other => panic!("expected a quote, got {other:?}"),
+    }
+}
+
+#[test]
+fn two_trailing_spaces_ask_for_a_line_break() {
+    let spans = para("first line  \nsecond line");
+    assert_eq!(
+        flat(&spans),
+        "first line\nsecond line",
+        "a hard break survives into the text as a newline"
+    );
+}
+
+#[test]
+fn a_trailing_backslash_asks_for_one_too() {
+    assert_eq!(flat(&para("first\\\nsecond")), "first\nsecond");
+}
+
+#[test]
+fn a_hard_break_ends_a_wrapped_row() {
+    let rows = notes::markdown::wrap_ranges("ab\ncd", 40);
+    assert_eq!(
+        rows,
+        vec![(0, 2), (3, 5)],
+        "and the newline itself is drawn by nobody"
+    );
+}
+
+#[test]
+fn a_soft_wrap_is_not_a_line_break() {
+    assert_eq!(
+        flat(&para("first line\nsecond line")),
+        "first line second line"
+    );
+}
+
+#[test]
+fn three_delimiters_are_bold_and_italic_at_once() {
+    use notes::markdown::Tok;
+    let spans = para("***both***");
+    assert_eq!(flat(&spans), "both", "and nothing left over from the run");
+    assert_eq!(toks(&spans), [("both".into(), Tok::Bold, true)]);
+}
+
+#[test]
+fn a_title_may_be_underlined_rather_than_hashed() {
+    let lines: Vec<String> = "Underlined\n==========\n\n# Later"
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(notes::markdown::derive_title(&lines), "Underlined");
 }
