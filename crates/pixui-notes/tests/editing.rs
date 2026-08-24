@@ -8,7 +8,7 @@
 use pixui::{Key, Mods};
 use pixui_notes::markdown::{self, Tok};
 use pixui_notes::text::{Buffer, Cursor};
-use pixui_notes::vim::{Mode, Vim, VimEvent};
+use pixui_notes::vim::{Mode, Selection, Vim, VimEvent, VisualKind};
 
 /// Type a sequence of keys, as a user would.
 fn press(vim: &mut Vim, buf: &mut Buffer, s: &str) -> Vec<VimEvent> {
@@ -265,8 +265,10 @@ fn a_whole_insert_session_undoes_as_one_step() {
 fn visual_mode_selects_and_deletes() {
     let (mut v, mut b) = buffer("alpha beta");
     press(&mut v, &mut b, "v4l");
-    assert_eq!(v.mode, Mode::Visual);
-    let (from, to) = v.selection(&b).expect("a selection exists in visual mode");
+    assert_eq!(v.mode, Mode::Visual(VisualKind::Char));
+    let Some(Selection::Chars { from, to }) = v.selection(&b) else {
+        panic!("charwise visual should give a charwise selection")
+    };
     assert_eq!(
         (from.col, to.col),
         (0, 4),
@@ -461,7 +463,9 @@ fn text_objects_extend_a_visual_selection() {
     let (mut v, mut b) = buffer("alpha beta gamma");
     b.cursor = Cursor::new(0, 7);
     press(&mut v, &mut b, "viw");
-    let (from, to) = v.selection(&b).expect("visual mode has a selection");
+    let Some(Selection::Chars { from, to }) = v.selection(&b) else {
+        panic!("visual mode has a charwise selection")
+    };
     assert_eq!((from.col, to.col), (6, 9), "iw covers exactly `beta`");
     press(&mut v, &mut b, "d");
     assert_eq!(b.to_text(), "alpha  gamma");
@@ -648,4 +652,248 @@ fn the_window_is_configured_to_grow_rather_than_magnify() {
         "the minimum canvas must be smaller than the starting one, or the window \
          opens already at its minimum and can only ever grow"
     );
+}
+
+// -------------------------------------------------------------- visual modes
+
+/// Enter blockwise visual, which is a real Ctrl chord rather than a letter.
+fn ctrl_v(v: &mut Vim, b: &mut Buffer) {
+    let ctrl = Mods {
+        ctrl: true,
+        ..Default::default()
+    };
+    v.handle(b, Key::Char('v'), ctrl);
+}
+
+#[test]
+fn v_toggles_off_and_switches_shape() {
+    let (mut v, mut b) = buffer("one\ntwo");
+    press(&mut v, &mut b, "v");
+    assert_eq!(v.mode, Mode::Visual(VisualKind::Char));
+    press(&mut v, &mut b, "v");
+    assert_eq!(
+        v.mode,
+        Mode::Normal,
+        "the same key again leaves visual mode"
+    );
+
+    press(&mut v, &mut b, "v");
+    press(&mut v, &mut b, "V");
+    assert_eq!(
+        v.mode,
+        Mode::Visual(VisualKind::Line),
+        "a different key changes shape without leaving"
+    );
+}
+
+#[test]
+fn linewise_visual_takes_whole_lines_whatever_column_you_start_in() {
+    let (mut v, mut b) = buffer("first\nsecond\nthird");
+    press(&mut v, &mut b, "lllVj");
+    let Some(Selection::Lines { from, to }) = v.selection(&b) else {
+        panic!("V should give a linewise selection")
+    };
+    assert_eq!((from, to), (0, 1));
+    press(&mut v, &mut b, "d");
+    assert_eq!(b.to_text(), "third");
+}
+
+#[test]
+fn linewise_yank_and_put_duplicates_the_lines() {
+    let (mut v, mut b) = buffer("alpha\nbeta\ngamma");
+    press(&mut v, &mut b, "Vjy");
+    assert_eq!(
+        b.to_text(),
+        "alpha\nbeta\ngamma",
+        "yank leaves the buffer alone"
+    );
+    press(&mut v, &mut b, "p");
+    assert_eq!(b.to_text(), "alpha\nalpha\nbeta\nbeta\ngamma");
+}
+
+#[test]
+fn linewise_change_leaves_a_blank_line_to_type_into() {
+    let (mut v, mut b) = buffer("one\ntwo\nthree");
+    press(&mut v, &mut b, "Vjc");
+    assert_eq!(v.mode, Mode::Insert);
+    press(&mut v, &mut b, "new");
+    assert_eq!(b.to_text(), "new\nthree");
+}
+
+#[test]
+fn blockwise_visual_selects_a_rectangle() {
+    let (mut v, mut b) = buffer("abcdef\nghijkl\nmnopqr");
+    press(&mut v, &mut b, "l");
+    ctrl_v(&mut v, &mut b);
+    press(&mut v, &mut b, "jjl");
+    let Some(Selection::Block {
+        top,
+        bottom,
+        left,
+        right,
+    }) = v.selection(&b)
+    else {
+        panic!("Ctrl-v should give a block selection")
+    };
+    assert_eq!((top, bottom, left, right), (0, 2, 1, 2));
+}
+
+#[test]
+fn blockwise_delete_cuts_a_column_out_of_every_line() {
+    let (mut v, mut b) = buffer("abcdef\nghijkl\nmnopqr");
+    press(&mut v, &mut b, "l");
+    ctrl_v(&mut v, &mut b);
+    press(&mut v, &mut b, "jjld");
+    assert_eq!(b.to_text(), "adef\ngjkl\nmpqr");
+}
+
+#[test]
+fn blockwise_insert_replicates_to_every_row() {
+    // The whole reason blockwise exists: type once, apply everywhere.
+    let (mut v, mut b) = buffer("one\ntwo\nthree");
+    ctrl_v(&mut v, &mut b);
+    press(&mut v, &mut b, "jj");
+    press(&mut v, &mut b, "I- \x1b");
+    assert_eq!(b.to_text(), "- one\n- two\n- three");
+}
+
+#[test]
+fn blockwise_append_pads_short_lines_so_the_block_stays_square() {
+    let (mut v, mut b) = buffer("aaa\nb\nccc");
+    press(&mut v, &mut b, "ll");
+    ctrl_v(&mut v, &mut b);
+    press(&mut v, &mut b, "jj");
+    press(&mut v, &mut b, "A!\x1b");
+    assert_eq!(b.to_text(), "aaa!\nb  !\nccc!");
+}
+
+#[test]
+fn a_blockwise_insert_that_types_nothing_changes_nothing() {
+    let (mut v, mut b) = buffer("one\ntwo");
+    ctrl_v(&mut v, &mut b);
+    press(&mut v, &mut b, "j");
+    press(&mut v, &mut b, "I\x1b");
+    assert_eq!(b.to_text(), "one\ntwo");
+}
+
+#[test]
+fn blockwise_yank_and_put_re_forms_the_rectangle() {
+    let (mut v, mut b) = buffer("ab\ncd\n..\n..");
+    ctrl_v(&mut v, &mut b);
+    press(&mut v, &mut b, "jl");
+    press(&mut v, &mut b, "y");
+    press(&mut v, &mut b, "jjP");
+    assert_eq!(b.to_text(), "ab\ncd\nab..\ncd..");
+}
+
+#[test]
+fn o_swaps_which_end_of_the_selection_moves() {
+    let (mut v, mut b) = buffer("abcdefgh");
+    press(&mut v, &mut b, "3lv2l");
+    let Some(Selection::Chars { from, to }) = v.selection(&b) else {
+        panic!()
+    };
+    assert_eq!((from.col, to.col), (3, 5));
+
+    // After `o` the cursor is on the far end, so a motion extends backwards.
+    press(&mut v, &mut b, "o2h");
+    let Some(Selection::Chars { from, to }) = v.selection(&b) else {
+        panic!()
+    };
+    assert_eq!((from.col, to.col), (1, 5));
+}
+
+#[test]
+fn text_objects_work_in_linewise_visual_too() {
+    let (mut v, mut b) = buffer("one\ntwo\n\nthree");
+    press(&mut v, &mut b, "Vip");
+    let span = v.selection(&b).expect("a selection").line_span();
+    assert_eq!(span, (0, 1), "ip is the run of non-blank lines");
+}
+
+#[test]
+fn a_block_reports_its_columns_even_on_lines_too_short_to_reach_them() {
+    // The rectangle has to stay a rectangle on screen; that is the only way to
+    // see what a blockwise append is about to pad out.
+    let sel = Selection::Block {
+        top: 0,
+        bottom: 2,
+        left: 4,
+        right: 6,
+    };
+    assert_eq!(
+        sel.columns_on(1, 0),
+        Some((4, 7)),
+        "an empty line still shows the block"
+    );
+    assert_eq!(sel.columns_on(9, 80), None, "but only within its line span");
+}
+
+#[test]
+fn selection_shapes_report_the_right_columns_per_line() {
+    let chars = Selection::Chars {
+        from: Cursor::new(1, 3),
+        to: Cursor::new(3, 2),
+    };
+    assert_eq!(chars.columns_on(0, 10), None);
+    assert_eq!(
+        chars.columns_on(1, 10),
+        Some((3, 10)),
+        "the first line runs to its end"
+    );
+    assert_eq!(
+        chars.columns_on(2, 10),
+        Some((0, 10)),
+        "middle lines are whole"
+    );
+    assert_eq!(
+        chars.columns_on(3, 10),
+        Some((0, 3)),
+        "the last stops at the cursor"
+    );
+
+    let lines = Selection::Lines { from: 1, to: 2 };
+    assert_eq!(lines.columns_on(1, 7), Some((0, 7)));
+    assert_eq!(lines.columns_on(3, 7), None);
+}
+
+#[test]
+fn an_edit_forgets_the_column_that_j_and_k_remember() {
+    // `j`/`k` return to the column you last moved to horizontally. An edit that
+    // jumps the caret has to clear that, or the next vertical motion snaps to
+    // wherever the caret was several commands ago — which is how a blockwise
+    // paste ends up one column off.
+    let (mut v, mut b) = buffer("abcdef\nghijkl\nmnopqr");
+    press(&mut v, &mut b, "lll");
+    assert_eq!(b.cursor.col, 3);
+    press(&mut v, &mut b, "dd");
+    assert_eq!(
+        b.cursor.col, 0,
+        "deleting a line puts the caret at its start"
+    );
+    press(&mut v, &mut b, "j");
+    assert_eq!(b.cursor.col, 0, "and `j` must not resurrect the old column");
+}
+
+#[test]
+fn g_takes_its_count_as_a_line_number_not_a_repeat() {
+    let (mut v, mut b) = buffer("one\ntwo\nthree\nfour\nfive");
+    press(&mut v, &mut b, "3G");
+    assert_eq!(
+        b.cursor.line, 2,
+        "3G is line three, not three trips to the end"
+    );
+    press(&mut v, &mut b, "G");
+    assert_eq!(b.cursor.line, 4, "a bare G is still the last line");
+    press(&mut v, &mut b, "2gg");
+    assert_eq!(b.cursor.line, 1, "and gg counts the same way");
+    press(&mut v, &mut b, "99G");
+    assert_eq!(b.cursor.line, 4, "past the end clamps to the last line");
+}
+
+#[test]
+fn g_lands_on_the_first_non_blank_of_its_line() {
+    let (mut v, mut b) = buffer("one\n    indented\nthree");
+    press(&mut v, &mut b, "2G");
+    assert_eq!((b.cursor.line, b.cursor.col), (1, 4));
 }

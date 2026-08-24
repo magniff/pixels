@@ -11,14 +11,14 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-use pixui::{Canvas, Input, Key, Point, Theme, Ui, UiState};
+use pixui::{Canvas, Input, Key, Mods, Point, Theme, Ui, UiState};
 use pixui_notes::{frame, theme, Notes};
 
 /// One capture: a name, keys to type, and how long to let things settle.
 struct Scene {
     name: &'static str,
     /// Typed one per frame, so vim's pending-key parsing runs for real.
-    script: Vec<Key>,
+    script: Vec<Press>,
     mouse: Point,
     settle: u32,
     /// Canvas size. Under `Scaling::Adaptive` this is what a resized window
@@ -26,16 +26,37 @@ struct Scene {
     canvas: (i32, i32),
 }
 
-/// Turn a string into keystrokes, mapping space and newline to their keys.
-fn keys(s: &str) -> Vec<Key> {
+/// One keystroke, with whatever modifiers were held for it.
+#[derive(Clone, Copy)]
+struct Press {
+    key: Key,
+    mods: Mods,
+}
+
+/// Turn a string into plain keystrokes, mapping space, newline and escape.
+fn keys(s: &str) -> Vec<Press> {
     s.chars()
-        .map(|c| match c {
-            ' ' => Key::Space,
-            '\n' => Key::Enter,
-            '\x1b' => Key::Escape,
-            c => Key::Char(c),
+        .map(|c| Press {
+            key: match c {
+                ' ' => Key::Space,
+                '\n' => Key::Enter,
+                '\x1b' => Key::Escape,
+                c => Key::Char(c),
+            },
+            mods: Mods::default(),
         })
         .collect()
+}
+
+/// A Ctrl chord, which a bare character cannot express.
+fn ctrl(c: char) -> Vec<Press> {
+    vec![Press {
+        key: Key::Char(c),
+        mods: Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+    }]
 }
 
 fn main() -> std::io::Result<()> {
@@ -74,14 +95,14 @@ fn main() -> std::io::Result<()> {
         },
         Scene {
             name: "05-open-dialog",
-            script: [keys(":e"), vec![Key::Enter], keys("jj")].concat(),
+            script: [keys(":e"), keys("\n"), keys("jj")].concat(),
             mouse: Point::new(-9, -9),
             settle: 40,
             canvas: (768, 470),
         },
         Scene {
             name: "06-save-dialog",
-            script: [keys(":new"), vec![Key::Enter], keys(":w"), vec![Key::Enter]].concat(),
+            script: [keys(":new"), keys("\n"), keys(":w"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
             settle: 40,
             canvas: (768, 470),
@@ -94,6 +115,14 @@ fn main() -> std::io::Result<()> {
             mouse: Point::new(-9, -9),
             settle: 40,
             canvas: (1050, 620),
+        },
+        // A blockwise selection over the list items.
+        Scene {
+            name: "09-visual-block",
+            script: [keys("11G"), ctrl('v'), keys("jjj"), keys("llllllll")].concat(),
+            mouse: Point::new(-9, -9),
+            settle: 30,
+            canvas: (768, 470),
         },
         // A text object mid-flight: `ci"` inside a quoted span.
         Scene {
@@ -125,9 +154,11 @@ fn main() -> std::io::Result<()> {
             input.time = f as f32 / 60.0;
             input.mouse = scene.mouse;
             input.keys.clear();
+            input.mods = Mods::default();
             if f >= 5 {
-                if let Some(key) = scene.script.get((f - 5) as usize) {
-                    input.keys.push(*key);
+                if let Some(press) = scene.script.get((f - 5) as usize) {
+                    input.keys.push(press.key);
+                    input.mods = press.mods;
                 }
             }
 

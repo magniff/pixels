@@ -101,6 +101,17 @@ impl Buffer {
         }
     }
 
+    /// Move the caret, syncing the column `j`/`k` will try to return to.
+    ///
+    /// Anything that *jumps* the caret — an edit, an operator, a paste — must
+    /// go through this. Setting `cursor` alone leaves `desired_col` pointing at
+    /// wherever the caret last was, and the next `j` snaps to a column the user
+    /// visited several commands ago.
+    pub fn move_to(&mut self, cursor: Cursor) {
+        self.cursor = cursor;
+        self.desired_col = cursor.col;
+    }
+
     /// Clamp the cursor into the buffer. In normal mode the caret sits *on* a
     /// character, so it stops one short of the end; in insert mode it may sit
     /// past the last one.
@@ -173,6 +184,7 @@ impl Buffer {
         chars.insert(at, c);
         self.set_line(self.cursor.line, &chars);
         self.cursor.col = at + 1;
+        self.desired_col = self.cursor.col;
         self.dirty = true;
     }
 
@@ -186,6 +198,7 @@ impl Buffer {
         self.lines.insert(self.cursor.line + 1, tail);
         self.cursor.line += 1;
         self.cursor.col = 0;
+        self.desired_col = 0;
         self.dirty = true;
     }
 
@@ -199,6 +212,7 @@ impl Buffer {
         self.lines.insert(at, String::new());
         self.cursor.line = at;
         self.cursor.col = 0;
+        self.desired_col = 0;
         self.dirty = true;
     }
 
@@ -215,6 +229,7 @@ impl Buffer {
             self.cursor.col = self.line_len(self.cursor.line);
             self.lines[self.cursor.line].push_str(&current);
         }
+        self.desired_col = self.cursor.col;
         self.dirty = true;
     }
 
@@ -259,6 +274,7 @@ impl Buffer {
         }
         self.cursor.line = from.min(self.lines.len() - 1);
         self.cursor.col = 0;
+        self.desired_col = 0;
         self.dirty = true;
         removed
     }
@@ -307,7 +323,7 @@ impl Buffer {
     pub fn delete_between(&mut self, from: Cursor, to: Cursor) {
         if from.line == to.line {
             self.delete_range_in_line(from.line, from.col.min(to.col), from.col.max(to.col));
-            self.cursor = Cursor::new(from.line, from.col.min(to.col));
+            self.move_to(Cursor::new(from.line, from.col.min(to.col)));
             return;
         }
         let head: String = self.chars(from.line).into_iter().take(from.col).collect();
@@ -315,7 +331,7 @@ impl Buffer {
         self.lines
             .drain(from.line..=to.line.min(self.lines.len() - 1));
         self.lines.insert(from.line, format!("{head}{tail}"));
-        self.cursor = from;
+        self.move_to(from);
         self.dirty = true;
     }
 }

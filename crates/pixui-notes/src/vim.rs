@@ -13,15 +13,89 @@ use pixui::{Key, Mods};
 
 use crate::text::{Buffer, Cursor};
 
+/// Which shape a visual selection takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum VisualKind {
+    /// `v`: a run of characters, which may wrap across lines.
+    Char,
+    /// `V`: whole lines.
+    Line,
+    /// `Ctrl-v`: a rectangle of columns.
+    Block,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Mode {
     #[default]
     Normal,
     Insert,
-    /// Charwise visual. Linewise (`V`) and block (`Ctrl-v`) are not implemented.
-    Visual,
+    Visual(VisualKind),
     /// Typing a `:` command.
     Command,
+}
+
+/// What is currently selected, in whichever shape the visual mode is in.
+///
+/// Ranges are inclusive at both ends, which is how vim thinks about a
+/// selection: the character under the cursor is part of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Selection {
+    Chars {
+        from: Cursor,
+        to: Cursor,
+    },
+    Lines {
+        from: usize,
+        to: usize,
+    },
+    Block {
+        top: usize,
+        bottom: usize,
+        left: usize,
+        right: usize,
+    },
+}
+
+impl Selection {
+    /// The half-open column range covered on `line`, if any.
+    ///
+    /// A block reports its columns whether or not the line reaches them, so the
+    /// rectangle stays a rectangle on screen even over short lines — which is
+    /// the whole point of seeing it.
+    pub fn columns_on(&self, line: usize, line_len: usize) -> Option<(usize, usize)> {
+        match *self {
+            Selection::Chars { from, to } => {
+                if line < from.line || line > to.line {
+                    return None;
+                }
+                let lo = if line == from.line { from.col } else { 0 };
+                let hi = if line == to.line {
+                    to.col + 1
+                } else {
+                    line_len.max(1)
+                };
+                Some((lo, hi))
+            }
+            Selection::Lines { from, to } => {
+                (line >= from && line <= to).then(|| (0, line_len.max(1)))
+            }
+            Selection::Block {
+                top,
+                bottom,
+                left,
+                right,
+            } => (line >= top && line <= bottom).then(|| (left, right + 1)),
+        }
+    }
+
+    /// The lines the selection touches, inclusive.
+    pub fn line_span(&self) -> (usize, usize) {
+        match *self {
+            Selection::Chars { from, to } => (from.line, to.line),
+            Selection::Lines { from, to } => (from, to),
+            Selection::Block { top, bottom, .. } => (top, bottom),
+        }
+    }
 }
 
 impl Mode {
@@ -29,7 +103,9 @@ impl Mode {
         match self {
             Mode::Normal => "NORMAL",
             Mode::Insert => "INSERT",
-            Mode::Visual => "VISUAL",
+            Mode::Visual(VisualKind::Char) => "VISUAL",
+            Mode::Visual(VisualKind::Line) => "V-LINE",
+            Mode::Visual(VisualKind::Block) => "V-BLOCK",
             Mode::Command => "COMMAND",
         }
     }
@@ -41,6 +117,9 @@ impl Mode {
 pub enum Register {
     Chars(String),
     Lines(Vec<String>),
+    /// A rectangle, one string per row. Pasting it re-forms the rectangle at
+    /// the cursor rather than laying the rows out end to end.
+    Block(Vec<String>),
 }
 
 /// Something the editor cannot do by itself, handed back to the application.
@@ -89,6 +168,23 @@ enum Parse {
     Invalid,
 }
 
+/// A blockwise insert in progress.
+///
+/// `I` and `A` in block mode type on one line and replicate to the rest when
+/// insert mode ends — the reason anyone reaches for blockwise in the first
+/// place. Nothing can be replicated until the typing is finished, so the intent
+/// has to be parked here until then.
+#[derive(Clone, Debug)]
+struct BlockInsert {
+    lines: Vec<usize>,
+    col: usize,
+    /// The line actually being typed on.
+    anchor_line: usize,
+    /// Whether a line too short to reach `col` is padded to it (`A`) or left
+    /// alone (`I`).
+    pad: bool,
+}
+
 #[derive(Default)]
 pub struct Vim {
     pub mode: Mode,
@@ -100,6 +196,7 @@ pub struct Vim {
     pub anchor: Cursor,
     /// Transient message for the status line.
     pub status: String,
+    block_insert: Option<BlockInsert>,
 }
 
 impl Vim {
@@ -107,13 +204,34 @@ impl Vim {
         Self::default()
     }
 
-    /// The inclusive selection in visual mode, normalised so `.0 <= .1`.
-    pub fn selection(&self, buf: &Buffer) -> Option<(Cursor, Cursor)> {
-        if self.mode != Mode::Visual {
-            return None;
+    /// Which visual mode is active, if any.
+    pub fn visual_kind(&self) -> Option<VisualKind> {
+        match self.mode {
+            Mode::Visual(kind) => Some(kind),
+            _ => None,
         }
+    }
+
+    /// The current selection, normalised so both ends are in order.
+    pub fn selection(&self, buf: &Buffer) -> Option<Selection> {
+        let kind = self.visual_kind()?;
         let (a, b) = (self.anchor, buf.cursor);
-        Some(if a <= b { (a, b) } else { (b, a) })
+        Some(match kind {
+            VisualKind::Char => {
+                let (from, to) = if a <= b { (a, b) } else { (b, a) };
+                Selection::Chars { from, to }
+            }
+            VisualKind::Line => Selection::Lines {
+                from: a.line.min(b.line),
+                to: a.line.max(b.line),
+            },
+            VisualKind::Block => Selection::Block {
+                top: a.line.min(b.line),
+                bottom: a.line.max(b.line),
+                left: a.col.min(b.col),
+                right: a.col.max(b.col),
+            },
+        })
     }
 
     /// Feed one key press. Returns an event when the app has work to do.
@@ -124,7 +242,7 @@ impl Vim {
                 None
             }
             Mode::Command => self.handle_command(key),
-            Mode::Normal | Mode::Visual => self.handle_normal(buf, key, mods),
+            Mode::Normal | Mode::Visual(_) => self.handle_normal(buf, key, mods),
         }
     }
 
@@ -133,6 +251,7 @@ impl Vim {
     fn handle_insert(&mut self, buf: &mut Buffer, key: Key, mods: Mods) {
         match key {
             Key::Escape => {
+                self.finish_block_insert(buf);
                 self.mode = Mode::Normal;
                 // vim steps left on leaving insert, so the caret lands on the
                 // character you just typed rather than past it.
@@ -202,6 +321,9 @@ impl Vim {
                         "nothing to redo".into()
                     };
                 }
+                Key::Char('v') => {
+                    self.enter_visual(buf, VisualKind::Block);
+                }
                 Key::Char('d') | Key::Char('u') => {
                     let half = 12i32;
                     let d = if key == Key::Char('d') { half } else { -half };
@@ -218,7 +340,7 @@ impl Vim {
         match key {
             Key::Escape => {
                 self.pending.clear();
-                if self.mode == Mode::Visual {
+                if self.visual_kind().is_some() {
                     self.mode = Mode::Normal;
                 }
                 return None;
@@ -318,7 +440,7 @@ impl Vim {
         }
 
         // ---- visual-mode text objects ------------------------------------
-        if self.mode == Mode::Visual && matches!(c, 'i' | 'a') {
+        if self.visual_kind().is_some() && matches!(c, 'i' | 'a') {
             let Some(&object) = chars.get(i + 1) else {
                 return Parse::Incomplete;
             };
@@ -338,43 +460,34 @@ impl Vim {
             return Parse::Done;
         }
 
-        // ---- visual-mode operators ---------------------------------------
-        if self.mode == Mode::Visual {
-            if let Some((from, to)) = self.selection(buf) {
-                match c {
-                    'd' | 'x' => {
-                        buf.checkpoint();
-                        let mut end = to;
-                        end.col += 1; // the selection is inclusive
-                        self.register = Some(Register::Chars(buf.text_between(from, end)));
-                        buf.delete_between(from, end);
-                        self.mode = Mode::Normal;
-                        buf.clamp_cursor(false);
-                        return Parse::Done;
-                    }
-                    'y' => {
-                        let mut end = to;
-                        end.col += 1;
-                        self.register = Some(Register::Chars(buf.text_between(from, end)));
-                        buf.cursor = from;
-                        self.mode = Mode::Normal;
-                        return Parse::Done;
-                    }
-                    'c' => {
-                        buf.checkpoint();
-                        let mut end = to;
-                        end.col += 1;
-                        self.register = Some(Register::Chars(buf.text_between(from, end)));
-                        buf.delete_between(from, end);
-                        self.mode = Mode::Insert;
-                        return Parse::Done;
-                    }
-                    'v' => {
-                        self.mode = Mode::Normal;
-                        return Parse::Done;
-                    }
-                    _ => {}
+        // ---- visual-mode commands ----------------------------------------
+        if let Some(kind) = self.visual_kind() {
+            match c {
+                // `s` is a synonym for `c` on a selection.
+                'd' | 'x' | 'y' | 'c' | 's' => {
+                    self.apply_visual_operator(buf, if c == 's' { 'c' } else { c });
+                    return Parse::Done;
                 }
+                // Swap which end of the selection the cursor is on, so the
+                // other end can be adjusted without starting over.
+                'o' => {
+                    std::mem::swap(&mut self.anchor, &mut buf.cursor);
+                    buf.clamp_cursor(false);
+                    return Parse::Done;
+                }
+                'I' | 'A' if kind == VisualKind::Block => {
+                    self.begin_block_insert(buf, c == 'A');
+                    return Parse::Done;
+                }
+                'v' => {
+                    self.switch_visual(VisualKind::Char);
+                    return Parse::Done;
+                }
+                'V' => {
+                    self.switch_visual(VisualKind::Line);
+                    return Parse::Done;
+                }
+                _ => {}
             }
         }
 
@@ -410,10 +523,8 @@ impl Vim {
                 buf.open_line(false);
                 self.mode = Mode::Insert;
             }
-            'v' => {
-                self.anchor = buf.cursor;
-                self.mode = Mode::Visual;
-            }
+            'v' => self.enter_visual(buf, VisualKind::Char),
+            'V' => self.enter_visual(buf, VisualKind::Line),
             'x' => {
                 buf.checkpoint();
                 let removed = buf.delete_chars(count);
@@ -452,6 +563,161 @@ impl Vim {
         Parse::Done
     }
 
+    fn enter_visual(&mut self, buf: &Buffer, kind: VisualKind) {
+        self.anchor = buf.cursor;
+        self.mode = Mode::Visual(kind);
+    }
+
+    /// The same key again leaves visual mode; a different one changes shape
+    /// without losing the selection.
+    fn switch_visual(&mut self, kind: VisualKind) {
+        self.mode = if self.visual_kind() == Some(kind) {
+            Mode::Normal
+        } else {
+            Mode::Visual(kind)
+        };
+    }
+
+    /// Apply `d`, `y` or `c` to the current selection, in its own shape.
+    fn apply_visual_operator(&mut self, buf: &mut Buffer, op: char) {
+        let Some(sel) = self.selection(buf) else {
+            return;
+        };
+        let yank_only = op == 'y';
+        if !yank_only {
+            buf.checkpoint();
+        }
+
+        match sel {
+            Selection::Chars { from, to } => {
+                let end = Cursor::new(to.line, to.col + 1);
+                self.register = Some(Register::Chars(buf.text_between(from, end)));
+                if yank_only {
+                    buf.move_to(from);
+                } else {
+                    buf.delete_between(from, end);
+                }
+            }
+            Selection::Lines { from, to } => {
+                let last = to.min(buf.line_count().saturating_sub(1));
+                if yank_only {
+                    self.register = Some(Register::Lines(buf.lines()[from..=last].to_vec()));
+                    buf.move_to(Cursor::new(from, 0));
+                } else {
+                    let removed = buf.delete_lines(from, last);
+                    self.register = Some(Register::Lines(removed));
+                    if op == 'c' {
+                        // `c` on lines leaves a blank one to type into rather
+                        // than closing the gap.
+                        buf.open_line(false);
+                    }
+                }
+            }
+            Selection::Block {
+                top,
+                bottom,
+                left,
+                right,
+            } => {
+                let last = bottom.min(buf.line_count().saturating_sub(1));
+                let mut rows = Vec::new();
+                for line in top..=last {
+                    if yank_only {
+                        let chars: Vec<char> = buf.line(line).chars().collect();
+                        let a = left.min(chars.len());
+                        let b = (right + 1).min(chars.len());
+                        rows.push(chars[a..b].iter().collect::<String>());
+                    } else {
+                        rows.push(buf.delete_range_in_line(line, left, right + 1));
+                    }
+                }
+                self.register = Some(Register::Block(rows));
+                buf.move_to(Cursor::new(top, left));
+            }
+        }
+
+        self.mode = if op == 'c' {
+            Mode::Insert
+        } else {
+            Mode::Normal
+        };
+
+        // Changing a block re-enters blockwise insert, so what gets typed lands
+        // on every row rather than just the first.
+        if op == 'c' {
+            if let Selection::Block {
+                top, bottom, left, ..
+            } = sel
+            {
+                self.block_insert = Some(BlockInsert {
+                    lines: (top..=bottom.min(buf.line_count().saturating_sub(1))).collect(),
+                    col: left,
+                    anchor_line: top,
+                    pad: false,
+                });
+            }
+        }
+        buf.clamp_cursor(self.mode == Mode::Insert);
+    }
+
+    /// Start a blockwise insert: `I` at the left edge, `A` past the right one.
+    fn begin_block_insert(&mut self, buf: &mut Buffer, append: bool) {
+        let Some(Selection::Block {
+            top,
+            bottom,
+            left,
+            right,
+        }) = self.selection(buf)
+        else {
+            return;
+        };
+        buf.checkpoint();
+        let col = if append { right + 1 } else { left };
+        self.block_insert = Some(BlockInsert {
+            lines: (top..=bottom.min(buf.line_count().saturating_sub(1))).collect(),
+            col,
+            anchor_line: top,
+            pad: append,
+        });
+        buf.move_to(Cursor::new(top, col.min(buf.line_len(top))));
+        self.mode = Mode::Insert;
+    }
+
+    /// Replicate a finished blockwise insert onto the rest of its rows.
+    fn finish_block_insert(&mut self, buf: &mut Buffer) {
+        let Some(bi) = self.block_insert.take() else {
+            return;
+        };
+        // Wandering off the line being typed on abandons the replication;
+        // guessing what was meant would be worse than doing nothing.
+        if buf.cursor.line != bi.anchor_line || buf.cursor.col <= bi.col {
+            return;
+        }
+        let typed: String = buf
+            .line(bi.anchor_line)
+            .chars()
+            .skip(bi.col)
+            .take(buf.cursor.col - bi.col)
+            .collect();
+        if typed.is_empty() {
+            return;
+        }
+        for &line in &bi.lines {
+            if line == bi.anchor_line {
+                continue;
+            }
+            let len = buf.line_len(line);
+            if bi.col <= len {
+                buf.insert_str_at(line, bi.col, &typed);
+            } else if bi.pad {
+                // Appending past the end of a short line pads it out, so the
+                // block stays a block.
+                let padded = format!("{}{}", " ".repeat(bi.col - len), typed);
+                buf.insert_str_at(line, len, &padded);
+            }
+        }
+    }
+
     fn put(&mut self, buf: &mut Buffer, after: bool) {
         let Some(reg) = self.register.clone() else {
             self.status = "register empty".into();
@@ -468,6 +734,28 @@ impl Vim {
                 buf.insert_lines(at, &lines);
                 buf.cursor.line = at;
                 buf.cursor.col = 0;
+            }
+            Register::Block(rows) => {
+                let start = buf.cursor.line;
+                let col = if after {
+                    (buf.cursor.col + 1).min(buf.line_len(buf.cursor.line))
+                } else {
+                    buf.cursor.col
+                };
+                for (i, text) in rows.iter().enumerate() {
+                    let line = start + i;
+                    while line >= buf.line_count() {
+                        buf.insert_lines(buf.line_count(), &[String::new()]);
+                    }
+                    let len = buf.line_len(line);
+                    if col <= len {
+                        buf.insert_str_at(line, col, text);
+                    } else {
+                        let padded = format!("{}{}", " ".repeat(col - len), text);
+                        buf.insert_str_at(line, len, &padded);
+                    }
+                }
+                buf.move_to(Cursor::new(start, col));
             }
             Register::Chars(text) => {
                 let col = if after {
@@ -486,6 +774,20 @@ impl Vim {
 
     fn apply_motion(&mut self, buf: &mut Buffer, m: Motion, count: usize) {
         let past_end = self.mode == Mode::Insert;
+
+        // `G` and `gg` take their count as a *line number*, not a repeat count:
+        // `11G` is line eleven, not eleven trips to the end of the file.
+        if matches!(m, Motion::FileStart | Motion::FileEnd) {
+            let line = match (m, count) {
+                (Motion::FileEnd, 1) => buf.line_count() - 1,
+                (Motion::FileStart, 1) => 0,
+                (_, n) => (n - 1).min(buf.line_count() - 1),
+            };
+            buf.move_to(Cursor::new(line, first_non_blank(buf.line(line))));
+            buf.clamp_cursor(past_end);
+            return;
+        }
+
         for _ in 0..count {
             match m {
                 Motion::Left => buf.cursor.col = buf.cursor.col.saturating_sub(1),

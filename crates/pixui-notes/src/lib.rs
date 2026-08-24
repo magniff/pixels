@@ -241,7 +241,8 @@ impl Notes {
             }
             "help" => {
                 self.status = "MOTIONS hjkl w b e 0 $ gg G | EDIT i a o x dd cw yy p u C-r \
-                     | OBJECTS diw ciw ci\" di( dip | :w :e :q :qa"
+                     | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then d y c o, \
+                     I A on a block | :w :e :q :qa"
                     .into();
             }
             "" => {}
@@ -421,7 +422,7 @@ fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {
     let ramp = match mode {
         Mode::Normal => th.neutral,
         Mode::Insert => th.positive,
-        Mode::Visual => th.accent,
+        Mode::Visual(_) => th.accent,
         Mode::Command => th.info,
     };
     let badge = Rect::new(rect.x, rect.y + 1, 52, rect.h - 1);
@@ -647,31 +648,21 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                 }
 
                 // ---- visual selection --------------------------------
-                if let Some((sel_from, sel_to)) = selection {
-                    if line_no >= sel_from.line && line_no <= sel_to.line {
-                        let lo = if line_no == sel_from.line {
-                            sel_from.col
-                        } else {
-                            0
-                        };
-                        let hi = if line_no == sel_to.line {
-                            sel_to.col + 1
-                        } else {
-                            text.chars().count().max(1)
-                        };
-                        let a = lo.max(from);
-                        let b = hi.min(to.max(from));
-                        if b > a {
-                            // Glyphs are 5 wide on a 6 pixel advance, so a cell
-                            // that starts at the glyph gets the inter-glyph gap
-                            // on its right and nothing on its left. Shifting
-                            // back one puts a pixel of padding on each side.
-                            let x0 = text_x + (a - from) as i32 * advance - 1;
-                            ui.canvas.fill_rect(
-                                Rect::new(x0, y - 1, (b - a) as i32 * advance, line_h),
-                                th.accent.lo,
-                            );
-                        }
+                // All three shapes reduce to a column range on this line, so
+                // charwise, linewise and blockwise draw through one path.
+                if let Some((lo, hi)) =
+                    selection.and_then(|sel| sel.columns_on(line_no, text.chars().count()))
+                {
+                    let a = lo.max(from);
+                    let b = hi.min(to.max(from));
+                    if b > a {
+                        // The cell is the glyph plus a column of padding either
+                        // side; see the caret below for why.
+                        let x0 = text_x + (a - from) as i32 * advance - 1;
+                        ui.canvas.fill_rect(
+                            Rect::new(x0, y - 1, (b - a) as i32 * advance, line_h),
+                            th.accent.lo,
+                        );
                     }
                 }
 

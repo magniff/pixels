@@ -123,7 +123,8 @@ A markdown editor with a modal (vim-style) editing engine.
 | **Editing** | `i I a A o O`, `x`, `D`, `C`, `p P`, `u`, `Ctrl-r` |
 | **Operators** | `d c y` with any motion, doubled for linewise (`dd`, `cc`, `yy`) |
 | **Text objects** | `iw aw`, `ip ap`, `i" i' i\``, `i( i[ i{ i<` and `a` variants — so `diw`, `ciw`, `ci"`, `da(`, `dip` |
-| **Visual** | `v` charwise, then `d y c` |
+| **Visual** | `v` charwise, `V` linewise, `Ctrl-v` blockwise; then `d y c s`, `o` to swap ends |
+| **Blockwise** | `I` and `A` type once and replicate to every row; `y`/`p` re-form the rectangle |
 | **Commands** | `:w`, `:w name`, `:e`, `:e name`, `:q`, `:qa`, `:new`, `:help` |
 | **Other** | `Ctrl-n` / `Ctrl-p` between notes, `Ctrl-d` / `Ctrl-u` half-page |
 | **Zoom** | `Cmd`/`Ctrl` with `+`, `-`, `0` — handled by the toolkit, not the app |
@@ -145,8 +146,13 @@ first run. Lines soft-wrap at the pane width; wrapping is computed from the raw
 text alone, so the caret and the syntax highlighting can both be mapped onto the
 same visual rows without either knowing about the other.
 
-**Not implemented:** linewise and blockwise visual, marks, macros, named
-registers, search (`/`), tag objects (`it`/`at`), and a rendered preview pane.
+All three visual shapes reduce to a column range per line, so charwise,
+linewise and blockwise selections draw through a single path in the editor
+rather than three. A block reports its columns even on lines too short to reach
+them, which is the only way to see what a blockwise append is about to pad out.
+
+**Not implemented:** marks, macros, named registers, search (`/`), tag objects
+(`it`/`at`), and a rendered preview pane.
 
 ## Design notes
 
