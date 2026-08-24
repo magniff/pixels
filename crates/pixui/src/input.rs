@@ -102,4 +102,8 @@ pub enum Cursor {
     /// Dragging along an axis.
     Grab,
     Text,
+    /// Over something that resizes horizontally, like a vertical divider.
+    ResizeH,
+    /// Over something that resizes vertically.
+    ResizeV,
 }

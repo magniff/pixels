@@ -85,6 +85,12 @@ pub struct Notes {
     pub status: String,
     /// First visible line in the editor.
     pub scroll: usize,
+    /// Sidebar width, once the user has dragged it.
+    ///
+    /// `None` means "follow the canvas", which is the right default and stays
+    /// right as the window is resized or the UI zoomed. A dragged divider is a
+    /// deliberate choice, so from then on it wins.
+    pub sidebar_w: Option<i32>,
 }
 
 impl Notes {
@@ -131,8 +137,9 @@ impl Notes {
             vim: Vim::new(),
             dialog: None,
             notes_dir,
-            status: "j/k MOVE  i INSERT  :w SAVE  :e OPEN  :help".into(),
+            status: "j/k MOVE  i INSERT  /  SEARCH  :w SAVE  :e OPEN  :help".into(),
             scroll: 0,
+            sidebar_w: None,
         }
     }
 
@@ -240,9 +247,9 @@ impl Notes {
                 self.status = "NEW NOTE".into();
             }
             "help" => {
-                self.status = "MOTIONS hjkl w b e 0 $ gg G | EDIT i a o x dd cw yy p u C-r \
-                     | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then d y c o, \
-                     I A on a block | :w :e :q :qa"
+                self.status = "MOTIONS hjkl w b e 0 $ gg G f t ; , | EDIT i a o x dd cw \
+                     yy p u C-r | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then \
+                     d y c o, I A on a block | FIND / ? n N * | :w :e :q :qa"
                     .into();
             }
             "" => {}
@@ -330,7 +337,15 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     ui.input_blocked(modal, |ui| {
         draw_titlebar(ui, titlebar, app);
-        let (side, main) = body.split_left(sidebar_width(screen.w));
+        // The divider is a toolkit widget; the app only owns the number.
+        let derived = sidebar_width(screen.w);
+        let mut width = app.sidebar_w.unwrap_or(derived);
+        let before = width;
+        let (side, main) =
+            ui.split_left(body, "sidebar", &mut width, (120, (screen.w / 2).max(160)));
+        if width != before {
+            app.sidebar_w = Some(width);
+        }
         draw_sidebar(ui, side.inset(5), app);
         draw_editor(ui, main.inset_xy(0, 5), app);
         draw_statusbar(ui, statusbar, app);
@@ -423,7 +438,7 @@ fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {
         Mode::Normal => th.neutral,
         Mode::Insert => th.positive,
         Mode::Visual(_) => th.accent,
-        Mode::Command => th.info,
+        Mode::Command | Mode::Search { .. } => th.info,
     };
     let badge = Rect::new(rect.x, rect.y + 1, 52, rect.h - 1);
     ui.canvas.fill_rect(badge, ramp.face);
@@ -432,10 +447,10 @@ fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {
     let buf = &app.note().buffer;
     let rest = Rect::new(badge.right() + 6, rect.y, rect.w - badge.w - 12, rect.h);
 
-    if mode == Mode::Command {
+    if let Some(prefix) = app.vim.prompt_prefix() {
         ui.draw_text_in(
             rest,
-            &format!(":{}_", app.vim.cmdline),
+            &format!("{prefix}{}_", app.vim.cmdline),
             th.info.hi,
             Align::Left,
         );
@@ -586,6 +601,8 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
 
     let buf = &app.notes[i].buffer;
     let selection = app.vim.selection(buf);
+    let search = app.vim.search_pattern().map(str::to_owned);
+    let search = search.as_deref();
     let insert = app.vim.mode == Mode::Insert;
 
     // A code fence spans lines, so the highlighter has to be told where it is.
@@ -645,6 +662,24 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                         .fill_rect(Rect::new(inner.x + 14, y + 3, 4, 1), ink);
                     ui.canvas
                         .fill_rect(Rect::new(inner.x + 14, y + 1, 1, 3), ink);
+                }
+
+                // ---- search hits -------------------------------------
+                // Drawn beneath the selection, so a hit that is also selected
+                // still reads as selected rather than as two highlights
+                // arguing with each other.
+                if let Some(pattern) = search {
+                    for (ms, me) in vim::matches_in(text, pattern) {
+                        let a = ms.max(from);
+                        let b = me.min(to.max(from));
+                        if b > a {
+                            let x0 = text_x + (a - from) as i32 * advance - 1;
+                            ui.canvas.fill_rect(
+                                Rect::new(x0, y - 1, (b - a) as i32 * advance, line_h),
+                                th.well.lerp(palette::YELLOW, 0.30),
+                            );
+                        }
+                    }
                 }
 
                 // ---- visual selection --------------------------------

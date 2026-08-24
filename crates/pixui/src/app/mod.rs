@@ -218,6 +218,12 @@ pub struct Config {
     pub ui_scale: f32,
     /// Bounds the *physical* scale may be zoomed within, inclusive.
     pub scale_range: (i32, i32),
+    /// Draw the mouse pointer into the canvas instead of letting the system
+    /// draw it.
+    ///
+    /// On by default: a compositor-drawn pointer is rendered at the display's
+    /// real resolution and looks like it belongs to a different program.
+    pub pixel_cursor: bool,
     /// Whether the primary modifier with `+`, `-` and `0` zooms the UI.
     ///
     /// On by default: users expect it, and an application that wires its own
@@ -250,6 +256,7 @@ impl Default for Config {
             ui_scale: 3.0,
             scale_range: (1, 10),
             zoom_shortcuts: true,
+            pixel_cursor: true,
             scaling: Scaling::Fixed,
             resizable: true,
             theme: Theme::warm(),
@@ -297,6 +304,12 @@ impl Config {
     pub fn with_scale_range(mut self, min: i32, max: i32) -> Self {
         let min = min.max(1);
         self.scale_range = (min, max.max(min));
+        self
+    }
+
+    /// Let the system draw the mouse pointer after all.
+    pub fn without_pixel_cursor(mut self) -> Self {
+        self.pixel_cursor = false;
         self
     }
 
@@ -579,6 +592,22 @@ where
         }
     }
 
+    /// Draw and present immediately, and push the frame clock out accordingly.
+    ///
+    /// A resize has to be answered *in* the resize event. The window has
+    /// already changed size by the time it arrives, so until a new frame is
+    /// presented the compositor is stretching the previous one to fit — which
+    /// is visible as the UI distorting during a drag and snapping back when the
+    /// frame timer eventually comes round. Waiting even one frame is enough to
+    /// see.
+    fn redraw_now(&mut self) {
+        if self.window.is_none() {
+            return;
+        }
+        self.draw_frame();
+        self.next_frame = Instant::now() + self.frame_budget;
+    }
+
     /// Undo the scale and letterbox so widgets see virtual coordinates.
     fn update_mouse(&mut self) {
         let x = (self.mouse_phys.x as i32 - self.offset.0).div_euclid(self.scale);
@@ -623,7 +652,7 @@ where
             self.canvas.scanlines(bounds, scanline);
         }
 
-        if out.cursor != self.applied_cursor {
+        if !self.config.pixel_cursor && out.cursor != self.applied_cursor {
             self.applied_cursor = out.cursor;
             if let Some(w) = &self.window {
                 w.set_cursor(match out.cursor {
@@ -631,9 +660,22 @@ where
                     Cursor::Pointer => CursorIcon::Pointer,
                     Cursor::Grab => CursorIcon::Grab,
                     Cursor::Text => CursorIcon::Text,
+                    Cursor::ResizeH => CursorIcon::ColResize,
+                    Cursor::ResizeV => CursorIcon::RowResize,
                 });
             }
         }
+        // Last of all, so nothing is ever drawn over the pointer.
+        if self.config.pixel_cursor && self.input.mouse_in_window {
+            crate::cursor::draw(
+                &mut self.canvas,
+                self.input.mouse,
+                out.cursor,
+                self.config.theme.cursor_fill,
+                self.config.theme.cursor_outline,
+            );
+        }
+
         let ui_elapsed = t_ui.elapsed();
 
         let t_present = Instant::now();
@@ -819,6 +861,9 @@ where
             }
         };
 
+        if self.config.pixel_cursor {
+            window.set_cursor_visible(false);
+        }
         let size = window.inner_size();
         self.dpr = window.scale_factor();
         self.window = Some(window);
@@ -846,6 +891,8 @@ where
                     p.resize(size.width, size.height);
                 }
                 self.update_mouse();
+                // Present at the new size now rather than on the next tick.
+                self.redraw_now();
             }
 
             WindowEvent::CursorMoved { position, .. } => {
@@ -879,6 +926,7 @@ where
                     if let Some(p) = self.presenter.as_mut() {
                         p.resize(size.width, size.height);
                     }
+                    self.redraw_now();
                 }
             }
 

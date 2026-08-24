@@ -87,6 +87,17 @@ fn main() -> std::io::Result<()> {
             if let Some(t) = out.theme {
                 theme = t;
             }
+            // Mirror what the backend does after a frame, so captures show the
+            // drawn pointer the same way the running app does.
+            if input.mouse_in_window {
+                pixui::cursor::draw(
+                    &mut canvas,
+                    input.mouse,
+                    out.cursor,
+                    theme.cursor_fill,
+                    theme.cursor_outline,
+                );
+            }
             input.begin_frame();
         }
 

@@ -68,7 +68,7 @@ fn main() -> std::io::Result<()> {
         Scene {
             name: "01-editor",
             script: vec![],
-            mouse: Point::new(-9, -9),
+            mouse: Point::new(430, 120),
             settle: 40,
             canvas: (768, 470),
         },
@@ -115,6 +115,14 @@ fn main() -> std::io::Result<()> {
             mouse: Point::new(-9, -9),
             settle: 40,
             canvas: (1050, 620),
+        },
+        // Search hits highlighted, with the pointer over the divider.
+        Scene {
+            name: "10-search",
+            script: keys("/pixui\n"),
+            mouse: Point::new(153, 200),
+            settle: 30,
+            canvas: (768, 470),
         },
         // A blockwise selection over the list items.
         Scene {
@@ -163,10 +171,21 @@ fn main() -> std::io::Result<()> {
             }
 
             canvas.clear(theme.background);
-            {
+            // Mirror what the backend does after a frame, so captures show the
+            // drawn pointer the same way the running app does.
+            let out = {
                 let mut ui = Ui::begin(&mut canvas, &input, &theme, &mut ui_state);
                 frame(&mut ui, &mut app);
-                ui.finish();
+                ui.finish()
+            };
+            if input.mouse_in_window {
+                pixui::cursor::draw(
+                    &mut canvas,
+                    input.mouse,
+                    out.cursor,
+                    theme.cursor_fill,
+                    theme.cursor_outline,
+                );
             }
             input.begin_frame();
         }

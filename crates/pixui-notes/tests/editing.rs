@@ -8,7 +8,7 @@
 use pixui::{Key, Mods};
 use pixui_notes::markdown::{self, Tok};
 use pixui_notes::text::{Buffer, Cursor};
-use pixui_notes::vim::{Mode, Selection, Vim, VimEvent, VisualKind};
+use pixui_notes::vim::{self, Mode, Selection, Vim, VimEvent, VisualKind};
 
 /// Type a sequence of keys, as a user would.
 fn press(vim: &mut Vim, buf: &mut Buffer, s: &str) -> Vec<VimEvent> {
@@ -896,4 +896,178 @@ fn g_lands_on_the_first_non_blank_of_its_line() {
     let (mut v, mut b) = buffer("one\n    indented\nthree");
     press(&mut v, &mut b, "2G");
     assert_eq!((b.cursor.line, b.cursor.col), (1, 4));
+}
+
+// -------------------------------------------------------------------- search
+
+#[test]
+fn slash_search_jumps_to_the_next_match_and_wraps() {
+    let (mut v, mut b) = buffer("alpha\nbeta\nalpha again");
+    press(&mut v, &mut b, "/alpha\n");
+    assert_eq!(
+        b.cursor,
+        Cursor::new(2, 0),
+        "search starts *after* the cursor"
+    );
+    press(&mut v, &mut b, "n");
+    assert_eq!(b.cursor, Cursor::new(0, 0), "and wraps around the end");
+}
+
+#[test]
+fn capital_n_searches_the_other_way() {
+    let (mut v, mut b) = buffer("x\nhit\ny\nhit\nz");
+    press(&mut v, &mut b, "/hit\n");
+    assert_eq!(b.cursor.line, 1);
+    press(&mut v, &mut b, "n");
+    assert_eq!(b.cursor.line, 3);
+    press(&mut v, &mut b, "N");
+    assert_eq!(b.cursor.line, 1);
+}
+
+#[test]
+fn question_mark_searches_backwards() {
+    let (mut v, mut b) = buffer("hit\nmiddle\nhit\nend");
+    press(&mut v, &mut b, "G");
+    press(&mut v, &mut b, "?hit\n");
+    assert_eq!(b.cursor.line, 2);
+}
+
+#[test]
+fn search_is_smart_about_case() {
+    // A lower-case pattern matches either case; a capital means it.
+    let (mut v, mut b) = buffer("start\nHello\nhello");
+    press(&mut v, &mut b, "/hello\n");
+    assert_eq!(b.cursor.line, 1, "lower case matches the capitalised one");
+
+    let (mut v, mut b) = buffer("start\nhello\nHello");
+    press(&mut v, &mut b, "/Hello\n");
+    assert_eq!(
+        b.cursor.line, 2,
+        "a capital in the pattern is taken literally"
+    );
+}
+
+#[test]
+fn a_pattern_that_is_not_there_leaves_the_cursor_alone() {
+    let (mut v, mut b) = buffer("one\ntwo");
+    press(&mut v, &mut b, "jl");
+    let before = b.cursor;
+    press(&mut v, &mut b, "/nowhere\n");
+    assert_eq!(b.cursor, before);
+    assert!(v.status.to_lowercase().contains("not found"));
+}
+
+#[test]
+fn star_searches_for_the_word_under_the_cursor() {
+    let (mut v, mut b) = buffer("needle in a\nhaystack with needle");
+    press(&mut v, &mut b, "*");
+    assert_eq!(b.cursor.line, 1, "jumps to the next occurrence");
+    assert_eq!(v.search_pattern(), Some("needle"));
+}
+
+#[test]
+fn escape_clears_the_search_highlight() {
+    let (mut v, mut b) = buffer("a\nfind me");
+    press(&mut v, &mut b, "/find\n");
+    assert!(v.search_pattern().is_some());
+    press(&mut v, &mut b, "\x1b");
+    assert_eq!(
+        v.search_pattern(),
+        None,
+        "the highlight should not outstay its welcome"
+    );
+}
+
+#[test]
+fn matches_are_reported_as_character_ranges() {
+    assert_eq!(vim::matches_in("abcabc", "bc"), vec![(1, 3), (4, 6)]);
+    assert_eq!(
+        vim::matches_in("aaaa", "aa"),
+        vec![(0, 2), (2, 4)],
+        "matches do not overlap"
+    );
+    assert_eq!(
+        vim::matches_in("anything", ""),
+        vec![],
+        "an empty pattern matches nothing"
+    );
+    assert_eq!(vim::matches_in("short", "much longer"), vec![]);
+}
+
+// ---------------------------------------------------------------------- find
+
+#[test]
+fn f_moves_to_the_character_and_t_stops_before_it() {
+    let (mut v, mut b) = buffer("alpha,beta,gamma");
+    press(&mut v, &mut b, "f,");
+    assert_eq!(b.cursor.col, 5);
+    press(&mut v, &mut b, "0t,");
+    assert_eq!(b.cursor.col, 4, "t stops one short");
+}
+
+#[test]
+fn capital_f_and_t_search_backwards() {
+    let (mut v, mut b) = buffer("a,b,c");
+    press(&mut v, &mut b, "$");
+    press(&mut v, &mut b, "F,");
+    assert_eq!(b.cursor.col, 3);
+    press(&mut v, &mut b, "$T,");
+    assert_eq!(b.cursor.col, 4, "T stops one past the target, coming back");
+}
+
+#[test]
+fn a_count_finds_the_nth_occurrence() {
+    let (mut v, mut b) = buffer("a.b.c.d");
+    press(&mut v, &mut b, "3f.");
+    assert_eq!(b.cursor.col, 5);
+}
+
+#[test]
+fn semicolon_repeats_a_find_and_comma_reverses_it() {
+    let (mut v, mut b) = buffer("a-b-c-d");
+    press(&mut v, &mut b, "f-");
+    assert_eq!(b.cursor.col, 1);
+    press(&mut v, &mut b, ";");
+    assert_eq!(b.cursor.col, 3);
+    press(&mut v, &mut b, ";");
+    assert_eq!(b.cursor.col, 5);
+    press(&mut v, &mut b, ",");
+    assert_eq!(b.cursor.col, 3, "comma goes back the other way");
+}
+
+#[test]
+fn find_composes_with_operators_and_is_inclusive_forwards() {
+    let (mut v, mut b) = buffer("keep this, and this");
+    press(&mut v, &mut b, "df,");
+    assert_eq!(b.to_text(), " and this", "df, takes the comma too");
+
+    let (mut v, mut b) = buffer("keep this, and this");
+    press(&mut v, &mut b, "dt,");
+    assert_eq!(b.to_text(), ", and this", "dt, stops before it");
+}
+
+#[test]
+fn a_find_waits_for_its_target_character() {
+    let (mut v, mut b) = buffer("untouched");
+    press(&mut v, &mut b, "df");
+    assert_eq!(v.pending, "df", "`df` is a prefix, not an error");
+    assert_eq!(b.to_text(), "untouched");
+}
+
+#[test]
+fn a_find_that_misses_does_not_move() {
+    let (mut v, mut b) = buffer("abc");
+    press(&mut v, &mut b, "fz");
+    assert_eq!(b.cursor.col, 0);
+}
+
+#[test]
+fn a_find_does_not_run_off_the_line() {
+    let (mut v, mut b) = buffer("abc\nxbz");
+    press(&mut v, &mut b, "fz");
+    assert_eq!(
+        b.cursor,
+        Cursor::new(0, 0),
+        "the z on the next line is not a candidate"
+    );
 }

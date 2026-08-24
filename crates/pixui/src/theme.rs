@@ -98,6 +98,11 @@ pub struct Theme {
     pub info: Ramp,
 
     pub focus_ring: Color,
+    /// The body of the drawn mouse pointer.
+    pub cursor_fill: Color,
+    /// Its outline, which is what keeps it visible over both light panels and
+    /// dark wells.
+    pub cursor_outline: Color,
     /// Strength of the CRT scanline overlay, 0 to disable.
     pub scanline: f32,
 
@@ -162,6 +167,8 @@ impl Theme {
             },
 
             focus_ring: palette::YELLOW,
+            cursor_fill: palette::BUTTON_HI,
+            cursor_outline: palette::INK,
             scanline: 0.05,
             metrics: Metrics::default(),
         }
@@ -214,6 +221,8 @@ impl Theme {
             ink: Color::hex(0xF5E3E1),
         };
         t.focus_ring = Color::hex(0x7FCBE8);
+        t.cursor_fill = Color::hex(0xDDEBF5);
+        t.cursor_outline = Color::hex(0x0B0F14);
         t
     }
 

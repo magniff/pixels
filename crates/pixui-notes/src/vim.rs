@@ -32,6 +32,10 @@ pub enum Mode {
     Visual(VisualKind),
     /// Typing a `:` command.
     Command,
+    /// Typing a `/` or `?` search pattern.
+    Search {
+        backward: bool,
+    },
 }
 
 /// What is currently selected, in whichever shape the visual mode is in.
@@ -107,6 +111,7 @@ impl Mode {
             Mode::Visual(VisualKind::Line) => "V-LINE",
             Mode::Visual(VisualKind::Block) => "V-BLOCK",
             Mode::Command => "COMMAND",
+            Mode::Search { .. } => "SEARCH",
         }
     }
 }
@@ -129,6 +134,16 @@ pub enum VimEvent {
     Command(String),
 }
 
+/// A pending `f`/`F`/`t`/`T`: which character, which way, and whether to stop
+/// short of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FindSpec {
+    pub backward: bool,
+    /// `t`/`T` stop one character before the target rather than on it.
+    pub till: bool,
+    pub target: char,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Motion {
     Left,
@@ -143,6 +158,12 @@ enum Motion {
     LineEnd,
     FileStart,
     FileEnd,
+    /// `f`, `F`, `t`, `T`: to a character on this line.
+    Find(FindSpec),
+    /// `;` and `,`: the last find again, optionally the other way.
+    RepeatFind {
+        reverse: bool,
+    },
 }
 
 impl Motion {
@@ -197,11 +218,33 @@ pub struct Vim {
     /// Transient message for the status line.
     pub status: String,
     block_insert: Option<BlockInsert>,
+    /// The last `/` pattern and the direction it was entered in, for `n`/`N`.
+    last_search: Option<(String, bool)>,
+    /// The pattern currently highlighted. Cleared by Escape, so the highlight
+    /// does not outstay its welcome the way vim's `hlsearch` famously does.
+    search_hl: Option<String>,
+    /// The last `f`/`t`, for `;` and `,`.
+    last_find: Option<FindSpec>,
 }
 
 impl Vim {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The pattern currently highlighted, if any.
+    pub fn search_pattern(&self) -> Option<&str> {
+        self.search_hl.as_deref()
+    }
+
+    /// The character a prompt is being typed after, if one is open.
+    pub fn prompt_prefix(&self) -> Option<char> {
+        match self.mode {
+            Mode::Command => Some(':'),
+            Mode::Search { backward: false } => Some('/'),
+            Mode::Search { backward: true } => Some('?'),
+            _ => None,
+        }
     }
 
     /// Which visual mode is active, if any.
@@ -242,6 +285,10 @@ impl Vim {
                 None
             }
             Mode::Command => self.handle_command(key),
+            Mode::Search { backward } => {
+                self.handle_search(buf, key, backward);
+                None
+            }
             Mode::Normal | Mode::Visual(_) => self.handle_normal(buf, key, mods),
         }
     }
@@ -308,6 +355,62 @@ impl Vim {
         None
     }
 
+    // ---------------------------------------------------------------- search
+
+    fn handle_search(&mut self, buf: &mut Buffer, key: Key, backward: bool) {
+        match key {
+            Key::Escape => {
+                self.mode = Mode::Normal;
+                self.cmdline.clear();
+            }
+            Key::Enter => {
+                let pattern = std::mem::take(&mut self.cmdline);
+                self.mode = Mode::Normal;
+                if pattern.is_empty() {
+                    // A bare Enter repeats the previous pattern, as vim does.
+                    self.repeat_search(buf, false);
+                } else {
+                    self.last_search = Some((pattern.clone(), backward));
+                    self.search_hl = Some(pattern);
+                    self.jump_to_match(buf, backward);
+                }
+            }
+            Key::Backspace => {
+                if self.cmdline.pop().is_none() {
+                    self.mode = Mode::Normal;
+                }
+            }
+            Key::Space => self.cmdline.push(' '),
+            Key::Char(c) => self.cmdline.push(c),
+            _ => {}
+        }
+    }
+
+    fn jump_to_match(&mut self, buf: &mut Buffer, backward: bool) {
+        let Some((pattern, _)) = self.last_search.clone() else {
+            self.status = "no previous search".into();
+            return;
+        };
+        match next_match(buf, &pattern, buf.cursor, backward) {
+            Some(at) => {
+                buf.move_to(at);
+                buf.clamp_cursor(false);
+                self.status = format!("/{pattern}");
+            }
+            None => self.status = format!("pattern not found: {pattern}"),
+        }
+    }
+
+    /// `n` and `N`: the last search again, `N` the other way.
+    fn repeat_search(&mut self, buf: &mut Buffer, reverse: bool) {
+        let Some((pattern, backward)) = self.last_search.clone() else {
+            self.status = "no previous search".into();
+            return;
+        };
+        self.search_hl = Some(pattern);
+        self.jump_to_match(buf, backward ^ reverse);
+    }
+
     // ---------------------------------------------------------------- normal
 
     fn handle_normal(&mut self, buf: &mut Buffer, key: Key, mods: Mods) -> Option<VimEvent> {
@@ -340,6 +443,9 @@ impl Vim {
         match key {
             Key::Escape => {
                 self.pending.clear();
+                // Escape clears the search highlight too, so it does not
+                // outstay its welcome the way vim's `hlsearch` famously does.
+                self.search_hl = None;
                 if self.visual_kind().is_some() {
                     self.mode = Mode::Normal;
                 }
@@ -547,6 +653,28 @@ impl Vim {
                 self.mode = Mode::Insert;
             }
             'p' | 'P' => self.put(buf, c == 'p'),
+            '/' => {
+                self.mode = Mode::Search { backward: false };
+                self.cmdline.clear();
+            }
+            '?' => {
+                self.mode = Mode::Search { backward: true };
+                self.cmdline.clear();
+            }
+            'n' => self.repeat_search(buf, false),
+            'N' => self.repeat_search(buf, true),
+            '*' => {
+                // Search for the word under the cursor, which is the reason
+                // anyone tolerates typing a pattern the rest of the time.
+                match word_under_cursor(buf) {
+                    Some(word) => {
+                        self.last_search = Some((word.clone(), false));
+                        self.search_hl = Some(word);
+                        self.jump_to_match(buf, false);
+                    }
+                    None => self.status = "no word under the cursor".into(),
+                }
+            }
             'u' => {
                 self.status = if buf.undo() {
                     "undo".into()
@@ -819,12 +947,40 @@ impl Vim {
                 Motion::LineEnd => buf.cursor.col = buf.line_len(buf.cursor.line).saturating_sub(1),
                 Motion::FileStart => buf.cursor = Cursor::new(0, 0),
                 Motion::FileEnd => buf.cursor = Cursor::new(buf.line_count() - 1, 0),
+                Motion::Find(_) | Motion::RepeatFind { .. } => {
+                    if let Some(spec) = self.effective_find(m) {
+                        if let Some(col) = find_char_in_line(buf, buf.cursor, spec) {
+                            buf.cursor.col = col;
+                        }
+                        // `;` repeats the find itself, never the repeat.
+                        if matches!(m, Motion::Find(_)) {
+                            self.last_find = Some(spec);
+                        }
+                    } else {
+                        self.status = "no previous find".into();
+                    }
+                }
             }
             if !matches!(m, Motion::Down | Motion::Up) {
                 buf.desired_col = buf.cursor.col;
             }
         }
         buf.clamp_cursor(past_end);
+    }
+
+    /// Resolve a find motion, turning `;`/`,` into the concrete thing they
+    /// repeat.
+    fn effective_find(&self, m: Motion) -> Option<FindSpec> {
+        match m {
+            Motion::Find(spec) => Some(spec),
+            Motion::RepeatFind { reverse } => self.last_find.map(|mut spec| {
+                if reverse {
+                    spec.backward = !spec.backward;
+                }
+                spec
+            }),
+            _ => None,
+        }
     }
 
     /// Where an operator applied to this motion should reach.
@@ -849,9 +1005,11 @@ impl Vim {
         vim.apply_motion(&mut probe, m, count);
         let end = probe.cursor;
 
-        // `e` and `$` include the character they land on; the rest do not.
-        // Without this, `d$` leaves the last character of the line behind.
-        let end = if matches!(m, Motion::WordEnd | Motion::LineEnd) {
+        // `e`, `$` and a forward find include the character they land on; the
+        // rest do not. Without this, `d$` leaves the last character behind and
+        // `dfx` leaves the `x`.
+        let forward_find = self.effective_find(m).is_some_and(|spec| !spec.backward);
+        let end = if forward_find || matches!(m, Motion::WordEnd | Motion::LineEnd) {
             Cursor::new(end.line, end.col + 1)
         } else {
             end
@@ -933,6 +1091,20 @@ fn parse_motion(chars: &[char], i: usize) -> Option<(Motion, usize)> {
         '^' => Motion::FirstNonBlank,
         '$' => Motion::LineEnd,
         'G' => Motion::FileEnd,
+        ';' => Motion::RepeatFind { reverse: false },
+        ',' => Motion::RepeatFind { reverse: true },
+        'f' | 'F' | 't' | 'T' => {
+            // The target is the next key, so this is a two-character motion.
+            let target = *chars.get(i + 1)?;
+            return Some((
+                Motion::Find(FindSpec {
+                    backward: c == 'F' || c == 'T',
+                    till: c == 't' || c == 'T',
+                    target,
+                }),
+                2,
+            ));
+        }
         'g' => {
             return match chars.get(i + 1) {
                 Some('g') => Some((Motion::FileStart, 2)),
@@ -945,8 +1117,124 @@ fn parse_motion(chars: &[char], i: usize) -> Option<(Motion, usize)> {
 }
 
 /// Whether the text at `i` could still become a motion with more keys.
+///
+/// `g` needs its second `g`, and `f`/`F`/`t`/`T` need the character they are
+/// looking for. Treating those as errors would make `df` beep instead of wait.
 fn is_motion_prefix(chars: &[char], i: usize) -> bool {
-    matches!(chars.get(i), Some('g')) && chars.get(i + 1).is_none()
+    matches!(
+        chars.get(i),
+        Some('g') | Some('f') | Some('F') | Some('t') | Some('T')
+    ) && chars.get(i + 1).is_none()
+}
+
+/// Smart case: a pattern typed in lower case matches either case, but the
+/// moment it contains a capital it means it.
+pub fn case_sensitive(pattern: &str) -> bool {
+    pattern.chars().any(char::is_uppercase)
+}
+
+/// Character ranges where `pattern` occurs in `line`.
+///
+/// Character ranges, not byte ranges: everything that positions a caret counts
+/// in characters, and mixing the two is how a highlight ends up half a glyph
+/// out of step with the text under it.
+pub fn matches_in(line: &str, pattern: &str) -> Vec<(usize, usize)> {
+    if pattern.is_empty() {
+        return Vec::new();
+    }
+    let fold = |c: char| {
+        if case_sensitive(pattern) {
+            c
+        } else {
+            c.to_ascii_lowercase()
+        }
+    };
+    let hay: Vec<char> = line.chars().map(fold).collect();
+    let needle: Vec<char> = pattern.chars().map(fold).collect();
+    if needle.len() > hay.len() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + needle.len() <= hay.len() {
+        if hay[i..i + needle.len()] == needle[..] {
+            out.push((i, i + needle.len()));
+            i += needle.len();
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The next occurrence of `pattern` from `from`, wrapping around the buffer.
+fn next_match(buf: &Buffer, pattern: &str, from: Cursor, backward: bool) -> Option<Cursor> {
+    // Collecting every match keeps the wrap-around trivial, and a note is
+    // small enough that scanning it whole costs nothing worth saving.
+    let all: Vec<Cursor> = (0..buf.line_count())
+        .flat_map(|line| {
+            matches_in(buf.line(line), pattern)
+                .into_iter()
+                .map(move |(start, _)| Cursor::new(line, start))
+        })
+        .collect();
+    if all.is_empty() {
+        return None;
+    }
+    if backward {
+        all.iter()
+            .rev()
+            .find(|c| **c < from)
+            .or_else(|| all.last())
+            .copied()
+    } else {
+        all.iter()
+            .find(|c| **c > from)
+            .or_else(|| all.first())
+            .copied()
+    }
+}
+
+/// The word the caret is sitting on, for `*`.
+fn word_under_cursor(buf: &Buffer) -> Option<String> {
+    let chars: Vec<char> = buf.line(buf.cursor.line).chars().collect();
+    let col = buf.cursor.col.min(chars.len().checked_sub(1)?);
+    if class(chars[col]) != Class::Word {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && class(chars[start - 1]) == Class::Word {
+        start -= 1;
+    }
+    let mut end = col;
+    while end + 1 < chars.len() && class(chars[end + 1]) == Class::Word {
+        end += 1;
+    }
+    Some(chars[start..=end].iter().collect())
+}
+
+/// Where a find lands on the current line, if the target is there at all.
+fn find_char_in_line(buf: &Buffer, at: Cursor, spec: FindSpec) -> Option<usize> {
+    let chars: Vec<char> = buf.line(at.line).chars().collect();
+    if spec.backward {
+        let mut i = at.col.min(chars.len());
+        while i > 0 {
+            i -= 1;
+            if chars[i] == spec.target {
+                return Some(if spec.till { i + 1 } else { i });
+            }
+        }
+        None
+    } else {
+        let mut i = at.col + 1;
+        while i < chars.len() {
+            if chars[i] == spec.target {
+                return Some(if spec.till { i.saturating_sub(1) } else { i });
+            }
+            i += 1;
+        }
+        None
+    }
 }
 
 /// Resolve a text object around the cursor.

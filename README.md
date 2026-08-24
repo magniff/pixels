@@ -28,6 +28,8 @@ The whole point of this workspace is the boundary between the two crates.
 | Which theme is selected | — | yes |
 | Scrolling, clipping, hit testing | yes | — |
 | Text entry, caret, modality | yes | — |
+| Drawn mouse pointer | yes | — |
+| Draggable splitters | yes | which pane, and how wide |
 | **Dependencies** | `winit`, `softbuffer`, `wgpu` | `pixui` — and nothing else |
 
 That last row is the part you don't have to take on faith. Both apps have
@@ -127,6 +129,8 @@ A markdown editor with a modal (vim-style) editing engine.
 | **Blockwise** | `I` and `A` type once and replicate to every row; `y`/`p` re-form the rectangle |
 | **Commands** | `:w`, `:w name`, `:e`, `:e name`, `:q`, `:qa`, `:new`, `:help` |
 | **Other** | `Ctrl-n` / `Ctrl-p` between notes, `Ctrl-d` / `Ctrl-u` half-page |
+| **Find** | `f F t T` to a character on the line, `;` `,` to repeat |
+| **Search** | `/` and `?`, `n` `N` to repeat, `*` for the word under the cursor |
 | **Zoom** | `Cmd`/`Ctrl` with `+`, `-`, `0` — handled by the toolkit, not the app |
 
 Normal mode is *parsed*, not switch-cased, because vim's grammar really is a
@@ -151,8 +155,14 @@ linewise and blockwise selections draw through a single path in the editor
 rather than three. A block reports its columns even on lines too short to reach
 them, which is the only way to see what a blockwise append is about to pad out.
 
-**Not implemented:** marks, macros, named registers, search (`/`), tag objects
-(`it`/`at`), and a rendered preview pane.
+Search uses vim's *smartcase*: a lower-case pattern matches either case, and
+the moment it contains a capital it means it. Matches stay highlighted until
+Escape, so the highlight cannot outstay its welcome the way vim's `hlsearch`
+famously does.
+
+**Not implemented:** marks, macros, named registers, regular expressions in
+search (patterns are literal), tag objects (`it`/`at`), and a rendered preview
+pane.
 
 ## Design notes
 
@@ -249,6 +259,20 @@ anywhere in the widget code.
 overshoot on release. `anim::Spring` is under-damped on purpose, and the press
 offset is allowed to reach -1px, so the button really does pop up past its
 resting position.
+
+**The pointer is drawn, not borrowed.** The system pointer is rendered by the
+compositor at the display's real resolution, so beside chunky upscaled pixels it
+looks like it belongs to a different program. `pixui` hides it and draws its own
+into the canvas as the last thing each frame, which puts it on the same grid as
+everything else and lets it re-colour with the theme. Sprites are written as
+text — `X` outline, `#` fill, `.` gap — because a pointer is a drawing, and that
+is a format you can edit a drawing in. `Config::without_pixel_cursor` opts out.
+
+**Resize has to be answered inside the resize event.** The window has already
+changed size by the time `Resized` arrives, so until a new frame is presented
+the compositor stretches the previous one to fit. Waiting even a single frame
+for the normal redraw tick is visible as the UI distorting during a drag and
+snapping back afterwards, so the backend draws and presents synchronously there.
 
 **Chamfers, not radii.** Cutting one or two pixels off each corner reads as
 "soft" at this scale, costs nothing, and never produces a half-lit edge pixel.

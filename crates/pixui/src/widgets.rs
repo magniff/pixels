@@ -263,6 +263,118 @@ impl Ui<'_> {
         resp
     }
 
+    // -------------------------------------------------------------- splitters
+
+    /// Split `bounds` into a left pane of width `size` and a right pane, with a
+    /// divider the pointer can drag.
+    ///
+    /// `size` is updated in place and clamped to `range`, so the caller owns the
+    /// value and decides whether to persist it. Returns the two content rects,
+    /// with the divider's own strip excluded from both — a pane that had to
+    /// dodge the handle itself would be a trap.
+    pub fn split_left(
+        &mut self,
+        bounds: Rect,
+        name: &str,
+        size: &mut i32,
+        range: (i32, i32),
+    ) -> (Rect, Rect) {
+        const HANDLE: i32 = 4;
+        let (lo, hi) = (
+            range.0.max(0),
+            range.1.min(bounds.w - HANDLE).max(range.0.max(0)),
+        );
+        *size = (*size).clamp(lo, hi);
+
+        let id = self.id(name);
+        let handle = Rect::new(bounds.x + *size, bounds.y, HANDLE, bounds.h);
+        // A four pixel target is a nuisance to hit, so the *grabbable* area is
+        // wider than the drawn one. Nothing is drawn in the extra margin.
+        let grab = handle.inset_xy(-3, 0);
+
+        let resp = self.interact(id, grab);
+        if resp.hovered || resp.held {
+            self.request_cursor(Cursor::ResizeH);
+        }
+        if resp.held {
+            *size = (self.input.mouse.x - bounds.x - HANDLE / 2).clamp(lo, hi);
+        }
+
+        let handle = Rect::new(bounds.x + *size, bounds.y, HANDLE, bounds.h);
+        let anim = self.animate(id, &resp);
+        self.draw_split_handle(handle, &anim, true);
+
+        (
+            Rect::new(bounds.x, bounds.y, *size, bounds.h),
+            Rect::from_min_max(handle.right(), bounds.y, bounds.right(), bounds.bottom()),
+        )
+    }
+
+    /// As [`Ui::split_left`], but a horizontal divider with the pane above it.
+    pub fn split_top(
+        &mut self,
+        bounds: Rect,
+        name: &str,
+        size: &mut i32,
+        range: (i32, i32),
+    ) -> (Rect, Rect) {
+        const HANDLE: i32 = 4;
+        let (lo, hi) = (
+            range.0.max(0),
+            range.1.min(bounds.h - HANDLE).max(range.0.max(0)),
+        );
+        *size = (*size).clamp(lo, hi);
+
+        let id = self.id(name);
+        let handle = Rect::new(bounds.x, bounds.y + *size, bounds.w, HANDLE);
+        let grab = handle.inset_xy(0, -3);
+
+        let resp = self.interact(id, grab);
+        if resp.hovered || resp.held {
+            self.request_cursor(Cursor::ResizeV);
+        }
+        if resp.held {
+            *size = (self.input.mouse.y - bounds.y - HANDLE / 2).clamp(lo, hi);
+        }
+
+        let handle = Rect::new(bounds.x, bounds.y + *size, bounds.w, HANDLE);
+        let anim = self.animate(id, &resp);
+        self.draw_split_handle(handle, &anim, false);
+
+        (
+            Rect::new(bounds.x, bounds.y, bounds.w, *size),
+            Rect::from_min_max(bounds.x, handle.bottom(), bounds.right(), bounds.bottom()),
+        )
+    }
+
+    /// The divider itself: a quiet line that lights up under the pointer, with
+    /// a few grip pips so it reads as draggable before you try.
+    fn draw_split_handle(&mut self, handle: Rect, anim: &WidgetAnim, vertical: bool) {
+        let th = *self.theme;
+        let lit = anim.hover.max(anim.press.pos.clamp(0.0, 1.0));
+        let line = th.panel_border.lerp(th.accent.face, lit);
+
+        if vertical {
+            self.canvas
+                .vline(handle.center_x(), handle.y, handle.h, line);
+            let cy = handle.center_y();
+            for i in -1..=1 {
+                let y = cy + i * 4;
+                self.canvas
+                    .fill_rect(Rect::new(handle.center_x() - 1, y, 3, 1), line);
+            }
+        } else {
+            self.canvas
+                .hline(handle.x, handle.center_y(), handle.w, line);
+            let cx = handle.center_x();
+            for i in -1..=1 {
+                let x = cx + i * 4;
+                self.canvas
+                    .fill_rect(Rect::new(x, handle.center_y() - 1, 1, 3), line);
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- scroll
 
     /// A vertically scrollable region.

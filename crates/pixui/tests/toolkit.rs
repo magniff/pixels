@@ -870,3 +870,174 @@ fn odd_magnifications_are_reachable() {
     let ratio = three.scale as f32 / two.scale as f32;
     assert!((ratio - 1.5).abs() < 1e-6);
 }
+
+// ------------------------------------------------------------------ splitter
+
+#[test]
+fn a_splitter_divides_its_bounds_without_overlap_or_gap() {
+    let mut h = Harness::new();
+    let bounds = Rect::new(0, 0, 200, 80);
+    let mut size = 60;
+    let (left, right) = h.frame(|ui| ui.split_left(bounds, "s", &mut size, (20, 180)));
+
+    assert_eq!(left.x, bounds.x);
+    assert_eq!(left.w, 60);
+    assert_eq!(
+        right.right(),
+        bounds.right(),
+        "the far edge is still the far edge"
+    );
+    assert!(
+        right.x > left.right(),
+        "the handle's own strip belongs to neither pane"
+    );
+    assert!(left.w + right.w < bounds.w, "and is excluded from both");
+}
+
+#[test]
+fn dragging_a_splitter_moves_it() {
+    let mut h = Harness::new();
+    let bounds = Rect::new(0, 0, 200, 80);
+    let mut size = 60;
+
+    // Grab the handle, which sits at x = 60.
+    h.input.mouse = Point::new(61, 40);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.split_left(bounds, "s", &mut size, (20, 180)));
+
+    h.input.mouse = Point::new(120, 40);
+    h.input.mouse_pressed = false;
+    h.frame(|ui| ui.split_left(bounds, "s", &mut size, (20, 180)));
+    assert!(
+        (size - 118).abs() <= 2,
+        "the divider follows the pointer, got {size}"
+    );
+}
+
+#[test]
+fn a_splitter_is_clamped_to_its_range_even_without_a_drag() {
+    let mut h = Harness::new();
+    let bounds = Rect::new(0, 0, 200, 80);
+
+    let mut size = 5;
+    h.frame(|ui| ui.split_left(bounds, "s", &mut size, (40, 150)));
+    assert_eq!(size, 40, "a size below the range is pulled up to it");
+
+    let mut size = 400;
+    h.frame(|ui| ui.split_left(bounds, "s", &mut size, (40, 150)));
+    assert!(size <= 150, "and one above is pulled down");
+    assert!(size <= bounds.w, "never past the bounds it is dividing");
+}
+
+#[test]
+fn dragging_past_the_range_stops_at_it() {
+    let mut h = Harness::new();
+    let bounds = Rect::new(0, 0, 200, 80);
+    let mut size = 60;
+
+    h.input.mouse = Point::new(61, 40);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.split_left(bounds, "s", &mut size, (30, 100)));
+
+    h.input.mouse = Point::new(500, 40);
+    h.input.mouse_pressed = false;
+    h.frame(|ui| ui.split_left(bounds, "s", &mut size, (30, 100)));
+    assert_eq!(
+        size, 100,
+        "dragging beyond the maximum holds at the maximum"
+    );
+}
+
+#[test]
+fn a_horizontal_splitter_works_the_same_way_on_the_other_axis() {
+    let mut h = Harness::new();
+    let bounds = Rect::new(0, 0, 200, 100);
+    let mut size = 40;
+    let (top, bottom) = h.frame(|ui| ui.split_top(bounds, "s", &mut size, (10, 90)));
+    assert_eq!(top.h, 40);
+    assert_eq!(bottom.bottom(), bounds.bottom());
+    assert!(bottom.y > top.bottom());
+}
+
+// -------------------------------------------------------------------- cursor
+
+#[test]
+fn every_cursor_sprite_is_rectangular_and_has_a_hotspot_inside_it() {
+    use pixui::input::Cursor;
+    for kind in [
+        Cursor::Default,
+        Cursor::Pointer,
+        Cursor::Grab,
+        Cursor::Text,
+        Cursor::ResizeH,
+        Cursor::ResizeV,
+    ] {
+        let s = pixui::cursor::sprite(kind);
+        let width = s.rows[0].chars().count();
+        assert!(!s.rows.is_empty(), "{kind:?} has no rows");
+        for row in s.rows {
+            assert_eq!(row.chars().count(), width, "{kind:?} has a ragged row");
+            assert!(
+                row.chars().all(|c| matches!(c, 'X' | '#' | '.')),
+                "{kind:?} uses a character that is neither outline, fill nor gap"
+            );
+        }
+        assert!(
+            s.hotspot.0 >= 0
+                && s.hotspot.1 >= 0
+                && (s.hotspot.0 as usize) < width
+                && (s.hotspot.1 as usize) < s.rows.len(),
+            "{kind:?} points somewhere outside its own sprite"
+        );
+    }
+}
+
+#[test]
+fn a_cursor_is_drawn_around_its_hotspot() {
+    let mut c = Canvas::new(40, 40);
+    c.clear(Color::hex(0x000000));
+    let fill = Color::hex(0xFFFFFF);
+    let outline = Color::hex(0xFF0000);
+    pixui::cursor::draw(
+        &mut c,
+        Point::new(20, 20),
+        pixui::input::Cursor::Default,
+        fill,
+        outline,
+    );
+
+    // The arrow's hotspot is its tip, so the pixel under the pointer is ink.
+    assert_eq!(
+        c.get_px(20, 20),
+        outline,
+        "the hotspot pixel is the tip itself"
+    );
+    assert_eq!(
+        c.get_px(10, 10),
+        Color::hex(0x000000),
+        "and nothing is drawn far away"
+    );
+}
+
+#[test]
+fn a_cursor_at_the_edge_does_not_write_out_of_bounds() {
+    let mut c = Canvas::new(12, 12);
+    c.clear(Color::hex(0x000000));
+    // Must not panic: the sprite runs well past every edge.
+    for at in [
+        Point::new(0, 0),
+        Point::new(11, 11),
+        Point::new(-4, -4),
+        Point::new(30, 30),
+    ] {
+        pixui::cursor::draw(
+            &mut c,
+            at,
+            pixui::input::Cursor::Pointer,
+            Color::hex(0xFFFFFF),
+            Color::hex(0x111111),
+        );
+    }
+}

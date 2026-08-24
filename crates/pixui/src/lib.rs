@@ -74,6 +74,7 @@ pub mod anim;
 pub mod app;
 pub mod canvas;
 pub mod color;
+pub mod cursor;
 pub mod font;
 pub mod geom;
 pub mod input;
