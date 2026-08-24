@@ -57,6 +57,8 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
         Tok::Code => th.positive.face,
         Tok::Link => th.info.face,
         Tok::Quote => th.ink_soft.lerp(th.ink_light, 0.35),
+        Tok::Strike => th.ink_soft,
+        Tok::Image => th.info.hi,
         Tok::Marker => th.ink_soft,
     }
 }
@@ -82,6 +84,22 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
                 ui.canvas
                     .hline(sx, y + font::GLYPH_H, len * ADVANCE - 2, color);
             }
+            // A line through the middle, which is the whole point of the
+            // notation and the only way it survives being rendered.
+            Tok::Strike => {
+                ui.canvas
+                    .hline(sx, y + font::GLYPH_H / 2, len * ADVANCE - 2, color);
+            }
+            // There is no way to draw the image, so say so plainly and let the
+            // alt text stand where the picture would.
+            Tok::Image => {
+                ui.canvas.box_chamfer(
+                    Rect::new(sx - 2, y - 2, len * ADVANCE + 2, LINE_H + 2),
+                    ctx.th.well.shade(0.08),
+                    ctx.th.info.face,
+                    1,
+                );
+            }
             _ => {}
         }
         font::draw_text_styled(ui.canvas, sx, y, &span.text, color, span.bold);
@@ -103,7 +121,7 @@ fn measure(block: &Block, ctx: &Ctx) -> i32 {
             items
                 .iter()
                 .map(|it| {
-                    let indent = item_indent(it);
+                    let indent = list_indent(items, it);
                     wrap(&it.spans, ctx.cols(indent)).len().max(1) as i32 * LINE_H
                 })
                 .sum::<i32>()
@@ -129,9 +147,22 @@ fn measure(block: &Block, ctx: &Ctx) -> i32 {
     }
 }
 
-/// How far a list item's text is pushed in by its nesting and marker.
-fn item_indent(item: &Item) -> i32 {
-    item.depth as i32 * (ADVANCE * 2) + ADVANCE * 2
+/// How far a list's text is pushed in, past its nesting and its markers.
+///
+/// One indent for the whole list, measured from its widest marker, so `1.` and
+/// `10.` do not leave their text ragged against each other.
+fn list_indent(items: &[Item], item: &Item) -> i32 {
+    let widest = items
+        .iter()
+        .map(|it| match it.marker {
+            Marker::Number(n) => (n.to_string().chars().count() as i32 + 1) * ADVANCE,
+            // A checkbox is wider than a bullet and needs the room to say so.
+            Marker::Task(_) => 11,
+            Marker::Bullet => ADVANCE + 2,
+        })
+        .max()
+        .unwrap_or(ADVANCE);
+    item.depth as i32 * (ADVANCE * 2) + widest + 4
 }
 
 // ------------------------------------------------------------------- drawing
@@ -198,17 +229,19 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
         Block::List(items) => {
             let mut y = rect.y;
             for item in items {
-                let indent = item_indent(item);
+                let indent = list_indent(items, item);
                 let mx = rect.x + item.depth as i32 * (ADVANCE * 2);
                 match item.marker {
                     Marker::Bullet => {
-                        // A filled square at nesting zero, hollow deeper down,
-                        // so levels are told apart without indentation alone.
-                        let dot = Rect::new(mx + 2, y + 2, 3, 3);
                         if item.depth == 0 {
-                            ui.canvas.fill_rect(dot, th.accent.face);
+                            ui.canvas
+                                .fill_rect(Rect::new(mx + 2, y + 2, 3, 3), th.accent.face);
                         } else {
-                            ui.canvas.stroke_rect(dot.inset(-1), th.ink_soft);
+                            // A dash, not a hollow square: an outlined box at
+                            // this size is indistinguishable from an unchecked
+                            // task, which is a different thing entirely.
+                            ui.canvas
+                                .fill_rect(Rect::new(mx + 1, y + 3, 4, 1), th.ink_soft);
                         }
                     }
                     Marker::Number(n) => {

@@ -27,9 +27,11 @@ rendering.
 | ![source](screenshots/visual.png) | ![preview](screenshots/preview.png) |
 
 Tables size to their content, fenced code keeps its own slab and is never
-re-wrapped, task lists get real checkboxes, and links lose their targets.
+re-wrapped, task lists get real checkboxes, and links lose their targets. The
+seeded **Markdown showcase** note exercises the lot — open it and flip between
+the tabs.
 
-![a rendered table](screenshots/preview-table.png)
+![the showcase, rendered](screenshots/showcase-preview.png)
 
 ## Vim
 
@@ -79,15 +81,17 @@ of the repo, and `pixui/README.md` covers it properly.
 ```sh
 cargo run --release -p demo                    # the gallery
 cargo run --release --example snapshot         # regenerate screenshots/
-cargo test --workspace                         # 187 tests
+cargo test --workspace                         # 188 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 
 ## Not implemented
 
 Marks, macros, named registers, regular expressions in search (patterns are
-literal), tag objects, keyboard scrolling of the preview, images, and any
-script the built-in ASCII font cannot draw.
+literal), tag objects, keyboard scrolling of the preview, setext headings,
+reference links, nested block quotes, inline HTML, and any script the built-in
+ASCII font cannot draw. Images are parsed but cannot be drawn, so their alt text
+stands in for them.
 
 ## Licence
 

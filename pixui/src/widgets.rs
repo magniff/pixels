@@ -657,14 +657,34 @@ impl Ui<'_> {
         name: &str,
         f: impl FnOnce(&mut Ui) -> R,
     ) -> (R, ScrollState) {
+        let id = self.id(name);
+        let mut state = self.scroll_state(id);
+        let out = self.scroll_area_with(rect, name, &mut state, f);
+        self.set_scroll_state(id, state);
+        (out, state)
+    }
+
+    /// A scroll area whose position the caller owns.
+    ///
+    /// Widget state is garbage collected when a widget stops being drawn, which
+    /// is right for one that has genuinely gone and wrong for one that is
+    /// merely not showing — a view behind a tab, say, which should come back
+    /// where it was left. Holding the state outside the toolkit is the honest
+    /// way to say "this outlives not being drawn".
+    pub fn scroll_area_with<R>(
+        &mut self,
+        rect: Rect,
+        name: &str,
+        state: &mut ScrollState,
+        f: impl FnOnce(&mut Ui) -> R,
+    ) -> R {
         let th = *self.theme;
         let m = th.metrics;
         let dt = self.input.dt;
 
-        let id = self.id(name);
         let thumb_id = self.scope(name, |ui| ui.id("thumb"));
         let track_id = self.scope(name, |ui| ui.id("track"));
-        let mut st = self.scroll_state(id);
+        let mut st = *state;
 
         const BAR_W: i32 = 7;
         let gutter = BAR_W + 2;
@@ -764,8 +784,8 @@ impl Ui<'_> {
                 .hline(view.x, view.bottom() - 1, view.w, th.shadow);
         }
 
-        self.set_scroll_state(id, st);
-        (result, st)
+        *state = st;
+        result
     }
 
     // ------------------------------------------------------------------ text

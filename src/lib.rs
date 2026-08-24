@@ -94,6 +94,9 @@ pub struct Notes {
     pub drag_anchor: Option<text::Cursor>,
     /// Which editor tab is showing: 0 the source, 1 the rendering.
     pub editor_tab: usize,
+    /// Where the preview was left, so switching tabs comes back to it rather
+    /// than to the top.
+    pub preview_scroll: pixui::ScrollState,
     /// A note being renamed in place: which one, and the name so far.
     pub renaming: Option<(usize, String)>,
     /// Set on the frame a rename begins, to move focus into its field.
@@ -155,6 +158,7 @@ impl Notes {
             filter: String::new(),
             drag_anchor: None,
             editor_tab: 0,
+            preview_scroll: pixui::ScrollState::default(),
             renaming: None,
             focus_rename: false,
             sidebar_w: None,
@@ -195,6 +199,7 @@ impl Notes {
         {
             self.current = i;
             self.scroll = 0;
+            self.preview_scroll = pixui::ScrollState::default();
             self.status = format!("SWITCHED TO {}", self.notes[i].filename());
             return;
         }
@@ -736,9 +741,12 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     let blocks = markdown::parse(app.note().buffer.lines());
     // The scroll area keeps a gutter for its bar; the document gets the rest.
     let width = inner.w - 12;
-    ui.scroll_area(inner, "preview", |ui| {
+    // The app holds the scroll position, so it survives the tab being hidden.
+    let mut scroll = app.preview_scroll;
+    ui.scroll_area_with(inner, "preview", &mut scroll, |ui| {
         render::draw_document(ui, &blocks, width);
     });
+    app.preview_scroll = scroll;
 }
 
 // -------------------------------------------------------------------- editor
@@ -1025,6 +1033,8 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
         Tok::Code => th.positive.face,
         Tok::Link => th.info.face,
         Tok::Quote => th.ink_soft.lerp(th.ink_light, 0.4),
+        Tok::Strike => th.ink_soft,
+        Tok::Image => th.info.hi,
     }
 }
 
@@ -1122,7 +1132,114 @@ fn main() {
 ```
 ";
 
+    // A note that exercises every piece of markdown the renderer understands,
+    // and names the ones it does not, so both views can be judged side by side.
+    let showcase = "\
+# Markdown showcase
+
+Everything below is written in the source tab and drawn in the preview tab.
+Switch between them with the tabs above, or with `:source` and `:preview`.
+
+## Headings
+
+Six levels are parsed. The first two take a rule under them; the rest are
+told apart by weight and colour alone.
+
+### Third level
+#### Fourth level
+##### Fifth level
+###### Sixth level
+
+## Inline
+
+Text can be **bold**, *italic*, `monospaced`, ~~struck out~~, or a
+[link to somewhere](https://example.com). Emphasis can sit **inside a
+longer sentence** without upsetting the wrapping, and `code spans` get a
+slab behind them so they read as code rather than as differently coloured
+prose.
+
+An image cannot be drawn, so its alt text stands in for it:
+![a picture of a cat](cat.png)
+
+## Paragraphs
+
+A paragraph is not a line. These three source lines
+are one paragraph, and they reflow to whatever
+width the pane happens to be.
+
+A blank line starts a new one.
+
+## Lists
+
+- A bullet at the top level
+- Another one, with **emphasis** and `code` inside it
+  - A nested bullet, one indent deeper
+  - And its sibling
+- Back out again
+
+1. Ordered items keep their numbers
+2. Even when they are not sequential
+7. As here
+
+- [ ] An unchecked task
+- [x] A finished one
+- [ ] Tasks and bullets can share a list
+
+## Quotes
+
+> A block quote gets a bar down its left side.
+> Consecutive lines belong to the same quote.
+
+## Code
+
+Fenced code keeps its own slab, and is never re-wrapped: a line break
+inserted into code is a lie about what the code says.
+
+```rust
+fn main() {
+    let note = \"every note is just a file on disk\";
+    println!(\"{note}\");
+}
+```
+
+Markdown inside a fence is left alone:
+
+```
+# not a heading
+- not a list
+**not bold**
+```
+
+## Tables
+
+Columns size to their content, and alignment comes from the separator row.
+
+| left | centred | right |
+| :--- | :-----: | ----: |
+| one | two | three |
+| a much longer cell | x | 42 |
+| short | y | 7 |
+
+## Rules
+
+Three or more dashes make a horizontal rule:
+
+---
+
+## Not supported
+
+These are left as plain text rather than pretending:
+
+- Setext headings, the kind underlined with `===`
+- Reference-style links and footnotes
+- Nested block quotes
+- Inline HTML
+- Hard line breaks from two trailing spaces
+- Any script the 5x7 ASCII font cannot draw
+";
+
     let _ = std::fs::write(dir.join("welcome.md"), welcome);
+    let _ = std::fs::write(dir.join("markdown-showcase.md"), showcase);
     let _ = std::fs::write(dir.join("vim-keys.md"), vim);
     let _ = std::fs::write(dir.join("ideas.md"), ideas);
 }

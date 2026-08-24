@@ -1334,3 +1334,34 @@ fn every_icon_is_rectangular() {
         }
     }
 }
+
+#[test]
+fn a_caller_owned_scroll_area_survives_not_being_drawn() {
+    // A view behind a tab should come back where it was left. The toolkit
+    // garbage collects state for widgets that stop being drawn, which is why
+    // the position has to live outside it.
+    let mut h = Harness::new();
+    let mut state = ScrollState::default();
+    let area = Rect::new(0, 0, 100, 40);
+
+    let long = |ui: &mut Ui| {
+        for i in 0..12 {
+            ui.label(&format!("row {i}"));
+        }
+    };
+
+    h.input.mouse = Point::new(50, 20);
+    h.frame(|ui| ui.scroll_area_with(area, "v", &mut state, long));
+    h.input.wheel = -3.0;
+    h.frame(|ui| ui.scroll_area_with(area, "v", &mut state, long));
+    let parked = state.target;
+    assert!(parked > 0.0, "the wheel moved it");
+
+    // Several frames where the area is not drawn at all.
+    for _ in 0..5 {
+        h.frame(|ui| ui.label("something else entirely"));
+    }
+
+    h.frame(|ui| ui.scroll_area_with(area, "v", &mut state, long));
+    assert_eq!(state.target, parked, "and it came back where it was left");
+}

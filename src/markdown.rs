@@ -18,6 +18,10 @@ pub enum Tok {
     Code,
     Link,
     Quote,
+    /// `~~struck out~~`.
+    Strike,
+    /// An image, which cannot be drawn — its alt text stands in for it.
+    Image,
 }
 
 /// A run of characters sharing one token type.
@@ -162,6 +166,17 @@ fn inline(s: &str) -> Vec<Span> {
                 continue;
             }
         }
+        // ~~struck out~~
+        if bytes[i] == '~' && bytes.get(i + 1) == Some(&'~') {
+            if let Some(end) = find_pair_of(&bytes, i + 2, '~') {
+                flush(&mut plain, &mut out);
+                out.push(Span::new("~~", Tok::Marker, false));
+                out.push(Span::new(take(&bytes, i + 2, end), Tok::Strike, false));
+                out.push(Span::new("~~", Tok::Marker, false));
+                i = end + 2;
+                continue;
+            }
+        }
         // *italic*
         if bytes[i] == '*' {
             if let Some(end) = find(&bytes, i + 1, '*') {
@@ -171,6 +186,25 @@ fn inline(s: &str) -> Vec<Span> {
                 out.push(Span::new("*", Tok::Marker, false));
                 i = end + 1;
                 continue;
+            }
+        }
+        // ![alt](source)
+        if bytes[i] == '!' && bytes.get(i + 1) == Some(&'[') {
+            if let Some(close) = find(&bytes, i + 2, ']') {
+                if bytes.get(close + 1) == Some(&'(') {
+                    if let Some(paren) = find(&bytes, close + 2, ')') {
+                        flush(&mut plain, &mut out);
+                        out.push(Span::new("![", Tok::Marker, false));
+                        out.push(Span::new(take(&bytes, i + 2, close), Tok::Image, false));
+                        out.push(Span::new(
+                            take(&bytes, close, paren + 1),
+                            Tok::Marker,
+                            false,
+                        ));
+                        i = paren + 1;
+                        continue;
+                    }
+                }
             }
         }
         // [label](target)
@@ -206,7 +240,12 @@ fn find(chars: &[char], from: usize, target: char) -> Option<usize> {
 
 /// Find the closing `**` of a bold run.
 fn find_pair(chars: &[char], from: usize) -> Option<usize> {
-    (from..chars.len().saturating_sub(1)).find(|&i| chars[i] == '*' && chars[i + 1] == '*')
+    find_pair_of(chars, from, '*')
+}
+
+/// Find the next doubled `c`.
+fn find_pair_of(chars: &[char], from: usize, c: char) -> Option<usize> {
+    (from..chars.len().saturating_sub(1)).find(|&i| chars[i] == c && chars[i + 1] == c)
 }
 
 /// A title for a note: its first heading, else its first non-empty line.

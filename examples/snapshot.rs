@@ -177,6 +177,33 @@ fn main() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
+        // The showcase note, in both views.
+        Scene {
+            name: "showcase-source",
+            script: [keys(":e markdown-showcase.md"), keys("\n")].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 30,
+            canvas: (900, 660),
+        },
+        Scene {
+            name: "showcase-preview",
+            script: [
+                keys(":e markdown-showcase.md"),
+                keys("\n"),
+                keys(":preview"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 30,
+            canvas: (900, 660),
+        },
         // The rendered view of the note with a table and a code block.
         Scene {
             name: "preview-table",
