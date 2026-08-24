@@ -139,8 +139,52 @@ impl Ui<'_> {
         let th = *self.theme;
         let color = th.background.lerp(th.focus_ring, anim.focus);
         let phase = (self.input.time * 14.0) as i32;
+        // The ring contracts onto the widget as it arrives, the same landing
+        // that [`Ui::focus_flare`] does for a whole region — so moving the
+        // keyboard always looks like the same gesture, whatever it lands on.
+        let out = 2 + ((1.0 - anim.focus) * 3.0).round() as i32;
         self.canvas
-            .stroke_rect_dashed(rect.inset(-2), color, 2, 2, phase);
+            .stroke_rect_dashed(rect.inset(-out), color, 2, 2, phase);
+    }
+
+    /// Say that the keyboard has just arrived somewhere.
+    ///
+    /// Draws nothing at rest, so a region that holds the focus most of the
+    /// time does not end up wearing a permanent border. Pass `arrived` on the
+    /// one frame it took the keyboard; the ring runs itself from there.
+    ///
+    /// It lands rather than fades: the outline starts a few pixels out and
+    /// contracts onto the edge while dissolving, which the eye reads as one
+    /// movement towards the thing that now has the keys. The dissolve is
+    /// ordered dither rather than a blend, for the same reason everything else
+    /// here is — there is no half-brightness in sixteen colours.
+    pub fn focus_flare(&mut self, id_label: &str, rect: Rect, arrived: bool) {
+        let dt = self.input.dt;
+        let id = self.id(id_label);
+        let flare = self.with_anim(id, |a| {
+            if arrived {
+                a.flash = 1.0;
+            }
+            a.flash = smooth(a.flash, 0.0, 7.0, dt);
+            a.flash
+        });
+        if flare <= 0.03 {
+            return;
+        }
+
+        let th = *self.theme;
+        let color = th.focus_ring.lerp(WHITE, flare * 0.35);
+        let out = (flare * 3.0).round() as i32;
+        let r = rect.inset(-out);
+        const T: i32 = 2;
+        for bar in [
+            Rect::new(r.x, r.y, r.w, T),
+            Rect::new(r.x, r.bottom() - T, r.w, T),
+            Rect::new(r.x, r.y + T, T, r.h - T * 2),
+            Rect::new(r.right() - T, r.y + T, T, r.h - T * 2),
+        ] {
+            self.canvas.dither_fill(bar, color, flare);
+        }
     }
 
     /// A recessed well: the inverse of [`Ui::draw_control_face`], used for

@@ -104,6 +104,12 @@ pub struct Notes {
     /// Set on the frame a shortcut moves the keyboard, so the pane taking it
     /// can claim focus once rather than holding it against every click.
     pub pane_grab: bool,
+    /// The pane the arrival cue has already been shown for. Focus also moves
+    /// by clicking, which no shortcut tells us about, so the flare watches the
+    /// value change rather than trusting `pane_grab` alone.
+    pub pane_seen: Pane,
+    /// How settled the note list's keyboard ring is, 0 to 1.
+    pub notes_focus: f32,
     pub status: String,
     /// First visible line in the editor.
     pub scroll: usize,
@@ -187,6 +193,8 @@ impl Notes {
             notes_dir,
             pane: Pane::Editor,
             pane_grab: false,
+            pane_seen: Pane::Editor,
+            notes_focus: 0.0,
             status: "j/k MOVE  i INSERT  /  SEARCH  :w SAVE  :e OPEN  :help".into(),
             scroll: 0,
             filter: String::new(),
@@ -532,6 +540,16 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     let modal = app.dialog.is_some();
     app.caret_phase += ui.input.dt;
+    // Both the arrival cue and the steady ring are driven from this, so they
+    // cannot disagree about where the keyboard is.
+    let arrived = app.pane != app.pane_seen || app.pane_grab;
+    app.pane_seen = app.pane;
+    app.notes_focus = pixui::smooth(
+        app.notes_focus,
+        f32::from(u8::from(app.pane == Pane::Notes)),
+        18.0,
+        ui.input.dt,
+    );
 
     // A dialog takes the keyboard for itself while it is open; nothing below
     // it sees a key.
@@ -568,6 +586,11 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             app.sidebar_w = Some(width);
         }
         draw_sidebar(ui, side.inset(5), app);
+        // The sidebar holds two of the three panes, so the cue lands on the
+        // whole drawer for either of them.
+        if app.pane != Pane::Editor {
+            ui.focus_flare("pane:side", side.inset(4), arrived);
+        }
 
         // The two views of the same note: its source, and what it means.
         let pane = main.inset_xy(0, 5);
@@ -590,6 +613,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             app.tab_anim = 1.0;
         }
 
+        let editor_arrived = arrived && app.pane == Pane::Editor;
         let pane_inner;
         if app.tab_anim > 0.0 {
             app.tab_anim = (app.tab_anim - ui.input.dt / TAB_FADE).max(0.0);
@@ -607,7 +631,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         } else {
             pane_inner = draw_view(ui, content, app, app.tab_shown);
         }
-        let _ = pane_inner;
+        ui.focus_flare("pane:main", pane_inner, editor_arrived);
 
         draw_statusbar(ui, statusbar, app);
     });
@@ -890,14 +914,12 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                 ui.canvas.vline(row.x, row.y, row.h, th.accent.lo);
                 // When the list itself has the keyboard, say so on the row the
                 // keys will move — otherwise j and k appear to do nothing.
-                if app.pane == Pane::Notes {
-                    ui.canvas.stroke_rect_dashed(
-                        row,
-                        th.accent.ink,
-                        2,
-                        2,
-                        (ui.input.time * 14.0) as i32,
-                    );
+                if app.notes_focus > 0.03 {
+                    // Fades in with the pane rather than snapping on, so
+                    // arriving here reads as one movement and not two events.
+                    let ring = th.accent.face.lerp(th.accent.ink, app.notes_focus);
+                    ui.canvas
+                        .stroke_rect_dashed(row, ring, 2, 2, (ui.input.time * 14.0) as i32);
                 }
             }
 
