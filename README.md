@@ -42,6 +42,15 @@ buttons do, so the one you pick rises out of the strip as the other sinks.
 
 ![the showcase, rendered](screenshots/showcase-preview.png)
 
+## Panes
+
+`cmd-e` puts the keyboard in the editor, `cmd-n` in the note list, `cmd-s` in
+the search box. In the list, `j` and `k` walk the notes that the filter is
+actually showing, and `Enter` drops back into the text. Command specifically,
+not Control — Control is vim's.
+
+![the note list with the keyboard](screenshots/pane-notes.png)
+
 ## Vim
 
 | | |

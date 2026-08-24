@@ -506,6 +506,12 @@ impl<'a> Ui<'a> {
         self.state.focus = Some(id);
     }
 
+    /// Drop keyboard focus, so an application with its own key handling gets
+    /// the keys back from whatever field was holding them.
+    pub fn clear_focus(&mut self) {
+        self.state.focus = None;
+    }
+
     /// Swap the theme from the next frame onwards.
     ///
     /// It cannot take effect mid-frame — half the widgets are already drawn —

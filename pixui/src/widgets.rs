@@ -570,6 +570,22 @@ impl Ui<'_> {
         text: &mut String,
         hint: &str,
     ) -> Response {
+        self.search_field_grab_at(rect, name, text, hint, false)
+    }
+
+    /// A search field that can be handed the keyboard from outside.
+    ///
+    /// Pass `grab` on the one frame a shortcut aims at this field. It has to
+    /// be a pulse rather than a flag: holding focus every frame would take it
+    /// straight back the moment the user clicked somewhere else.
+    pub fn search_field_grab_at(
+        &mut self,
+        rect: Rect,
+        name: &str,
+        text: &mut String,
+        hint: &str,
+        grab: bool,
+    ) -> Response {
         let th = *self.theme;
         let glass_w = icon::size(icon::SEARCH).0;
         let pad = th.metrics.text_pad;
@@ -598,7 +614,7 @@ impl Ui<'_> {
         let opts = FieldOpts {
             pad_left: pad + glass_w + 2,
             pad_right: if text.is_empty() { pad } else { 15 },
-            grab: false,
+            grab,
         };
         let mut resp = self.text_field_core(rect, name, text, hint, opts);
         resp.changed |= cleared;

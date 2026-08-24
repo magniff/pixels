@@ -55,6 +55,17 @@ fn keys(s: &str) -> Vec<Press> {
         .collect()
 }
 
+/// A Command chord (Control off macOS), for the pane and view shortcuts.
+fn cmd(c: char) -> Vec<Press> {
+    vec![Press {
+        key: Key::Char(c),
+        mods: Mods {
+            cmd: true,
+            ..Default::default()
+        },
+    }]
+}
+
 /// A Ctrl chord, which a bare character cannot express.
 fn ctrl(c: char) -> Vec<Press> {
     vec![Press {
@@ -176,6 +187,18 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             settle: 30,
+            canvas: (768, 470),
+        },
+        // Cmd-N hands the keyboard to the note list, which says so with a
+        // marching ring on the row j and k will move.
+        Scene {
+            name: "pane-notes",
+            script: [cmd('n'), keys("jj")].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 20,
             canvas: (768, 470),
         },
         // Caught mid-transition: the two views dissolving into each other.

@@ -77,12 +77,33 @@ impl Note {
     }
 }
 
+/// Which of the three panes the keyboard is currently aimed at.
+///
+/// The editor is modal on its own, so this cannot be the toolkit's focus
+/// ring: vim wants every bare key, and a focus ring is driven by Tab. What
+/// the toolkit does own is the search field, which takes the keyboard the
+/// ordinary way — so `Search` is the one state where this defers to it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pane {
+    /// Vim has the keys.
+    Editor,
+    /// The note list: j/k walk it, Enter or Escape goes back to the editor.
+    Notes,
+    /// The sidebar's filter field.
+    Search,
+}
+
 pub struct Notes {
     pub notes: Vec<Note>,
     pub current: usize,
     pub vim: Vim,
     pub dialog: Option<FileDialog>,
     pub notes_dir: PathBuf,
+    /// Which pane the keyboard is aimed at.
+    pub pane: Pane,
+    /// Set on the frame a shortcut moves the keyboard, so the pane taking it
+    /// can claim focus once rather than holding it against every click.
+    pub pane_grab: bool,
     pub status: String,
     /// First visible line in the editor.
     pub scroll: usize,
@@ -160,6 +181,8 @@ impl Notes {
             vim: Vim::new(),
             dialog: None,
             notes_dir,
+            pane: Pane::Editor,
+            pane_grab: false,
             status: "j/k MOVE  i INSERT  /  SEARCH  :w SAVE  :e OPEN  :help".into(),
             scroll: 0,
             filter: String::new(),
@@ -291,7 +314,8 @@ impl Notes {
                 self.status = "MOTIONS hjkl w b e 0 $ gg G f t ; , | EDIT i a o x dd cw \
                      yy p u C-r | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then \
                      d y c o | FIND / ? n N * | MOUSE click to place, drag to select, \
-                     double-click a note to rename | VIEWS cmd-1 SOURCE cmd-2 PREVIEW \
+                     double-click a note to rename | PANES cmd-e EDITOR cmd-n NOTES cmd-s \
+                     SEARCH | VIEWS cmd-1 SOURCE cmd-2 PREVIEW \
                      | :w :e :q :qa"
                     .into();
             }
@@ -300,9 +324,44 @@ impl Notes {
         }
     }
 
+    /// Aim the keyboard at a pane, and let this frame's drawing know to claim
+    /// focus for it.
+    fn focus_pane(&mut self, pane: Pane) {
+        self.pane = pane;
+        self.pane_grab = true;
+        self.status = match pane {
+            Pane::Editor => "EDITOR",
+            Pane::Notes => "NOTES - j/k TO WALK, ENTER TO EDIT",
+            Pane::Search => "SEARCH NOTES",
+        }
+        .into();
+    }
+
+    /// Indices of the notes the sidebar is showing, in the order it shows
+    /// them. Keyboard walking follows the filter — stepping onto a note that
+    /// is not on screen would look like the selection vanishing.
+    fn shown(&self) -> Vec<usize> {
+        let needle = self.filter.trim().to_lowercase();
+        (0..self.notes.len())
+            .filter(|&i| note_matches(&self.notes[i], &needle))
+            .collect()
+    }
+
+    /// Move the selection `delta` rows down the visible list, wrapping.
+    fn step_note(&mut self, delta: i32) {
+        let shown = self.shown();
+        if shown.is_empty() {
+            return;
+        }
+        let at = shown.iter().position(|&i| i == self.current).unwrap_or(0) as i32;
+        let n = shown.len() as i32;
+        self.current = shown[(at + delta).rem_euclid(n) as usize];
+        self.scroll = 0;
+    }
+
     fn close_current(&mut self) {
         if self.note().buffer.dirty {
-            self.status = "UNSAVED CHANGES — :w FIRST, OR :q AGAIN".into();
+            self.status = "UNSAVED CHANGES - :w FIRST, OR :q AGAIN".into();
             self.note_mut().buffer.mark_saved();
             return;
         }
@@ -418,11 +477,27 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     let modal = app.dialog.is_some();
 
-    // Keys go to the editor only when no dialog is up; the dialog takes the
-    // keyboard for itself while it is open.
-    // A focused text field owns the keyboard; the editor gets what is left.
-    if !modal && !ui.text_input_active() {
-        handle_keys(ui, app);
+    // A dialog takes the keyboard for itself while it is open; nothing below
+    // it sees a key.
+    if !modal {
+        // The pane shortcuts run first and everywhere, including from inside
+        // the search field, so there is always a way back out to the editor.
+        handle_shortcuts(ui, app);
+
+        // Focus can also be lost by clicking elsewhere, which no shortcut
+        // told us about. The field holding the keyboard is the truth.
+        if app.pane == Pane::Search && !app.pane_grab && !ui.text_input_active() {
+            app.pane = Pane::Editor;
+        }
+        if app.pane_grab && app.pane != Pane::Search {
+            ui.clear_focus();
+        }
+
+        match app.pane {
+            _ if ui.text_input_active() => {}
+            Pane::Notes => handle_notes_keys(ui, app),
+            _ => handle_keys(ui, app),
+        }
     }
 
     ui.input_blocked(modal, |ui| {
@@ -498,6 +573,51 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             None => {}
         }
     }
+
+    // The pulse lasts exactly one frame: everything that wanted it has drawn.
+    app.pane_grab = false;
+}
+
+/// Shortcuts that work wherever the keyboard is, the search field included.
+///
+/// Command specifically, not the primary modifier: off macOS the toolkit maps
+/// `cmd` onto Control, and Control is already vim's — `Ctrl-r` is `Ctrl-r`
+/// everywhere, and `Ctrl-n` walks the sidebar.
+fn handle_shortcuts(ui: &mut Ui, app: &mut Notes) {
+    let mods = ui.input.mods;
+    if !mods.cmd || mods.ctrl {
+        return;
+    }
+    for key in ui.input.keys.clone() {
+        match key {
+            Key::Char('1') => {
+                app.editor_tab = 0;
+                app.status = "SOURCE".into();
+            }
+            Key::Char('2') => {
+                app.editor_tab = 1;
+                app.status = "PREVIEW".into();
+            }
+            Key::Char('e') => app.focus_pane(Pane::Editor),
+            Key::Char('n') => app.focus_pane(Pane::Notes),
+            Key::Char('s') => app.focus_pane(Pane::Search),
+            _ => {}
+        }
+    }
+}
+
+/// The note list with the keyboard: walk it, open one, or hand the keys back.
+fn handle_notes_keys(ui: &mut Ui, app: &mut Notes) {
+    ui.capture_keyboard();
+    for key in ui.input.keys.clone() {
+        match key {
+            Key::Char('j') | Key::Down => app.step_note(1),
+            Key::Char('k') | Key::Up => app.step_note(-1),
+            Key::Enter | Key::Escape | Key::Char('i') => app.focus_pane(Pane::Editor),
+            Key::Char('/') => app.focus_pane(Pane::Search),
+            _ => {}
+        }
+    }
 }
 
 fn handle_keys(ui: &mut Ui, app: &mut Notes) {
@@ -508,28 +628,13 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
     let keys = ui.input.keys.clone();
     let mods = ui.input.mods;
     for key in keys {
-        // Ctrl-n / Ctrl-p walk the sidebar without leaving the keyboard.
-        if mods.ctrl && matches!(key, Key::Char('n') | Key::Char('p')) {
-            let n = app.notes.len();
-            app.current = if key == Key::Char('n') {
-                (app.current + 1) % n
-            } else {
-                (app.current + n - 1) % n
-            };
-            app.scroll = 0;
+        // Already spent on a shortcut.
+        if mods.cmd && !mods.ctrl {
             continue;
         }
-        // Cmd-1 and Cmd-2 pick a view. Held down rather than bare digits,
-        // because bare digits are vim's counts — `2j` has to keep meaning two
-        // lines down, and `1` is the start of `11G`.
-        if mods.cmd && matches!(key, Key::Char('1') | Key::Char('2')) {
-            app.editor_tab = usize::from(key == Key::Char('2'));
-            app.status = if app.editor_tab == 0 {
-                "SOURCE"
-            } else {
-                "PREVIEW"
-            }
-            .into();
+        // Ctrl-n / Ctrl-p walk the sidebar without leaving the editor.
+        if mods.ctrl && matches!(key, Key::Char('n') | Key::Char('p')) {
+            app.step_note(if key == Key::Char('n') { 1 } else { -1 });
             continue;
         }
         let i = app.current.min(app.notes.len() - 1);
@@ -628,7 +733,8 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     // updates as you type with nothing to wire up.
     let mut filter = std::mem::take(&mut app.filter);
     let field = Rect::new(search.x, search.y, search.w, 15);
-    ui.search_field_at(field, "filter", &mut filter, "SEARCH NOTES");
+    let grab = app.pane_grab && app.pane == Pane::Search;
+    ui.search_field_grab_at(field, "filter", &mut filter, "SEARCH NOTES", grab);
     app.filter = filter;
 
     let needle = app.filter.trim().to_lowercase();
@@ -680,6 +786,17 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
             ui.canvas.fill_chamfer(row, face, 1);
             if selected {
                 ui.canvas.vline(row.x, row.y, row.h, th.accent.lo);
+                // When the list itself has the keyboard, say so on the row the
+                // keys will move — otherwise j and k appear to do nothing.
+                if app.pane == Pane::Notes {
+                    ui.canvas.stroke_rect_dashed(
+                        row,
+                        th.accent.ink,
+                        2,
+                        2,
+                        (ui.input.time * 14.0) as i32,
+                    );
+                }
             }
 
             let ink = if selected { th.accent.ink } else { th.ink };
