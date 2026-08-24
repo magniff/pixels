@@ -1,0 +1,7 @@
+/target
+
+# Generated locally by the snapshot examples; regenerate rather than commit.
+/snapshots
+
+# Seeded at runtime by pixui-notes: a user's vault, not source.
+/notes

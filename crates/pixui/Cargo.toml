@@ -1,0 +1,30 @@
+[package]
+name = "pixui"
+description = "A chunky, warm, pixel-art immediate-mode UI toolkit that renders on the CPU."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["soft"]
+# CPU presenter: upscale into a window-sized buffer via softbuffer.
+soft = ["dep:softbuffer"]
+# GPU presenter: upload the canvas as a texture and magnify it in a shader.
+gpu = ["dep:wgpu", "dep:pollster"]
+
+[dependencies]
+winit = "0.30"
+softbuffer = { version = "0.4", optional = true }
+pollster = { version = "1.0", optional = true }
+
+# The GPU verification test needs wgpu and pollster in scope directly.
+[dev-dependencies]
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "metal", "dx12", "vulkan", "gles", "wgsl"] }
+pollster = "1.0"
+
+[dependencies.wgpu]
+version = "30"
+optional = true
+default-features = false
+# Every desktop backend, but none of the web stack.
+features = ["std", "parking_lot", "metal", "dx12", "vulkan", "gles", "wgsl"]
