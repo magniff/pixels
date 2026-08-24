@@ -4,9 +4,10 @@ A chunky, warm, pixel-art immediate-mode UI toolkit for Rust, rendered entirely
 on the CPU. Cross-platform via winit — macOS, Windows, Linux.
 
 This is the toolkit underneath [`notes`](../README.md), the editor in the root
-of this repo. `demo/` is a gallery that exercises it on its own.
+of this repo. It is a path dependency of that app rather than a published
+crate.
 
-![the widget gallery](../screenshots/demo-widgets.png)
+![the editor it draws](../screenshots/editor.png)
 
 ## Layering
 
@@ -23,8 +24,8 @@ of this repo. `demo/` is a gallery that exercises it on its own.
 ```
 
 `pixui::app` is the sole place winit, softbuffer and wgpu appear. Two things
-prove that rather than assert it: `examples/snapshot.rs` in both consumers
-drives the identical UI with no window and no event loop, and `tests/gpu.rs`
+prove that rather than assert it: `notes --shots` drives the identical UI with
+no window and no event loop to produce `screenshots/`, and `tests/gpu.rs`
 renders through the real GPU pipeline offscreen and compares it pixel-for-pixel
 against the CPU path.
 
@@ -72,8 +73,9 @@ display's real resolution and looks like it belongs to a different program.
 
 ## Performance
 
-Measured on a 120Hz panel at 2304x1440 (a 6x integer scale), `PIXUI_VSYNC=0` so
-`present` is real work rather than a wait for the next vblank:
+Measured with `PIXUI_PROFILE=1` on a 120Hz panel at 2304x1440 (a 6x integer
+scale), `PIXUI_VSYNC=0` so `present` is real work rather than a wait for the
+next vblank:
 
 | backend | ui + raster | present | CPU | sustained |
 |---|---|---|---|---|

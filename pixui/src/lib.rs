@@ -86,7 +86,7 @@ pub mod widgets;
 
 pub use anim::{smooth, Spring, WidgetAnim};
 pub use app::{resolve_geometry, run, zoom_action, Config, Geometry, Scaling, ZoomAction};
-pub use canvas::Canvas;
+pub use canvas::{Canvas, Wipe};
 pub use color::{palette, Color};
 pub use geom::{Point, Rect};
 pub use input::{Cursor, Input, Key, Mods};

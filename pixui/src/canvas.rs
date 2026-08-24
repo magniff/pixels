@@ -12,6 +12,15 @@ use crate::geom::{Point, Rect};
 /// gradient out of a sixteen-colour palette without inventing new colours.
 const BAYER4: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 
+/// Which way a [`Canvas::dither_wipe`] runs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wipe {
+    /// The colour advances across, covering what is underneath.
+    In,
+    /// The colour retreats, uncovering what is underneath.
+    Out,
+}
+
 /// A fixed-size RGB pixel buffer with a clip stack.
 pub struct Canvas {
     width: i32,
@@ -299,6 +308,45 @@ impl Canvas {
                     b
                 };
                 self.pixels[(y * self.width + x) as usize] = c.0;
+            }
+        }
+    }
+
+    /// Paint `color` across `rect` behind a dithered edge that sweeps left to
+    /// right, for a transition between two things.
+    ///
+    /// `t` runs 0 to 1. [`Wipe::In`] advances the colour across; [`Wipe::Out`]
+    /// retreats it, uncovering what is underneath. Running one then the other
+    /// reads as a single sweep passing over the pane.
+    ///
+    /// Dithered rather than faded because a fade needs intermediate colours
+    /// that a small palette does not have. Trading them for a pattern is the
+    /// same bargain the rest of the toolkit makes, and it is what these
+    /// transitions looked like when the palettes were this small for real.
+    pub fn dither_wipe(&mut self, rect: Rect, color: Color, t: f32, wipe: Wipe) {
+        /// How much of the width the dithered edge is smeared over.
+        const BAND: f32 = 0.35;
+
+        let r = rect.intersect(self.clip);
+        if r.is_empty() || rect.w <= 0 {
+            return;
+        }
+        // The sweep overshoots by the band width so that the trailing edge has
+        // somewhere to finish; otherwise the last column never fully covers.
+        let sweep = t.clamp(0.0, 1.0) * (1.0 + BAND);
+        let width = rect.w as f32;
+
+        for y in r.y..r.bottom() {
+            for x in r.x..r.right() {
+                let edge = (x - rect.x) as f32 / width;
+                let local = match wipe {
+                    Wipe::In => (sweep - edge) / BAND,
+                    Wipe::Out => (edge - sweep) / BAND + 1.0,
+                };
+                let level = (local.clamp(0.0, 1.0) * 16.0) as u8;
+                if BAYER4[(y & 3) as usize][(x & 3) as usize] < level {
+                    self.pixels[(y * self.width + x) as usize] = color.0;
+                }
             }
         }
     }

@@ -1,27 +1,24 @@
-//! A markdown note-taking app with vim keys, built entirely on `pixui`.
+//! A markdown note editor with vim keys, drawn one pixel at a time.
 //!
-//! # The split, again
+//! The whole application lives here. `pixui`, the toolkit it is drawn with, is
+//! the only dependency — look at `Cargo.toml`. The line between them is worth
+//! knowing when reading this:
 //!
-//! Like `pixui-demo`, this crate depends on exactly one thing: `pixui`. Look at
-//! `Cargo.toml`. Everything specific to *this* program — the vim grammar, the
-//! markdown highlighter, reading and writing files — is here. Everything a
-//! second note-taking app would also need is in the toolkit.
+//! | In `pixui`                                | Here                            |
+//! |-------------------------------------------|---------------------------------|
+//! | Text fields, scrolling, splitters, modality | The vim grammar                 |
+//! | The bitmap font and the widgets drawn with it | What markdown means           |
+//! | Panels, lists, buttons, dialog chrome      | Reading and writing files       |
 //!
 //! The file dialogs are the sharpest illustration. They are modal, they browse
 //! the filesystem, they have a scrolling list and a text field and keyboard
 //! navigation — and they are drawn with the same widgets as the rest of the UI.
 //! `std::fs` appears in `dialog.rs` and nowhere in `pixui`.
-//!
-//! | In `pixui`                                | Here                            |
-//! |-------------------------------------------|---------------------------------|
-//! | Text field, caret, scrolling, modality     | The vim grammar                 |
-//! | Bitmap font and faux-bold                  | What markdown means             |
-//! | Panels, lists, buttons, dialoging chrome   | Reading and writing files       |
-//! | Blocking input behind a modal              | Which dialog is open, and why   |
 
 pub mod dialog;
 pub mod markdown;
 pub mod render;
+pub mod shots;
 pub mod text;
 pub mod vim;
 
@@ -97,6 +94,11 @@ pub struct Notes {
     /// Where the preview was left, so switching tabs comes back to it rather
     /// than to the top.
     pub preview_scroll: pixui::ScrollState,
+    /// The view actually on screen, which lags `editor_tab` while the
+    /// transition sweeps across.
+    pub tab_shown: usize,
+    /// Transition progress, counting 1 down to 0. Zero means settled.
+    pub tab_anim: f32,
     /// A note being renamed in place: which one, and the name so far.
     pub renaming: Option<(usize, String)>,
     /// Set on the frame a rename begins, to move focus into its field.
@@ -159,6 +161,8 @@ impl Notes {
             drag_anchor: None,
             editor_tab: 0,
             preview_scroll: pixui::ScrollState::default(),
+            tab_shown: 0,
+            tab_anim: 0.0,
             renaming: None,
             focus_rename: false,
             sidebar_w: None,
@@ -436,10 +440,37 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             pixui::Segment::with_icon(pixui::icon::PAGE, "PREVIEW"),
         ];
         ui.segments_at("view", strip, &views, &mut app.editor_tab);
-        if app.editor_tab == 0 {
-            draw_editor(ui, content, app);
+
+        // ---- the transition ------------------------------------------
+        // The sweep covers the old view, swaps underneath at the halfway
+        // point, then uncovers the new one — so what the eye follows is a
+        // single edge crossing the pane rather than two separate effects.
+        const TAB_SWEEP: f32 = 0.26;
+        if app.editor_tab != app.tab_shown && app.tab_anim <= 0.0 {
+            app.tab_anim = 1.0;
+        }
+        let mut sweep = None;
+        if app.tab_anim > 0.0 {
+            app.tab_anim = (app.tab_anim - ui.input.dt / TAB_SWEEP).max(0.0);
+            let t = 1.0 - app.tab_anim;
+            if t >= 0.5 {
+                app.tab_shown = app.editor_tab;
+            }
+            sweep = Some(if t < 0.5 {
+                (t * 2.0, pixui::Wipe::In)
+            } else {
+                ((t - 0.5) * 2.0, pixui::Wipe::Out)
+            });
+        }
+
+        let pane_inner = if app.tab_shown == 0 {
+            draw_editor(ui, content, app)
         } else {
-            draw_preview(ui, content, app);
+            draw_preview(ui, content, app)
+        };
+        if let Some((t, dir)) = sweep {
+            let well = ui.theme.well;
+            ui.canvas.dither_wipe(pane_inner, well, t, dir);
         }
         draw_statusbar(ui, statusbar, app);
     });
@@ -730,7 +761,9 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
 
 // ------------------------------------------------------------------- preview
 
-fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) {
+/// Returns the area inside the pane's frame, which is what a transition
+/// sweeps over — the frame itself should stay put.
+fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let th = *ui.theme;
     let area = Rect::new(rect.x, rect.y, rect.w - 5, rect.h);
     ui.canvas.box_chamfer(area, th.well, th.well_border, 2);
@@ -747,6 +780,7 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) {
         render::draw_document(ui, &blocks, width);
     });
     app.preview_scroll = scroll;
+    area.inset(1)
 }
 
 // -------------------------------------------------------------------- editor
@@ -785,7 +819,8 @@ fn position_at(
     text::Cursor::new(last, buf.line_len(last))
 }
 
-fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
+/// Returns the area inside the pane's frame; see [`draw_preview`].
+fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let th = *ui.theme;
     let area = Rect::new(rect.x, rect.y, rect.w - 5, rect.h);
     ui.canvas.box_chamfer(area, th.well, th.well_border, 2);
@@ -1021,6 +1056,8 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) {
         ui.canvas
             .fill_rect(Rect::new(track.x, y, 2, thumb_h), th.ink_soft);
     }
+
+    area.inset(1)
 }
 
 fn token_color(th: &Theme, tok: Tok) -> Color {

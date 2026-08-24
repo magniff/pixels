@@ -29,7 +29,8 @@ rendering.
 Tables size to their content, fenced code keeps its own slab and is never
 re-wrapped, task lists get real checkboxes, and links lose their targets. The
 seeded **Markdown showcase** note exercises the lot — open it and flip between
-the tabs.
+the tabs. Switching sweeps a dithered edge across the pane, which is what a
+transition looks like when the palette is this small.
 
 ![the showcase, rendered](screenshots/showcase-preview.png)
 
@@ -76,11 +77,8 @@ immediate-mode widget set, and a swappable presenter with CPU (softbuffer) and
 GPU (wgpu) backends. It is a path dependency of this app rather than the point
 of the repo, and `pixui/README.md` covers it properly.
 
-`demo/` is a widget gallery that exercises the toolkit on its own.
-
 ```sh
-cargo run --release -p demo                    # the gallery
-cargo run --release --example snapshot         # regenerate screenshots/
+cargo run --release -- --shots                 # regenerate screenshots/
 cargo test --workspace                         # 188 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```

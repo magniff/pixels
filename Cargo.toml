@@ -13,7 +13,7 @@ pixui = { path = "pixui", features = ["gpu"] }
 
 [workspace]
 resolver = "2"
-members = ["pixui", "demo"]
+members = ["pixui"]
 
 [workspace.package]
 version = "0.1.0"

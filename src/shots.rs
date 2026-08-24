@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-use notes::{frame, theme, Notes};
+use crate::{frame, theme, Notes};
 use pixui::{Canvas, Input, Key, Mods, Point, Theme, Ui, UiState};
 
 /// One capture: a name, keys to type, and how long to let things settle.
@@ -66,7 +66,8 @@ fn ctrl(c: char) -> Vec<Press> {
     }]
 }
 
-fn main() -> std::io::Result<()> {
+/// Render every scene into `screenshots/`.
+pub fn run() -> std::io::Result<()> {
     let dir = PathBuf::from("target/notes-snapshot");
     // Start from a clean vault so captures are byte-stable between runs.
     let _ = std::fs::remove_dir_all(&dir);
@@ -175,6 +176,17 @@ fn main() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             settle: 30,
+            canvas: (768, 470),
+        },
+        // Caught mid-transition: the dithered sweep crossing the pane.
+        Scene {
+            name: "tab-sweep",
+            script: vec![],
+            mouse: Point::new(300, 25),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            settle: 4,
             canvas: (768, 470),
         },
         // The showcase note, in both views.
