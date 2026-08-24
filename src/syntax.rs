@@ -152,6 +152,7 @@ fn highlight_uncached(lang: &str, lines: &[String]) -> Vec<Vec<Span>> {
                     text: line.clone(),
                     tok: Tok::Code,
                     bold: false,
+                    href: None,
                 }]);
                 continue;
             }
@@ -179,6 +180,7 @@ fn highlight_uncached(lang: &str, lines: &[String]) -> Vec<Vec<Span>> {
                     text: text.to_string(),
                     tok: code_token(code),
                     bold: false,
+                    href: None,
                 }),
             }
         };
@@ -195,6 +197,7 @@ fn highlight_uncached(lang: &str, lines: &[String]) -> Vec<Vec<Span>> {
                 text: String::new(),
                 tok: Tok::Code,
                 bold: false,
+                href: None,
             });
         }
         out.push(spans);

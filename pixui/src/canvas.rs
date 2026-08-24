@@ -314,6 +314,27 @@ impl Canvas {
         }
     }
 
+    /// Paint `color` over `rect` at a fractional coverage, leaving the pixels
+    /// it does not take untouched.
+    ///
+    /// Half a colour, for a palette that has no half colours: `amount` is the
+    /// share of pixels the ordered dither hands to `color`, so anything can be
+    /// drawn at partial strength over whatever is already there.
+    pub fn dither_fill(&mut self, rect: Rect, color: Color, amount: f32) {
+        let level = (amount.clamp(0.0, 1.0) * 16.0) as u8;
+        if level == 0 {
+            return;
+        }
+        let r = rect.intersect(self.clip);
+        for y in r.y..r.bottom() {
+            for x in r.x..r.right() {
+                if BAYER4[(y & 3) as usize][(x & 3) as usize] < level {
+                    self.pixels[(y * self.width + x) as usize] = color.0;
+                }
+            }
+        }
+    }
+
     /// Composite `src` over this canvas within `rect`, keeping the fraction
     /// `amount` of it, chosen per pixel by an ordered dither.
     ///

@@ -9,7 +9,9 @@
 //! order. A layout that measures one way and paints another is a layout that
 //! will eventually disagree with itself.
 
-use pixui::{font, icon, palette, Color, Rect, Theme, Ui};
+use std::cell::RefCell;
+
+use pixui::{font, icon, palette, Color, Cursor, Rect, Theme, Ui};
 
 use crate::markdown::{slice_spans, wrap_ranges};
 use crate::markdown::{Block, CellAlign, Item, Marker, Span, Tok};
@@ -27,6 +29,13 @@ struct Ctx {
     th: Theme,
     /// Width available for content, in pixels.
     width: i32,
+    /// A link activated this frame, on its way back out to the application.
+    ///
+    /// A cell rather than a return value because a link is found six calls
+    /// deep, inside a loop over the runs of a wrapped line of one block, and
+    /// threading it back up would put a `Option<String>` in every signature
+    /// between here and there.
+    clicked: RefCell<Option<String>>,
 }
 
 impl Ctx {
@@ -77,20 +86,14 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
     for span in spans {
         let sx = x + col * ADVANCE;
         let len = span.text.chars().count() as i32;
-        let color = token_color(&ctx.th, span.tok);
+        let mut color = token_color(&ctx.th, span.tok);
+        let cell = Rect::new(sx - 1, y - 1, len * ADVANCE, LINE_H);
 
         match span.tok {
             // A code span gets a slab behind it, which is what makes it read as
             // code rather than as differently coloured prose.
             Tok::Code => {
-                ui.canvas.fill_rect(
-                    Rect::new(sx - 1, y - 1, len * ADVANCE, LINE_H),
-                    ctx.th.well.shade(0.10),
-                );
-            }
-            Tok::Link => {
-                ui.canvas
-                    .hline(sx, y + font::GLYPH_H, len * ADVANCE - 2, color);
+                ui.canvas.fill_rect(cell, ctx.th.well.shade(0.10));
             }
             // A line through the middle, which is the whole point of the
             // notation and the only way it survives being rendered.
@@ -107,6 +110,26 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
                     ctx.th.info.face,
                     1,
                 );
+            }
+            Tok::Link => {
+                // Only a link once it knows where it points: a bare `[x]` with
+                // no target is prose in brackets, and gets no pointer.
+                if let Some(href) = span.href.as_deref() {
+                    // Keyed on the target and the row, so two links to
+                    // different places never share a hover, and one link keeps
+                    // its own across a redraw.
+                    let id = ui.id(&format!("link:{href}:{y}"));
+                    let resp = ui.interact(id, cell);
+                    if resp.hovered {
+                        ui.request_cursor(Cursor::Pointer);
+                        color = ctx.th.info.hi;
+                    }
+                    if resp.clicked {
+                        *ctx.clicked.borrow_mut() = Some(href.to_string());
+                    }
+                }
+                ui.canvas
+                    .hline(sx, y + font::GLYPH_H, len * ADVANCE - 2, color);
             }
             _ => {}
         }
@@ -180,20 +203,23 @@ fn list_indent(items: &[Item], item: &Item) -> i32 {
 /// Each block allocates its own height, so the enclosing scroll area measures
 /// the document for free and clipping falls out of the layout rather than being
 /// arranged separately.
-pub fn draw_document(ui: &mut Ui, blocks: &[Block], width: i32) {
+/// Draw the document, and report a link the pointer activated in it.
+pub fn draw_document(ui: &mut Ui, blocks: &[Block], width: i32) -> Option<String> {
     let ctx = Ctx {
         th: *ui.theme,
         width,
+        clicked: RefCell::new(None),
     };
     if blocks.is_empty() {
         ui.label_dim("  (EMPTY NOTE)");
-        return;
+        return None;
     }
     for block in blocks {
         let h = measure(block, &ctx);
         let rect = ui.alloc(h);
         draw_block(ui, rect, block, &ctx);
     }
+    ctx.clicked.into_inner()
 }
 
 fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {

@@ -125,6 +125,10 @@ pub struct Notes {
     /// Scratch holding the outgoing view while the incoming one is drawn
     /// over it. Kept across frames so a transition allocates nothing.
     pub fade: pixui::Canvas,
+    /// Seconds since the insert caret was last reset, which typing does. The
+    /// pulse restarts solid on every keystroke, so the caret is never dim at
+    /// the moment you are looking for it.
+    pub caret_phase: f32,
     /// A note being renamed in place: which one, and the name so far.
     pub renaming: Option<(usize, String)>,
     /// Set on the frame a rename begins, to move focus into its field.
@@ -192,6 +196,7 @@ impl Notes {
             tab_shown: 0,
             tab_anim: 0.0,
             fade: pixui::Canvas::new(1, 1),
+            caret_phase: 0.0,
             renaming: None,
             focus_rename: false,
             sidebar_w: None,
@@ -314,7 +319,7 @@ impl Notes {
                 self.status = "MOTIONS hjkl w b e 0 $ gg G f t ; , | EDIT i a o x dd cw \
                      yy p u C-r | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then \
                      d y c o | FIND / ? n N * | MOUSE click to place, drag to select, \
-                     double-click a note to rename | PANES cmd-e EDITOR cmd-n NOTES cmd-s \
+                     double-click a note to rename, click a link in the preview | PANES cmd-e EDITOR cmd-n NOTES cmd-s \
                      SEARCH | VIEWS cmd-1 SOURCE cmd-2 PREVIEW \
                      | :w :e :q :qa"
                     .into();
@@ -357,6 +362,56 @@ impl Notes {
         let n = shown.len() as i32;
         self.current = shown[(at + delta).rem_euclid(n) as usize];
         self.scroll = 0;
+    }
+
+    /// Follow a link clicked in the preview.
+    ///
+    /// Three kinds, and the app decides which is which: another note in the
+    /// vault, a fragment inside this one, or somewhere outside. Only the last
+    /// leaves the program, and it leaves by asking the desktop to open it
+    /// rather than by knowing anything about browsers.
+    fn follow_link(&mut self, href: &str) {
+        let href = href.trim();
+        if href.is_empty() {
+            return;
+        }
+        if href.starts_with('#') {
+            self.status = format!("ANCHOR {href} - NOT LINKED YET").to_uppercase();
+            return;
+        }
+        if let Some(scheme) = external_scheme(href) {
+            match open_externally(href) {
+                Ok(()) => self.status = format!("OPENED {scheme} LINK").to_uppercase(),
+                Err(e) => self.status = format!("COULD NOT OPEN: {e}").to_uppercase(),
+            }
+            return;
+        }
+
+        // A relative target names a note. Match one already open before
+        // touching the disk, so clicking through does not reload a note that
+        // has unsaved edits in it.
+        let target = href.split(['#', '?']).next().unwrap_or(href);
+        let with_ext = if target.ends_with(".md") {
+            target.to_string()
+        } else {
+            format!("{target}.md")
+        };
+        if let Some(i) = self
+            .notes
+            .iter()
+            .position(|n| n.filename().eq_ignore_ascii_case(&with_ext))
+        {
+            self.current = i;
+            self.scroll = 0;
+            self.status = format!("OPENED {}", self.notes[i].filename()).to_uppercase();
+            return;
+        }
+        let path = self.notes_dir.join(&with_ext);
+        if path.exists() {
+            self.open_path(&path);
+        } else {
+            self.status = format!("NO SUCH NOTE: {with_ext}").to_uppercase();
+        }
     }
 
     fn close_current(&mut self) {
@@ -476,6 +531,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     let (body, statusbar) = rest.split_bottom(12);
 
     let modal = app.dialog.is_some();
+    app.caret_phase += ui.input.dt;
 
     // A dialog takes the keyboard for itself while it is open; nothing below
     // it sees a key.
@@ -637,6 +693,9 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
             app.step_note(if key == Key::Char('n') { 1 } else { -1 });
             continue;
         }
+        // Typing restarts the pulse at full, the way a caret you are driving
+        // should never be the dim half of a blink.
+        app.caret_phase = 0.0;
         let i = app.current.min(app.notes.len() - 1);
         let event = app.vim.handle(&mut app.notes[i].buffer, key, mods);
         if let Some(VimEvent::Command(cmd)) = event {
@@ -705,6 +764,49 @@ fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {
 
 /// Whether a note matches the sidebar filter.
 ///
+/// The scheme of an absolute link, if it has one.
+///
+/// Matched by shape rather than against a list: anything with a scheme is for
+/// the desktop to route, and guessing which schemes exist is how a link to
+/// something perfectly ordinary ends up treated as a filename.
+pub fn external_scheme(href: &str) -> Option<&str> {
+    if let Some((scheme, _)) = href.split_once("://") {
+        return is_scheme(scheme).then_some(scheme);
+    }
+    // The schemeless-authority forms, which have no `//` to split on.
+    let (scheme, _) = href.split_once(':')?;
+    is_scheme(scheme).then_some(scheme)
+}
+
+/// Whether a string could be a URI scheme: a letter, then letters, digits,
+/// `+`, `-` or `.`. A Windows drive letter is one character, and is not.
+fn is_scheme(s: &str) -> bool {
+    s.len() > 1
+        && s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// Hand a URL to the desktop.
+///
+/// The one place the program leaves its own window. Which command does it is
+/// the only per-platform thing here, and the URL goes as an argument rather
+/// than through a shell, so nothing in it can be read as a command.
+fn open_externally(href: &str) -> std::io::Result<()> {
+    let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else if cfg!(target_os = "windows") {
+        ("cmd", &["/C", "start", ""])
+    } else {
+        ("xdg-open", &[])
+    };
+    std::process::Command::new(program)
+        .args(args)
+        .arg(href)
+        .spawn()
+        .map(|_| ())
+}
+
 /// Title, filename and body all count: searching a note vault for a word you
 /// half-remember is the common case, and it is rarely in the title.
 pub fn note_matches(note: &Note, needle: &str) -> bool {
@@ -922,10 +1024,14 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let width = inner.w - 12;
     // The app holds the scroll position, so it survives the tab being hidden.
     let mut scroll = app.preview_scroll;
+    let mut clicked = None;
     ui.scroll_area_with(inner, "preview", &mut scroll, |ui| {
-        render::draw_document(ui, &blocks, width);
+        clicked = render::draw_document(ui, &blocks, width);
     });
     app.preview_scroll = scroll;
+    if let Some(href) = clicked {
+        app.follow_link(&href);
+    }
     area.inset(1)
 }
 
@@ -1160,8 +1266,20 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                 if line_no == cursor.line && vi == caret_row {
                     let cx = text_x + caret_col as i32 * advance;
                     if insert {
+                        // The caret pulses rather than blinking on and off.
+                        // Dither density is the only half-brightness sixteen
+                        // colours have, so it dissolves and re-forms instead of
+                        // fading — and never drops below a quarter coverage,
+                        // which keeps it findable at every point in the cycle.
+                        let cycle = app.caret_phase * 1.9;
+                        let wave = (cycle * std::f32::consts::TAU).cos() * 0.5 + 0.5;
+                        let bar = Rect::new(cx - 1, y - 1, 2, line_h);
                         ui.canvas
-                            .fill_rect(Rect::new(cx - 1, y - 1, 1, line_h), th.positive.face);
+                            .dither_fill(bar, th.positive.face, 0.28 + 0.72 * wave);
+                        // The ends stay solid whatever the dither is doing, so
+                        // the caret keeps a definite top and bottom.
+                        ui.canvas.hline(bar.x, bar.y, 2, th.positive.hi);
+                        ui.canvas.hline(bar.x, bar.bottom() - 1, 2, th.positive.hi);
                     } else {
                         // A block caret with the character redrawn on top in
                         // the inverse ink, so it stays readable underneath.

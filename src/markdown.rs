@@ -41,6 +41,10 @@ pub struct Span {
     pub text: String,
     pub tok: Tok,
     pub bold: bool,
+    /// Where a [`Tok::Link`] points. Carried on the span rather than left in
+    /// the marker run beside it, because the rendering throws the markers away
+    /// and the target has to survive that to be clickable.
+    pub href: Option<String>,
 }
 
 impl Span {
@@ -49,6 +53,15 @@ impl Span {
             text: text.into(),
             tok,
             bold,
+            href: None,
+        }
+    }
+
+    /// A link's label, carrying where it points.
+    fn link(text: impl Into<String>, href: impl Into<String>) -> Self {
+        Self {
+            href: Some(href.into()),
+            ..Self::new(text, Tok::Link, false)
         }
     }
 }
@@ -225,7 +238,11 @@ fn inline(s: &str) -> Vec<Span> {
                     if let Some(paren) = find(&bytes, close + 2, ')') {
                         flush(&mut plain, &mut out);
                         out.push(Span::new("[", Tok::Marker, false));
-                        out.push(Span::new(take(&bytes, i + 1, close), Tok::Link, false));
+                        out.push(Span::link(
+                            take(&bytes, i + 1, close),
+                            // Past both the `]` and the `(`, up to the `)`.
+                            take(&bytes, close + 2, paren),
+                        ));
                         // The target is machinery, not prose: dim it.
                         out.push(Span::new(
                             take(&bytes, close, paren + 1),
@@ -423,6 +440,7 @@ pub fn slice_spans(spans: &[Span], from: usize, to: usize) -> Vec<Span> {
                 text,
                 tok: span.tok,
                 bold: span.bold,
+                href: span.href.clone(),
             });
         }
     }

@@ -189,6 +189,18 @@ pub fn run() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
+        // Hovering a link in the rendering: it lights up and the pointer
+        // turns, because clicking it goes somewhere.
+        Scene {
+            name: "link-hover",
+            script: [keys(":preview"), keys("\n")].concat(),
+            mouse: Point::new(220, 197),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 30,
+            canvas: (768, 470),
+        },
         // Cmd-N hands the keyboard to the note list, which says so with a
         // marching ring on the row j and k will move.
         Scene {

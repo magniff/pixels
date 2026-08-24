@@ -32,13 +32,19 @@ digits are vim's counts, and `2j` has to keep meaning two lines down.
 
 Tables size to their content, fenced code keeps its own slab and is never
 re-wrapped, task lists get real checkboxes, and links lose their targets. The
-seeded **Markdown showcase** note exercises the lot — open it and flip between
+Links in the preview are clickable: one naming another note opens it, and one
+with a scheme goes to the desktop to be opened. The seeded **Markdown
+showcase** note exercises the lot — open it and flip between
 the tabs. Switching dissolves one view into the other: every pixel takes one
 side or the other by an ordered dither, because sixteen colours have nothing
 in between to fade through. The tabs themselves ride the same spring the
 buttons do, so the one you pick rises out of the strip as the other sinks.
 
 ![mid-dissolve](screenshots/tab-fade.png)
+
+In insert mode the caret pulses instead of blinking — the density of an
+ordered dither, since a sixteen-colour palette has no half-brightness to fade
+through. Typing restarts it solid.
 
 ![the showcase, rendered](screenshots/showcase-preview.png)
 

@@ -1373,6 +1373,7 @@ fn a_table_sizes_to_its_content_until_it_cannot() {
             text: s.into(),
             tok: notes::markdown::Tok::Text,
             bold: false,
+            href: None,
         }]
     };
     let header = vec![cell("ab"), cell("cd")];
@@ -1388,5 +1389,53 @@ fn a_table_sizes_to_its_content_until_it_cannot() {
     assert!(
         cramped.iter().sum::<i32>() <= 40,
         "and should shrink when it must"
+    );
+}
+
+#[test]
+fn a_link_carries_its_target_into_the_rendering() {
+    let spans = notes::markdown::inline_spans("see [the readme](../README.md) for more");
+    let link = spans
+        .iter()
+        .find(|s| s.tok == notes::markdown::Tok::Link)
+        .expect("the label should survive as a link");
+    assert_eq!(link.text, "the readme");
+    assert_eq!(
+        link.href.as_deref(),
+        Some("../README.md"),
+        "the target is dropped from the text but has to reach the renderer"
+    );
+    let rendered: String = spans.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(
+        rendered, "see the readme for more",
+        "the target itself is not prose and is not drawn"
+    );
+}
+
+#[test]
+fn brackets_without_a_target_are_not_links() {
+    let spans = notes::markdown::inline_spans("a [note] in brackets");
+    assert!(
+        spans.iter().all(|s| s.href.is_none()),
+        "nothing to follow, so nothing to click"
+    );
+}
+
+#[test]
+fn a_scheme_is_told_apart_from_a_relative_note() {
+    use notes::external_scheme;
+    assert_eq!(external_scheme("https://example.com"), Some("https"));
+    assert_eq!(
+        external_scheme("mailto:someone@example.com"),
+        Some("mailto")
+    );
+    assert_eq!(external_scheme("HTTPS://EXAMPLE.COM"), Some("HTTPS"));
+    assert_eq!(external_scheme("vim-keys.md"), None, "a relative note");
+    assert_eq!(external_scheme("notes/ideas.md"), None);
+    assert_eq!(external_scheme("#a-heading"), None);
+    assert_eq!(
+        external_scheme("C:/notes/ideas.md"),
+        None,
+        "a drive letter is one character, and a scheme is not"
     );
 }
