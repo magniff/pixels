@@ -54,8 +54,10 @@ through. Typing restarts it solid.
 the search box. A ring marks the region that just
 took the keyboard and fades out again; the list's own outline fades in behind
 it. Nothing moves — an arrival cue that travels has to cross whatever chrome
-lies between where it starts and where it stops, and that reads as flicker. In the list, `j` and `k` walk the notes that the filter is
-actually showing, and `Enter` drops back into the text. Command specifically,
+lies between where it starts and where it stops, and that reads as flicker. In the search box, `Down` steps into the
+results and `Escape` clears the term — a second one leaves. In the list, `j`
+and `k` walk the notes the filter is actually showing, and `Enter` drops back
+into the text. Command specifically,
 not Control — Control is vim's.
 
 | arriving | settled |

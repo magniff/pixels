@@ -327,7 +327,8 @@ impl Notes {
                 self.status = "MOTIONS hjkl w b e 0 $ gg G f t ; , | EDIT i a o x dd cw \
                      yy p u C-r | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then \
                      d y c o | FIND / ? n N * | MOUSE click to place, drag to select, \
-                     double-click a note to rename, click a link in the preview | PANES cmd-e EDITOR cmd-n NOTES cmd-s \
+                     double-click a note to rename, click a link in the preview | SEARCH BOX \
+                     down TO THE FIRST MATCH, esc CLEARS THEN LEAVES | PANES cmd-e EDITOR cmd-n NOTES cmd-s \
                      SEARCH | VIEWS cmd-1 SOURCE cmd-2 PREVIEW \
                      | :w :e :q :qa"
                     .into();
@@ -358,6 +359,18 @@ impl Notes {
         (0..self.notes.len())
             .filter(|&i| note_matches(&self.notes[i], &needle))
             .collect()
+    }
+
+    /// Step out of the search box into the list it is filtering, landing on
+    /// the first match. Stays put when there is nothing to land on, since
+    /// moving to an empty list only takes the keyboard somewhere useless.
+    fn enter_list(&mut self) {
+        let Some(&first) = self.shown().first() else {
+            return;
+        };
+        self.current = first;
+        self.scroll = 0;
+        self.focus_pane(Pane::Notes);
     }
 
     /// Move the selection `delta` rows down the visible list, wrapping.
@@ -540,14 +553,6 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     let modal = app.dialog.is_some();
     app.caret_phase += ui.input.dt;
-    let arrived = app.pane != app.pane_seen || app.pane_grab;
-    app.pane_seen = app.pane;
-    app.notes_focus = pixui::smooth(
-        app.notes_focus,
-        f32::from(u8::from(app.pane == Pane::Notes)),
-        9.0,
-        ui.input.dt,
-    );
 
     // A dialog takes the keyboard for itself while it is open; nothing below
     // it sees a key.
@@ -561,16 +566,31 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         if app.pane == Pane::Search && !app.pane_grab && !ui.text_input_active() {
             app.pane = Pane::Editor;
         }
-        if app.pane_grab && app.pane != Pane::Search {
-            ui.clear_focus();
-        }
-
         match app.pane {
+            // The field has the keyboard, but the filter and the list it
+            // filters are one gesture: Down walks out of the box into the
+            // results, and Escape throws the search away.
+            Pane::Search => handle_search_keys(ui, app),
             _ if ui.text_input_active() => {}
             Pane::Notes => handle_notes_keys(ui, app),
             _ => handle_keys(ui, app),
         }
+
+        // After everything that can move the keyboard, so a pane taken during
+        // dispatch still gets the field released for it.
+        if app.pane_grab && app.pane != Pane::Search {
+            ui.clear_focus();
+        }
     }
+
+    let arrived = app.pane != app.pane_seen || app.pane_grab;
+    app.pane_seen = app.pane;
+    app.notes_focus = pixui::smooth(
+        app.notes_focus,
+        f32::from(u8::from(app.pane == Pane::Notes)),
+        9.0,
+        ui.input.dt,
+    );
 
     ui.input_blocked(modal, |ui| {
         draw_titlebar(ui, titlebar, app);
@@ -675,6 +695,27 @@ fn handle_shortcuts(ui: &mut Ui, app: &mut Notes) {
             Key::Char('n') => app.focus_pane(Pane::Notes),
             Key::Char('s') => app.focus_pane(Pane::Search),
             _ => {}
+        }
+    }
+}
+
+/// The search box with the keyboard. The field itself takes the typing; this
+/// is only the two keys that are about the list rather than about the text.
+fn handle_search_keys(ui: &mut Ui, app: &mut Notes) {
+    // Escape means this, not the toolkit's "drop focus" — otherwise the box
+    // would empty and be abandoned in the same keystroke, and there would be
+    // no way to clear a search you are still working on.
+    ui.capture_keyboard();
+    if ui.input.key_pressed(Key::Down) {
+        app.enter_list();
+    } else if ui.input.key_pressed(Key::Escape) {
+        // Clear first, leave second. A search you are still reading is worth
+        // one Escape to undo and another to walk away from.
+        if app.filter.is_empty() {
+            app.focus_pane(Pane::Editor);
+        } else {
+            app.filter.clear();
+            app.status = "SEARCH CLEARED".into();
         }
     }
 }
