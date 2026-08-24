@@ -1,4 +1,6 @@
-/target
+# Build output, at any level. Not `/target`: an integration test runs with its
+# own crate as the working directory, so a relative path can create a nested one.
+target/
 
 # Generated locally by the snapshot examples; regenerate rather than commit.
 /snapshots

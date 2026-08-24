@@ -1116,8 +1116,12 @@ fn a_note_with_no_file_still_filters_on_its_text() {
 // -------------------------------------------------------------------- rename
 
 /// A vault in its own directory, so the tests cannot tread on each other.
+///
+/// Under the system temp directory, not a relative path: an integration test
+/// runs with the *crate* as its working directory, so `target/...` would create
+/// a second, nested target directory inside the source tree.
 fn vault(tag: &str) -> std::path::PathBuf {
-    let dir = std::path::PathBuf::from("target/rename-tests").join(tag);
+    let dir = std::env::temp_dir().join("pixui-notes-tests").join(tag);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
