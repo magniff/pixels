@@ -52,9 +52,7 @@ through. Typing restarts it solid.
 
 `cmd-e` puts the keyboard in the editor, `cmd-n` in the note list, `cmd-s` in
 the search box. Moving it is signposted: a ring lands on the pane that took
-the keys and dissolves, and the list's own outline fades in behind it. The
-toolkit's focus ring lands the same way when you Tab between widgets, so the
-gesture reads the same whatever it arrives on. In the list, `j` and `k` walk the notes that the filter is
+the keys and dissolves, and the list's own outline fades in behind it. In the list, `j` and `k` walk the notes that the filter is
 actually showing, and `Enter` drops back into the text. Command specifically,
 not Control — Control is vim's.
 

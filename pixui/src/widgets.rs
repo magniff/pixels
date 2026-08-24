@@ -139,12 +139,12 @@ impl Ui<'_> {
         let th = *self.theme;
         let color = th.background.lerp(th.focus_ring, anim.focus);
         let phase = (self.input.time * 14.0) as i32;
-        // The ring contracts onto the widget as it arrives, the same landing
-        // that [`Ui::focus_flare`] does for a whole region — so moving the
-        // keyboard always looks like the same gesture, whatever it lands on.
-        let out = 2 + ((1.0 - anim.focus) * 3.0).round() as i32;
+        // No travel on this one, unlike [`Ui::focus_flare`]: three pixels of
+        // approach is three integer steps at this scale, and stepping a ring
+        // that is already marching reads as a stutter rather than an arrival.
+        // The fade is the animation here.
         self.canvas
-            .stroke_rect_dashed(rect.inset(-out), color, 2, 2, phase);
+            .stroke_rect_dashed(rect.inset(-2), color, 2, 2, phase);
     }
 
     /// Say that the keyboard has just arrived somewhere.
@@ -154,10 +154,13 @@ impl Ui<'_> {
     /// one frame it took the keyboard; the ring runs itself from there.
     ///
     /// It lands rather than fades: the outline starts a few pixels out and
-    /// contracts onto the edge while dissolving, which the eye reads as one
-    /// movement towards the thing that now has the keys. The dissolve is
-    /// ordered dither rather than a blend, for the same reason everything else
-    /// here is — there is no half-brightness in sixteen colours.
+    /// contracts onto the edge as it goes, which the eye reads as one movement
+    /// towards the thing that now has the keys.
+    ///
+    /// The line itself stays solid and loses its contrast instead of its
+    /// pixels. Dithering is right for a filled area, where a checker reads as
+    /// a shade; on a one-pixel outline it just breaks the line, and a broken
+    /// line does not read as an outline at all.
     pub fn focus_flare(&mut self, id_label: &str, rect: Rect, arrived: bool) {
         let dt = self.input.dt;
         let id = self.id(id_label);
@@ -173,18 +176,11 @@ impl Ui<'_> {
         }
 
         let th = *self.theme;
-        let color = th.focus_ring.lerp(WHITE, flare * 0.35);
+        let m = th.metrics;
         let out = (flare * 3.0).round() as i32;
-        let r = rect.inset(-out);
-        const T: i32 = 2;
-        for bar in [
-            Rect::new(r.x, r.y, r.w, T),
-            Rect::new(r.x, r.bottom() - T, r.w, T),
-            Rect::new(r.x, r.y + T, T, r.h - T * 2),
-            Rect::new(r.right() - T, r.y + T, T, r.h - T * 2),
-        ] {
-            self.canvas.dither_fill(bar, color, flare);
-        }
+        let color = th.panel.lerp(th.focus_ring, flare);
+        self.canvas
+            .stroke_chamfer(rect.inset(-out), color, m.chamfer);
     }
 
     /// A recessed well: the inverse of [`Ui::draw_control_face`], used for
