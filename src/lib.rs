@@ -104,6 +104,10 @@ pub struct Notes {
     /// Set on the frame a shortcut moves the keyboard, so the pane taking it
     /// can claim focus once rather than holding it against every click.
     pub pane_grab: bool,
+    /// The pane the arrival cue has already been shown for. Focus also moves
+    /// by clicking, which no shortcut tells us about, so the cue watches this
+    /// change rather than trusting `pane_grab` alone.
+    pub pane_seen: Pane,
     /// How settled the note list's keyboard ring is, 0 to 1.
     pub notes_focus: f32,
     pub status: String,
@@ -189,6 +193,7 @@ impl Notes {
             notes_dir,
             pane: Pane::Editor,
             pane_grab: false,
+            pane_seen: Pane::Editor,
             notes_focus: 0.0,
             status: "j/k MOVE  i INSERT  /  SEARCH  :w SAVE  :e OPEN  :help".into(),
             scroll: 0,
@@ -535,10 +540,12 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     let modal = app.dialog.is_some();
     app.caret_phase += ui.input.dt;
+    let arrived = app.pane != app.pane_seen || app.pane_grab;
+    app.pane_seen = app.pane;
     app.notes_focus = pixui::smooth(
         app.notes_focus,
         f32::from(u8::from(app.pane == Pane::Notes)),
-        18.0,
+        9.0,
         ui.input.dt,
     );
 
@@ -576,7 +583,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         if width != before {
             app.sidebar_w = Some(width);
         }
-        draw_sidebar(ui, side.inset(5), app);
+        draw_sidebar(ui, side.inset(5), app, arrived);
 
         // The two views of the same note: its source, and what it means.
         let pane = main.inset_xy(0, 5);
@@ -599,6 +606,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             app.tab_anim = 1.0;
         }
 
+        let editor_arrived = arrived && app.pane == Pane::Editor;
         let pane_inner;
         if app.tab_anim > 0.0 {
             app.tab_anim = (app.tab_anim - ui.input.dt / TAB_FADE).max(0.0);
@@ -616,7 +624,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         } else {
             pane_inner = draw_view(ui, content, app, app.tab_shown);
         }
-        let _ = pane_inner;
+        ui.focus_flare("pane:main", pane_inner, ui.theme.background, editor_arrived);
 
         draw_statusbar(ui, statusbar, app);
     });
@@ -833,7 +841,7 @@ pub fn note_matches(note: &Note, needle: &str) -> bool {
         .any(|line| line.to_lowercase().contains(needle))
 }
 
-fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
+fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
     let th = *ui.theme;
     let inner = ui.panel(rect, "NOTES");
     let (search, rest) = inner.split_top(17);
@@ -1002,6 +1010,16 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
             }
         });
     });
+
+    // Only the list needs one. A text field already lights its own border
+    // when it takes the keyboard, so a ring around the search box would be a
+    // second ring outside the first — which is what a doubled outline looks
+    // like, not what an arrival looks like.
+    if app.pane == Pane::Notes {
+        // Drawn last so nothing paints over it, and over the panel, which is
+        // what the list sits on.
+        ui.focus_flare("pane:list", list, th.panel, arrived);
+    }
 }
 
 // ------------------------------------------------------------------- preview

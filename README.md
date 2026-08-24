@@ -51,12 +51,16 @@ through. Typing restarts it solid.
 ## Panes
 
 `cmd-e` puts the keyboard in the editor, `cmd-n` in the note list, `cmd-s` in
-the search box. The list's outline fades in when the
-keyboard lands there rather than snapping on. In the list, `j` and `k` walk the notes that the filter is
+the search box. A ring marks the region that just
+took the keyboard and fades out again; the list's own outline fades in behind
+it. Nothing moves — an arrival cue that travels has to cross whatever chrome
+lies between where it starts and where it stops, and that reads as flicker. In the list, `j` and `k` walk the notes that the filter is
 actually showing, and `Enter` drops back into the text. Command specifically,
 not Control — Control is vim's.
 
-![the note list with the keyboard](screenshots/pane-notes.png)
+| arriving | settled |
+|---|---|
+| ![the ring on arrival](screenshots/pane-flare.png) | ![the note list with the keyboard](screenshots/pane-notes.png) |
 
 ## Vim
 

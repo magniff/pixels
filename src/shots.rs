@@ -201,6 +201,18 @@ pub fn run() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
+        // The moment cmd-N lands: a ring around the list that has just taken
+        // the keyboard, on its way out again.
+        Scene {
+            name: "pane-flare",
+            script: cmd('n'),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 2,
+            canvas: (768, 470),
+        },
         // Cmd-N hands the keyboard to the note list, which says so with a
         // marching ring on the row j and k will move.
         Scene {

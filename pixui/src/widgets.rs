@@ -147,6 +147,47 @@ impl Ui<'_> {
             .stroke_rect_dashed(rect.inset(-2), color, 2, 2, phase);
     }
 
+    /// Say that the keyboard has just arrived somewhere.
+    ///
+    /// Draws nothing at rest, so a region that holds the focus most of the
+    /// time does not end up wearing a permanent border. Pass `arrived` on the
+    /// one frame it took the keyboard; the ring fades up and back down on its
+    /// own, marching like the focus ring it is a bigger version of.
+    ///
+    /// The geometry never moves. An earlier version contracted onto its
+    /// target, which meant sweeping the line across whatever chrome sat
+    /// between the two positions — around a short field that is the panel edge
+    /// and the field's own border, and it read as flicker rather than as
+    /// arrival. Only the colour changes here.
+    ///
+    /// For a widget that already shows its own focus — a text field lights its
+    /// border — this is the wrong tool: two rings one outside the other read
+    /// as a doubled outline rather than as arrival. It is for a *region* the
+    /// keyboard can be aimed at, which has no focus of its own to show.
+    ///
+    /// `over` is what the ring sits on and fades back into. A parameter rather
+    /// than a guess from the theme, because the caller is the only one that
+    /// knows what its own region is surrounded by, and fading to the wrong
+    /// colour leaves an outline behind after the animation is over.
+    pub fn focus_flare(&mut self, id_label: &str, rect: Rect, over: Color, arrived: bool) {
+        let dt = self.input.dt;
+        let id = self.id(id_label);
+        let flare = self.with_anim(id, |a| {
+            if arrived {
+                a.flash = 1.0;
+            }
+            a.flash = smooth(a.flash, 0.0, 5.5, dt);
+            a.flash
+        });
+        if flare <= 0.05 {
+            return;
+        }
+        let color = over.lerp(self.theme.focus_ring, flare);
+        let phase = (self.input.time * 14.0) as i32;
+        self.canvas
+            .stroke_rect_dashed(rect.inset(-2), color, 2, 2, phase);
+    }
+
     /// A recessed well: the inverse of [`Ui::draw_control_face`], used for
     /// tracks and anything the eye should read as a hole rather than a lump.
     fn draw_well(&mut self, rect: Rect, fill: Color) {
