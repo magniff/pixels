@@ -51,7 +51,9 @@ Tables size to their content, fenced code keeps its own slab and is never
 re-wrapped, task lists get real checkboxes, and links lose their targets.
 Links in the preview are clickable: one naming another note opens it, and one
 with a scheme goes to the desktop to be opened. The seeded **Markdown
-showcase** note exercises the lot — open it and flip between the tabs. Switching dissolves one view into the other: every pixel takes one
+showcase** note exercises the lot — open it and flip between the tabs. It is
+installed into any vault that has not got it, and it doubles as the parser's
+test fixture, so a construct cannot be claimed there without being parsed. Switching dissolves one view into the other: every pixel takes one
 side or the other by an ordered dither, because sixteen colours have nothing
 in between to fade through. The tabs themselves ride the same spring the
 buttons do, so the one you pick rises out of the strip as the other sinks.

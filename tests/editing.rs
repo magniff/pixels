@@ -1838,3 +1838,269 @@ fn a_title_may_be_underlined_rather_than_hashed() {
         .collect();
     assert_eq!(notes::markdown::derive_title(&lines), "Underlined");
 }
+
+// ------------------------------------------------------- the reference note
+//
+// The showcase is the document a reader opens to see what the renderer does.
+// These tests make it the parser's fixture as well, so a construct cannot be
+// claimed there without being parsed here.
+
+/// The showcase, parsed.
+fn showcase() -> Vec<Block> {
+    let lines: Vec<String> = notes::showcase::SHOWCASE
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    notes::markdown::parse(&lines)
+}
+
+/// Every span in the document, whatever block it came from.
+fn all_spans(blocks: &[Block]) -> Vec<notes::markdown::Span> {
+    let mut out = Vec::new();
+    for block in blocks {
+        match block {
+            Block::Heading { spans, .. } | Block::Paragraph(spans) => out.extend(spans.clone()),
+            Block::List(items) => out.extend(items.iter().flat_map(|i| i.spans.clone())),
+            Block::Quote(inner) => out.extend(all_spans(inner)),
+            Block::Table { header, rows, .. } => {
+                out.extend(header.iter().flatten().cloned());
+                out.extend(rows.iter().flatten().flatten().cloned());
+            }
+            Block::Code { .. } | Block::Rule => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn the_showcase_uses_every_kind_of_block() {
+    let blocks = showcase();
+    let has = |f: &dyn Fn(&Block) -> bool| blocks.iter().any(f);
+    assert!(has(&|b| matches!(b, Block::Heading { .. })), "headings");
+    assert!(has(&|b| matches!(b, Block::Paragraph(_))), "paragraphs");
+    assert!(has(&|b| matches!(b, Block::List(_))), "lists");
+    assert!(has(&|b| matches!(b, Block::Quote(_))), "quotes");
+    assert!(has(&|b| matches!(b, Block::Code { .. })), "code");
+    assert!(has(&|b| matches!(b, Block::Table { .. })), "tables");
+    assert!(has(&|b| matches!(b, Block::Rule)), "rules");
+}
+
+#[test]
+fn the_showcase_reaches_every_heading_level() {
+    let mut seen: Vec<u8> = showcase()
+        .iter()
+        .filter_map(|b| match b {
+            Block::Heading { level, .. } => Some(*level),
+            _ => None,
+        })
+        .collect();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen, [1, 2, 3, 4, 5, 6], "all six levels are demonstrated");
+}
+
+#[test]
+fn the_showcase_uses_every_kind_of_list_marker() {
+    use notes::markdown::Marker;
+    let markers: Vec<Marker> = showcase()
+        .iter()
+        .filter_map(|b| match b {
+            Block::List(items) => Some(items.clone()),
+            _ => None,
+        })
+        .flatten()
+        .map(|i| i.marker)
+        .collect();
+    assert!(markers.contains(&Marker::Bullet), "bullets");
+    assert!(
+        markers.iter().any(|m| matches!(m, Marker::Number(_))),
+        "ordered"
+    );
+    assert!(markers.contains(&Marker::Task(false)), "an unchecked task");
+    assert!(markers.contains(&Marker::Task(true)), "a checked one");
+    assert!(
+        markers.iter().any(|m| matches!(m, Marker::Number(7))),
+        "a number that is not its position in the list"
+    );
+}
+
+#[test]
+fn the_showcase_uses_every_kind_of_emphasis() {
+    use notes::markdown::Tok;
+    let toks: Vec<Tok> = all_spans(&showcase()).iter().map(|s| s.tok).collect();
+    for want in [
+        Tok::Bold,
+        Tok::Italic,
+        Tok::Code,
+        Tok::Strike,
+        Tok::Link,
+        Tok::Image,
+    ] {
+        assert!(
+            toks.contains(&want),
+            "the showcase never demonstrates {want:?}"
+        );
+    }
+}
+
+#[test]
+fn every_link_in_the_showcase_resolves() {
+    let spans = all_spans(&showcase());
+    let links: Vec<_> = spans.iter().filter(|s| s.href.is_some()).collect();
+    assert!(
+        links.len() >= 12,
+        "got {} links, expected the lot",
+        links.len()
+    );
+    assert!(
+        links.iter().all(|s| !s.href.as_deref().unwrap().is_empty()),
+        "a reference with no definition would come through empty"
+    );
+    let hrefs: Vec<&str> = links.iter().map(|s| s.href.as_deref().unwrap()).collect();
+    assert!(hrefs.contains(&"mailto:someone@example.com"), "an address");
+    assert!(
+        hrefs.contains(&"https://www.example.com"),
+        "a bare www host"
+    );
+    assert!(
+        hrefs.contains(&"https://example.com/full"),
+        "a full reference"
+    );
+    assert!(
+        hrefs.contains(&"https://example.com/collapsed"),
+        "a collapsed one"
+    );
+    assert!(
+        hrefs.contains(&"https://example.com/shortcut"),
+        "a shortcut"
+    );
+    assert!(hrefs.contains(&"welcome.md"), "a link to another note");
+}
+
+#[test]
+fn the_showcase_nests_a_quote_inside_a_quote() {
+    fn depth(blocks: &[Block]) -> usize {
+        blocks
+            .iter()
+            .map(|b| match b {
+                Block::Quote(inner) => 1 + depth(inner),
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+    assert!(depth(&showcase()) >= 2, "a quote inside a quote");
+}
+
+#[test]
+fn the_showcase_puts_other_blocks_inside_a_quote() {
+    let quoted: Vec<Block> = showcase()
+        .into_iter()
+        .filter_map(|b| match b {
+            Block::Quote(inner) => Some(inner),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert!(
+        quoted.iter().any(|b| matches!(b, Block::Heading { .. })),
+        "a heading"
+    );
+    assert!(quoted.iter().any(|b| matches!(b, Block::List(_))), "a list");
+    assert!(
+        quoted.iter().any(|b| matches!(b, Block::Code { .. })),
+        "code"
+    );
+}
+
+#[test]
+fn the_showcase_has_a_code_block_of_each_kind() {
+    let code: Vec<(String, Vec<String>)> = showcase()
+        .into_iter()
+        .filter_map(|b| match b {
+            Block::Code { lang, lines } => Some((lang, lines)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        code.iter().any(|(l, _)| l == "rust"),
+        "a fence naming a language"
+    );
+    assert!(
+        code.iter().any(|(l, _)| l.is_empty()),
+        "one with no language"
+    );
+    assert!(
+        code.iter()
+            .any(|(_, lines)| lines.iter().any(|l| l.contains("```"))),
+        "a fence holding a fence, which only a longer or different one can"
+    );
+}
+
+#[test]
+fn the_showcase_aligns_a_table_three_ways() {
+    use notes::markdown::CellAlign;
+    let align = showcase()
+        .into_iter()
+        .find_map(|b| match b {
+            Block::Table { align, .. } => Some(align),
+            _ => None,
+        })
+        .expect("a table");
+    assert_eq!(
+        align,
+        [CellAlign::Left, CellAlign::Center, CellAlign::Right]
+    );
+}
+
+#[test]
+fn the_showcase_never_leaves_a_delimiter_in_the_prose() {
+    // Rendered text is what was meant, not what was typed. Anything that
+    // parsed correctly has had its markup consumed — so a stray delimiter in
+    // the output is a construct this parser did not recognise.
+    for block in showcase() {
+        let (Block::Paragraph(spans) | Block::Heading { spans, .. }) = &block else {
+            continue;
+        };
+        let text: String = spans
+            .iter()
+            .filter(|s| s.tok != notes::markdown::Tok::Code)
+            .map(|s| s.text.as_str())
+            .collect();
+        // The escaped ones are deliberate: they are there to prove they survive.
+        let text = text.replace("*not italic*", "").replace("_not italic_", "");
+        assert!(
+            !text.contains("**") && !text.contains("~~") && !text.contains("]("),
+            "unconsumed markup in: {text}"
+        );
+    }
+}
+
+#[test]
+fn the_reference_note_is_installed_into_a_vault_that_has_notes() {
+    let dir = std::env::temp_dir().join(format!("pixui-ref-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // A vault that is not empty, so the seeding path does not run.
+    std::fs::write(dir.join("mine.md"), "# Mine\n").unwrap();
+
+    let app = notes::Notes::open(dir.clone());
+    assert!(
+        app.notes
+            .iter()
+            .any(|n| n.filename() == "markdown-showcase.md"),
+        "the reference note should be in the list beside the user's own"
+    );
+
+    // And never overwritten once it is there.
+    std::fs::write(dir.join("markdown-showcase.md"), "# Edited\n").unwrap();
+    let again = notes::Notes::open(dir.clone());
+    let note = again
+        .notes
+        .iter()
+        .find(|n| n.filename() == "markdown-showcase.md")
+        .unwrap();
+    assert_eq!(note.buffer.to_text().trim(), "# Edited");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
