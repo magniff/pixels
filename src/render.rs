@@ -9,7 +9,7 @@
 //! order. A layout that measures one way and paints another is a layout that
 //! will eventually disagree with itself.
 
-use pixui::{font, icon, Color, Rect, Theme, Ui};
+use pixui::{font, icon, palette, Color, Rect, Theme, Ui};
 
 use crate::markdown::{slice_spans, wrap_ranges};
 use crate::markdown::{Block, CellAlign, Item, Marker, Span, Tok};
@@ -60,6 +60,14 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
         Tok::Strike => th.ink_soft,
         Tok::Image => th.info.hi,
         Tok::Marker => th.ink_soft,
+        Tok::CodePlain => th.ink_light,
+        Tok::CodeKeyword => palette::ACCENT,
+        Tok::CodeType => palette::TEAL,
+        Tok::CodeFunction => palette::TEAL_HI,
+        Tok::CodeString => palette::GREEN,
+        Tok::CodeNumber => palette::YELLOW,
+        Tok::CodeComment => th.ink_soft,
+        Tok::CodePunct => th.ink_light.shade(-0.30),
     }
 }
 
@@ -288,20 +296,22 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
             }
         }
 
-        Block::Code { lines, .. } => {
+        Block::Code { lang, lines } => {
             let slab = Rect::new(rect.x, rect.y, rect.w, rect.h - PARA_GAP);
             ui.canvas.box_chamfer(slab, th.well, th.well_border, 1);
+            let highlighted = crate::syntax::highlight(lang, lines);
             ui.clipped(slab.inset(3), |ui| {
-                for (i, line) in lines.iter().enumerate() {
+                for (i, spans) in highlighted.iter().enumerate() {
                     // Code is not wrapped: a break inserted into code is a lie
-                    // about what the code says.
-                    font::draw_text(
-                        ui.canvas,
-                        slab.x + 4,
-                        slab.y + 4 + i as i32 * LINE_H,
-                        line,
-                        th.positive.face,
-                    );
+                    // about what the code says. Runs are placed by character
+                    // offset for the same reason prose is.
+                    let y = slab.y + 4 + i as i32 * LINE_H;
+                    let mut col = 0i32;
+                    for span in spans {
+                        let sx = slab.x + 4 + col * ADVANCE;
+                        font::draw_text(ui.canvas, sx, y, &span.text, token_color(&th, span.tok));
+                        col += span.text.chars().count() as i32;
+                    }
                 }
             });
         }

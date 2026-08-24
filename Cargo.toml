@@ -11,6 +11,15 @@ license.workspace = true
 [dependencies]
 pixui = { path = "pixui", features = ["gpu"] }
 
+# Sublime Text grammars, for highlighting fenced code blocks. Deliberately
+# without its themes: syntect's colour schemes are built for a full RGB palette
+# and would fight the sixteen warm tones everything else is drawn from. We take
+# the scopes and map them ourselves. `regex-fancy` keeps it pure Rust.
+[dependencies.syntect]
+version = "5"
+default-features = false
+features = ["parsing", "default-syntaxes", "regex-fancy"]
+
 [workspace]
 resolver = "2"
 members = ["pixui"]

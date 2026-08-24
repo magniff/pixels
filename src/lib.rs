@@ -19,12 +19,13 @@ pub mod dialog;
 pub mod markdown;
 pub mod render;
 pub mod shots;
+pub mod syntax;
 pub mod text;
 pub mod vim;
 
 use std::path::{Path, PathBuf};
 
-use pixui::{palette, Align, Color, Key, Rect, Theme, Tone, Ui};
+use pixui::{palette, Align, Color, Key, Point, Rect, Theme, Tone, Ui};
 
 use dialog::{DialogKind, DialogResult, FileDialog};
 use markdown::Tok;
@@ -94,11 +95,15 @@ pub struct Notes {
     /// Where the preview was left, so switching tabs comes back to it rather
     /// than to the top.
     pub preview_scroll: pixui::ScrollState,
-    /// The view actually on screen, which lags `editor_tab` while the
-    /// transition sweeps across.
+    /// The view being left behind, which lags `editor_tab` until the
+    /// dissolve finishes. Equal to it when nothing is in flight.
     pub tab_shown: usize,
-    /// Transition progress, counting 1 down to 0. Zero means settled.
+    /// Transition progress, counting 1 down to 0. Zero means settled, and
+    /// doubles as the share of the outgoing view still on screen.
     pub tab_anim: f32,
+    /// Scratch holding the outgoing view while the incoming one is drawn
+    /// over it. Kept across frames so a transition allocates nothing.
+    pub fade: pixui::Canvas,
     /// A note being renamed in place: which one, and the name so far.
     pub renaming: Option<(usize, String)>,
     /// Set on the frame a rename begins, to move focus into its field.
@@ -163,6 +168,7 @@ impl Notes {
             preview_scroll: pixui::ScrollState::default(),
             tab_shown: 0,
             tab_anim: 0.0,
+            fade: pixui::Canvas::new(1, 1),
             renaming: None,
             focus_rename: false,
             sidebar_w: None,
@@ -433,8 +439,8 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
         // The two views of the same note: its source, and what it means.
         let pane = main.inset_xy(0, 5);
-        let (tabs, content) = pane.split_top(16);
-        let strip = Rect::new(tabs.x, tabs.y, 190, 14);
+        let (tabs, content) = pane.split_top(20);
+        let strip = Rect::new(tabs.x, tabs.y, 190, 16);
         let views = [
             pixui::Segment::with_icon(pixui::icon::CODE, "SOURCE"),
             pixui::Segment::with_icon(pixui::icon::PAGE, "PREVIEW"),
@@ -442,36 +448,35 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         ui.segments_at("view", strip, &views, &mut app.editor_tab);
 
         // ---- the transition ------------------------------------------
-        // The sweep covers the old view, swaps underneath at the halfway
-        // point, then uncovers the new one — so what the eye follows is a
-        // single edge crossing the pane rather than two separate effects.
-        const TAB_SWEEP: f32 = 0.26;
+        // A dissolve rather than a fade: both views are drawn, and each pixel
+        // takes one or the other according to an ordered dither whose
+        // threshold slides across the transition. Blending would need colours
+        // between the two, which sixteen tones do not have — so the old view
+        // erodes into the new one in a spreading checker instead.
+        const TAB_FADE: f32 = 0.22;
         if app.editor_tab != app.tab_shown && app.tab_anim <= 0.0 {
             app.tab_anim = 1.0;
         }
-        let mut sweep = None;
+
+        let pane_inner;
         if app.tab_anim > 0.0 {
-            app.tab_anim = (app.tab_anim - ui.input.dt / TAB_SWEEP).max(0.0);
-            let t = 1.0 - app.tab_anim;
-            if t >= 0.5 {
+            app.tab_anim = (app.tab_anim - ui.input.dt / TAB_FADE).max(0.0);
+            // The outgoing view keeps animating so it does not freeze mid
+            // dissolve, but takes no input: the pointer has already left it.
+            let old = ui.input_blocked(true, |ui| draw_view(ui, content, app, app.tab_shown));
+            app.fade.resize(old.w, old.h);
+            app.fade.blit_from(ui.canvas, old, Point::new(0, 0));
+            pane_inner = draw_view(ui, content, app, app.editor_tab);
+            ui.canvas
+                .dither_over(pane_inner, &app.fade, Point::new(0, 0), app.tab_anim);
+            if app.tab_anim <= 0.0 {
                 app.tab_shown = app.editor_tab;
             }
-            sweep = Some(if t < 0.5 {
-                (t * 2.0, pixui::Wipe::In)
-            } else {
-                ((t - 0.5) * 2.0, pixui::Wipe::Out)
-            });
-        }
-
-        let pane_inner = if app.tab_shown == 0 {
-            draw_editor(ui, content, app)
         } else {
-            draw_preview(ui, content, app)
-        };
-        if let Some((t, dir)) = sweep {
-            let well = ui.theme.well;
-            ui.canvas.dither_wipe(pane_inner, well, t, dir);
+            pane_inner = draw_view(ui, content, app, app.tab_shown);
         }
+        let _ = pane_inner;
+
         draw_statusbar(ui, statusbar, app);
     });
 
@@ -763,6 +768,16 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
 
 /// Returns the area inside the pane's frame, which is what a transition
 /// sweeps over — the frame itself should stay put.
+/// Draw whichever view `which` names, and return the area it filled — the
+/// region a transition dissolves over.
+fn draw_view(ui: &mut Ui, rect: Rect, app: &mut Notes, which: usize) -> Rect {
+    if which == 0 {
+        draw_editor(ui, rect, app)
+    } else {
+        draw_preview(ui, rect, app)
+    }
+}
+
 fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let th = *ui.theme;
     let area = Rect::new(rect.x, rect.y, rect.w - 5, rect.h);
@@ -904,14 +919,12 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let search = search.as_deref();
     let insert = app.vim.mode == Mode::Insert;
 
-    // A code fence spans lines, so the highlighter has to be told where it is.
-    // Scan from the top of the file, not the top of the viewport.
-    let mut in_code = false;
-    for l in 0..app.scroll {
-        if markdown::is_fence(buf.line(l)) {
-            in_code = !in_code;
-        }
-    }
+    // Fenced code gets the real syntax highlighter rather than one flat colour.
+    // Computed for the whole buffer, not the viewport, because a grammar is
+    // stateful — where a string ends depends on where it began, which may be
+    // above the fold. It is memoised on the text, so this costs a hash per
+    // block once the block stops changing.
+    let code = syntax::code_regions(buf.lines());
 
     let mut last_line_drawn = app.scroll;
     ui.clipped(inner, |ui| {
@@ -920,11 +933,10 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
 
         while row < visible && line_no < total {
             let text = buf.line(line_no);
-            let fence = markdown::is_fence(text);
-            let spans = markdown::highlight(text, in_code && !fence);
-            if fence {
-                in_code = !in_code;
-            }
+            let spans = match code.get(line_no).and_then(Option::as_ref) {
+                Some(highlighted) => highlighted.clone(),
+                None => markdown::highlight(text, false),
+            };
             let ranges = markdown::wrap_ranges(text, cols);
             let (caret_row, caret_col) = markdown::locate(&ranges, cursor.col);
 
@@ -1072,6 +1084,14 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
         Tok::Quote => th.ink_soft.lerp(th.ink_light, 0.4),
         Tok::Strike => th.ink_soft,
         Tok::Image => th.info.hi,
+        Tok::CodePlain => th.ink_light,
+        Tok::CodeKeyword => palette::ACCENT,
+        Tok::CodeType => palette::TEAL,
+        Tok::CodeFunction => palette::TEAL_HI,
+        Tok::CodeString => palette::GREEN,
+        Tok::CodeNumber => palette::YELLOW,
+        Tok::CodeComment => th.ink_soft,
+        Tok::CodePunct => th.ink_light.shade(-0.30),
     }
 }
 

@@ -1205,7 +1205,10 @@ impl Ui<'_> {
         self.canvas
             .box_chamfer(rect, th.well, th.panel_border, m.chamfer);
 
-        let inner = rect.inset(2);
+        // One pixel of well shows around the cells, not two: each cell is a
+        // control face now, and it needs the height for its own lit edges —
+        // squeeze it and those edges cut through the letters.
+        let inner = rect.inset(1);
         let n = options.len() as i32;
         let cell_w = inner.w / n;
 
@@ -1217,7 +1220,7 @@ impl Ui<'_> {
                 } else {
                     cell_w
                 };
-                let cell = Rect::new(x, inner.y, w, inner.h);
+                let cell = Rect::new(x, inner.y, w, inner.h - m.press_depth);
                 let id = ui.id(opt.label);
                 let mut resp = ui.interact(id, cell);
                 if ui.focusable(id) {
@@ -1231,25 +1234,34 @@ impl Ui<'_> {
                     changed = true;
                 }
 
+                // Selection drives the same spring a button's press does, so
+                // choosing a segment lifts it out of the strip with the bounce
+                // a released button has, and the one it replaces sinks. The
+                // colour crosses over on the same spring, which is what keeps
+                // the two halves of the swap reading as one movement.
                 let is_sel = *selected == i;
-                let anim = ui.animate(id, &resp);
-                if is_sel {
-                    let ramp = th.accent;
-                    let face = ramp
-                        .face
-                        .lerp(ramp.hi, anim.hover * 0.3)
-                        .lerp(WHITE, anim.flash * 0.4);
-                    ui.canvas.box_chamfer(cell, face, th.panel_border, 1);
-                    ui.canvas.hline(cell.x + 1, cell.y + 1, cell.w - 2, ramp.hi);
-                    draw_segment(ui, cell, opt, ramp.ink);
-                } else {
-                    let ink = th.ink_light.lerp(WHITE, anim.hover * 0.5);
-                    if anim.hover > 0.01 {
-                        ui.canvas
-                            .fill_chamfer(cell, th.well.shade(0.12 * anim.hover), 1);
+                let dt = ui.input.dt;
+                let anim = ui.with_anim(id, |a| {
+                    a.press
+                        .step(if is_sel && !resp.held { 0.0 } else { 1.0 }, dt);
+                    a.hover = smooth(a.hover, if resp.hovered { 1.0 } else { 0.0 }, 24.0, dt);
+                    a.focus = smooth(a.focus, if resp.focused { 1.0 } else { 0.0 }, 20.0, dt);
+                    a.flash = smooth(a.flash, 0.0, 11.0, dt);
+                    if resp.clicked {
+                        a.flash = 1.0;
                     }
-                    draw_segment(ui, cell, opt, ink);
-                }
+                    *a
+                });
+
+                let lift = (1.0 - anim.press.pos).clamp(0.0, 1.0);
+                let ramp = Ramp {
+                    face: th.well.lerp(th.accent.face, lift),
+                    hi: th.well.shade(0.16).lerp(th.accent.hi, lift),
+                    lo: th.well.shade(-0.16).lerp(th.accent.lo, lift),
+                    ink: th.ink_light.lerp(th.accent.ink, lift),
+                };
+                let body = ui.draw_control_face(cell, ramp, &anim);
+                draw_segment(ui, body, opt, ramp.ink);
             }
         });
 

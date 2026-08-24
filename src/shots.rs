@@ -178,15 +178,15 @@ pub fn run() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
-        // Caught mid-transition: the dithered sweep crossing the pane.
+        // Caught mid-transition: the two views dissolving into each other.
         Scene {
-            name: "tab-sweep",
+            name: "tab-fade",
             script: vec![],
             mouse: Point::new(300, 25),
             click_first: true,
             double_click: false,
             drag: None,
-            settle: 4,
+            settle: 7,
             canvas: (768, 470),
         },
         // The showcase note, in both views.

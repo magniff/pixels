@@ -22,6 +22,17 @@ pub enum Tok {
     Strike,
     /// An image, which cannot be drawn — its alt text stands in for it.
     Image,
+    // Inside a fenced code block, from the syntax highlighter.
+    /// Code with no more specific meaning — not the same as an inline code
+    /// span, which is coloured to stand out from the prose around it.
+    CodePlain,
+    CodeKeyword,
+    CodeType,
+    CodeFunction,
+    CodeString,
+    CodeNumber,
+    CodeComment,
+    CodePunct,
 }
 
 /// A run of characters sharing one token type.

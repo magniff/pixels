@@ -17,10 +17,12 @@ somewhere else to use a real vault.
 
 ## Two views of a note
 
-The source view highlights markdown as you type it. The preview renders it:
-paragraphs reflow, markup disappears, tables become tables. `:preview` and
-`:source`, or click the tabs — `<>` for the source, a folded page for the
-rendering.
+The source view highlights markdown as you type it, and hands fenced code to
+a real grammar — [syntect](https://github.com/trishume/syntect)'s, remapped
+onto the sixteen colours here rather than dragging its own theme in. The
+preview renders the document: paragraphs reflow, markup disappears, tables
+become tables. `:preview` and `:source`, or click the tabs — `<>` for the
+source, a folded page for the rendering.
 
 | source | preview |
 |---|---|
@@ -29,8 +31,12 @@ rendering.
 Tables size to their content, fenced code keeps its own slab and is never
 re-wrapped, task lists get real checkboxes, and links lose their targets. The
 seeded **Markdown showcase** note exercises the lot — open it and flip between
-the tabs. Switching sweeps a dithered edge across the pane, which is what a
-transition looks like when the palette is this small.
+the tabs. Switching dissolves one view into the other: every pixel takes one
+side or the other by an ordered dither, because sixteen colours have nothing
+in between to fade through. The tabs themselves ride the same spring the
+buttons do, so the one you pick rises out of the strip as the other sinks.
+
+![mid-dissolve](screenshots/tab-fade.png)
 
 ![the showcase, rendered](screenshots/showcase-preview.png)
 
