@@ -19,7 +19,8 @@ somewhere else to use a real vault.
 
 The source view highlights markdown as you type it. The preview renders it:
 paragraphs reflow, markup disappears, tables become tables. `:preview` and
-`:source`, or click the tabs.
+`:source`, or click the tabs — `<>` for the source, a folded page for the
+rendering.
 
 | source | preview |
 |---|---|
@@ -78,7 +79,7 @@ of the repo, and `pixui/README.md` covers it properly.
 ```sh
 cargo run --release -p demo                    # the gallery
 cargo run --release --example snapshot         # regenerate screenshots/
-cargo test --workspace                         # 183 tests
+cargo test --workspace                         # 187 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 

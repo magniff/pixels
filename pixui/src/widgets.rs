@@ -17,6 +17,51 @@ use crate::ui::{Response, ScrollState, Ui};
 
 const WHITE: Color = Color::hex(0xFFFFFF);
 
+/// One option in a segmented control: a label, and optionally an icon.
+#[derive(Clone, Copy)]
+pub struct Segment<'a> {
+    pub icon: Option<&'a [&'a str]>,
+    pub label: &'a str,
+}
+
+impl<'a> Segment<'a> {
+    pub fn new(label: &'a str) -> Self {
+        Self { icon: None, label }
+    }
+
+    pub fn with_icon(icon: &'a [&'a str], label: &'a str) -> Self {
+        Self {
+            icon: Some(icon),
+            label,
+        }
+    }
+
+    /// The width of the icon and label together, including the gap.
+    fn width(&self) -> i32 {
+        let text = font::text_width(self.label);
+        match self.icon {
+            Some(rows) => icon::size(rows).0 + SEGMENT_GAP + text,
+            None => text,
+        }
+    }
+}
+
+/// Space between a segment's icon and its label.
+const SEGMENT_GAP: i32 = 4;
+
+/// Draw a segment's icon and label as one centred group.
+fn draw_segment(ui: &mut Ui, cell: Rect, seg: &Segment, ink: Color) {
+    let total = seg.width();
+    let mut x = cell.x + (cell.w - total) / 2;
+    let y = cell.y + (cell.h - font::GLYPH_H) / 2;
+    if let Some(rows) = seg.icon {
+        let (w, h) = icon::size(rows);
+        icon::draw(ui.canvas, x, cell.y + (cell.h - h) / 2, rows, ink);
+        x += w + SEGMENT_GAP;
+    }
+    font::draw_text(ui.canvas, x, y, seg.label, ink);
+}
+
 /// How a text field is laid out, and whether it should claim focus.
 ///
 /// Grouped rather than passed as a run of positional arguments, where the two
@@ -1111,6 +1156,23 @@ impl Ui<'_> {
         options: &[&str],
         selected: &mut usize,
     ) -> bool {
+        let segments: Vec<Segment> = options.iter().map(|l| Segment::new(l)).collect();
+        self.segments_at(id_label, rect, &segments, selected)
+    }
+
+    /// A segmented control whose options may carry an icon.
+    ///
+    /// The icon and its label are laid out as one group and centred together,
+    /// rather than the icon being pinned to the edge — a tab with a picture
+    /// stuck to its left and the word floating in the middle reads as two
+    /// things that happen to share a box.
+    pub fn segments_at(
+        &mut self,
+        id_label: &str,
+        rect: Rect,
+        options: &[Segment],
+        selected: &mut usize,
+    ) -> bool {
         if options.is_empty() {
             return false;
         }
@@ -1136,7 +1198,7 @@ impl Ui<'_> {
                     cell_w
                 };
                 let cell = Rect::new(x, inner.y, w, inner.h);
-                let id = ui.id(opt);
+                let id = ui.id(opt.label);
                 let mut resp = ui.interact(id, cell);
                 if ui.focusable(id) {
                     resp.clicked = true;
@@ -1159,14 +1221,14 @@ impl Ui<'_> {
                         .lerp(WHITE, anim.flash * 0.4);
                     ui.canvas.box_chamfer(cell, face, th.panel_border, 1);
                     ui.canvas.hline(cell.x + 1, cell.y + 1, cell.w - 2, ramp.hi);
-                    ui.draw_text_in(cell, opt, ramp.ink, Align::Center);
+                    draw_segment(ui, cell, opt, ramp.ink);
                 } else {
                     let ink = th.ink_light.lerp(WHITE, anim.hover * 0.5);
                     if anim.hover > 0.01 {
                         ui.canvas
                             .fill_chamfer(cell, th.well.shade(0.12 * anim.hover), 1);
                     }
-                    ui.draw_text_in(cell, opt, ink, Align::Center);
+                    draw_segment(ui, cell, opt, ink);
                 }
             }
         });

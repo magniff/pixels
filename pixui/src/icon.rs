@@ -39,6 +39,32 @@ pub const CHECK: &[&str] = &[
     ".##...",
 ];
 
+/// Angle brackets, for source or code.
+#[rustfmt::skip]
+pub const CODE: &[&str] = &[
+    "..#...#..",
+    ".#.....#.",
+    "#.......#",
+    ".#.....#.",
+    "..#...#..",
+];
+
+/// A page with a folded corner, for a rendered document.
+///
+/// The fold is doing the work. A plain rectangle with stripes in it reads as a
+/// box at this size; the notch out of one corner is what says "page".
+#[rustfmt::skip]
+pub const PAGE: &[&str] = &[
+    "#####..",
+    "#....##",
+    "#.....#",
+    "#.###.#",
+    "#.....#",
+    "#.###.#",
+    "#.....#",
+    "#######",
+];
+
 /// A right-pointing chevron, for disclosure.
 #[rustfmt::skip]
 pub const CHEVRON: &[&str] = &[

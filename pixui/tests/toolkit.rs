@@ -1270,3 +1270,67 @@ fn a_grabbing_field_owns_the_keyboard_from_its_very_first_frame() {
     h.frame(|ui| ui.text_field_grab_at(rect, "f", &mut text, "", true));
     assert!(h.frame(|ui| ui.text_input_active()));
 }
+
+// ------------------------------------------------------------------ segments
+
+#[test]
+fn a_segment_with_an_icon_is_wider_than_one_without() {
+    use pixui::Segment;
+    let plain = Segment::new("SOURCE");
+    let with = Segment::with_icon(pixui::icon::CODE, "SOURCE");
+    assert!(with.icon.is_some() && plain.icon.is_none());
+
+    // Both draw without panicking, and the icon one still fits its cell.
+    let mut h = Harness::new();
+    let mut selected = 0usize;
+    h.frame(|ui| ui.segments_at("t", Rect::new(0, 0, 180, 14), &[with, plain], &mut selected));
+}
+
+#[test]
+fn a_segmented_control_still_takes_plain_labels() {
+    let mut h = Harness::new();
+    let mut selected = 1usize;
+    h.frame(|ui| ui.segmented_at("t", Rect::new(0, 0, 120, 14), &["A", "B"], &mut selected));
+    assert_eq!(selected, 1, "drawing must not disturb the selection");
+}
+
+#[test]
+fn clicking_a_segment_selects_it() {
+    let mut h = Harness::new();
+    let mut selected = 0usize;
+    let rect = Rect::new(0, 0, 120, 14);
+
+    // The right-hand half is the second segment.
+    h.input.mouse = Point::new(90, 7);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.segmented_at("t", rect, &["A", "B"], &mut selected));
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    let changed = h.frame(|ui| ui.segmented_at("t", rect, &["A", "B"], &mut selected));
+
+    assert_eq!(selected, 1);
+    assert!(changed, "and it reports the change");
+}
+
+#[test]
+fn every_icon_is_rectangular() {
+    for rows in [
+        pixui::icon::SEARCH,
+        pixui::icon::CROSS,
+        pixui::icon::CHECK,
+        pixui::icon::CHEVRON,
+        pixui::icon::CODE,
+        pixui::icon::PAGE,
+    ] {
+        let (w, h) = pixui::icon::size(rows);
+        assert!(w > 0 && h > 0);
+        for row in rows {
+            assert_eq!(row.chars().count() as i32, w, "ragged icon row");
+            assert!(
+                row.chars().all(|c| c == '#' || c == '.'),
+                "unexpected glyph in an icon"
+            );
+        }
+    }
+}

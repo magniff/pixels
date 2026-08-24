@@ -93,3 +93,4 @@ pub use input::{Cursor, Input, Key, Mods};
 pub use layout::{Align, Dir, Layout};
 pub use theme::{Metrics, Ramp, Theme, Tone};
 pub use ui::{FrameOutput, Id, Response, ScrollState, TextState, Ui, UiState};
+pub use widgets::Segment;

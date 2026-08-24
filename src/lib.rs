@@ -425,8 +425,12 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         // The two views of the same note: its source, and what it means.
         let pane = main.inset_xy(0, 5);
         let (tabs, content) = pane.split_top(16);
-        let strip = Rect::new(tabs.x, tabs.y, 150, 14);
-        ui.segmented_at("view", strip, &["SOURCE", "PREVIEW"], &mut app.editor_tab);
+        let strip = Rect::new(tabs.x, tabs.y, 190, 14);
+        let views = [
+            pixui::Segment::with_icon(pixui::icon::CODE, "SOURCE"),
+            pixui::Segment::with_icon(pixui::icon::PAGE, "PREVIEW"),
+        ];
+        ui.segments_at("view", strip, &views, &mut app.editor_tab);
         if app.editor_tab == 0 {
             draw_editor(ui, content, app);
         } else {
