@@ -103,6 +103,33 @@ pub enum Scaling {
     Adaptive,
 }
 
+/// A zoom request read off the keyboard.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ZoomAction {
+    In,
+    Out,
+    /// Back to the scale the application opened at.
+    Reset,
+}
+
+/// Interpret a keystroke as a zoom action.
+///
+/// The primary modifier with `+`, `-` or `0`, which is Command on macOS and
+/// Control elsewhere — whatever a user of that platform already has in their
+/// fingers. Both the shifted and unshifted forms of `+` and `-` are accepted,
+/// since which one arrives depends on the keyboard layout.
+pub fn zoom_action(key: Key, mods: Mods) -> Option<ZoomAction> {
+    if !mods.cmd {
+        return None;
+    }
+    match key {
+        Key::Char('=') | Key::Char('+') => Some(ZoomAction::In),
+        Key::Char('-') | Key::Char('_') => Some(ZoomAction::Out),
+        Key::Char('0') => Some(ZoomAction::Reset),
+        _ => None,
+    }
+}
+
 /// What a window size implies: how much to magnify, how big the canvas is, and
 /// where it sits inside the window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -120,8 +147,7 @@ pub struct Geometry {
 pub fn resolve_geometry(
     scaling: Scaling,
     canvas: (i32, i32),
-    logical_scale: i32,
-    dpr: f64,
+    pixel_scale: i32,
     window: (i32, i32),
 ) -> Geometry {
     let (win_w, win_h) = (window.0.max(1), window.1.max(1));
@@ -134,10 +160,9 @@ pub fn resolve_geometry(
             (sx.min(sy).max(1), canvas)
         }
         Scaling::Adaptive => {
-            // The scale is pinned to logical points, so one virtual pixel stays
-            // the same physical size whatever the display density, and a bigger
-            // window buys canvas rather than chunkier pixels.
-            let scale = ((logical_scale as f64 * dpr).round() as i32).max(1);
+            // The magnification is given; the canvas is whatever fits at it, so
+            // a bigger window buys canvas rather than chunkier pixels.
+            let scale = pixel_scale.max(1);
             // Floor, never round up: the canvas must never be wider than the
             // window, or the presenter would have to squash it to fit.
             (scale, ((win_w / scale).max(16), (win_h / scale).max(16)))
@@ -179,12 +204,25 @@ pub struct Config {
     /// grow — usually not what you want.
     pub min_width: i32,
     pub min_height: i32,
-    /// How many logical points one virtual pixel occupies.
+    /// How many logical points one virtual pixel should occupy at startup.
     ///
-    /// Under [`Scaling::Fixed`] this only picks the initial window size; the
-    /// real magnification is then whatever whole number fits. Under
-    /// [`Scaling::Adaptive`] it is fixed for the life of the window.
-    pub initial_scale: i32,
+    /// Fractional on purpose: the *physical* magnification has to be a whole
+    /// number, but which whole number that is depends on display density. On a
+    /// 2x display a `ui_scale` of 1.5 resolves to 3 physical pixels — a size
+    /// that an integer number of logical points simply cannot name, since 1
+    /// gives 2 and 2 gives 4.
+    ///
+    /// Only the opening size comes from here. After that the live value is the
+    /// physical scale, which the zoom shortcuts and
+    /// [`crate::Ui::request_pixel_scale`] step one whole pixel at a time.
+    pub ui_scale: f32,
+    /// Bounds the *physical* scale may be zoomed within, inclusive.
+    pub scale_range: (i32, i32),
+    /// Whether the primary modifier with `+`, `-` and `0` zooms the UI.
+    ///
+    /// On by default: users expect it, and an application that wires its own
+    /// zoom controls can turn it off.
+    pub zoom_shortcuts: bool,
     /// Whether the canvas grows with the window.
     pub scaling: Scaling,
     pub resizable: bool,
@@ -209,7 +247,9 @@ impl Default for Config {
             height: 240,
             min_width: 384,
             min_height: 240,
-            initial_scale: 3,
+            ui_scale: 3.0,
+            scale_range: (1, 10),
+            zoom_shortcuts: true,
             scaling: Scaling::Fixed,
             resizable: true,
             theme: Theme::warm(),
@@ -242,8 +282,27 @@ impl Config {
         self
     }
 
-    pub fn with_scale(mut self, scale: i32) -> Self {
-        self.initial_scale = scale.max(1);
+    /// Set the opening UI scale, in logical points per virtual pixel.
+    ///
+    /// Fractional values are the point: on a 2x display `1.5` resolves to a
+    /// 3-physical-pixel magnification, which no whole number of logical points
+    /// can express.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.ui_scale = scale.max(0.1);
+        self
+    }
+
+    /// Bound how far the UI may be zoomed, in physical pixels per virtual
+    /// pixel, inclusive.
+    pub fn with_scale_range(mut self, min: i32, max: i32) -> Self {
+        let min = min.max(1);
+        self.scale_range = (min, max.max(min));
+        self
+    }
+
+    /// Turn the built-in zoom shortcuts off, for an app that wires its own.
+    pub fn without_zoom_shortcuts(mut self) -> Self {
+        self.zoom_shortcuts = false;
         self
     }
 
@@ -363,6 +422,14 @@ struct App<S, F, P> {
     frame_budget: Duration,
     applied_cursor: Cursor,
     quit_requested: bool,
+    /// Live magnification, in physical pixels per virtual pixel. Whole by
+    /// construction — this is the value the zoom shortcuts step.
+    pixel_scale: i32,
+    /// The scale `Cmd/Ctrl+0` returns to.
+    home_scale: i32,
+    /// Display density the current scale was derived at, so moving to a
+    /// different display can preserve the apparent size.
+    dpr: f64,
 }
 
 impl<S, F, P> App<S, F, P>
@@ -372,6 +439,8 @@ where
 {
     fn new(config: Config, state: S, ui_fn: F) -> Self {
         let canvas = Canvas::new(config.width, config.height);
+        // Resolved properly once there is a window and a real density.
+        let pixel_scale = config.ui_scale.max(0.1).round().max(1.0) as i32;
         let now = Instant::now();
         // Replaced with the real display rate as soon as there is a window.
         let frame_budget = Duration::from_secs_f64(1.0 / 60.0);
@@ -404,6 +473,9 @@ where
             frame_budget,
             applied_cursor: Cursor::Default,
             quit_requested: false,
+            pixel_scale,
+            home_scale: pixel_scale,
+            dpr: 1.0,
         }
     }
 
@@ -441,21 +513,70 @@ where
     /// Work out the magnification and, under [`Scaling::Adaptive`], the canvas
     /// size to go with it. See [`resolve_geometry`] for the arithmetic.
     fn recompute_scale(&mut self, win_w: i32, win_h: i32) {
-        let dpr = self
-            .window
-            .as_ref()
-            .map(|w| w.scale_factor())
-            .unwrap_or(1.0);
         let geom = resolve_geometry(
             self.config.scaling,
             (self.canvas.width(), self.canvas.height()),
-            self.config.initial_scale,
-            dpr,
+            self.pixel_scale,
             (win_w, win_h),
         );
         self.scale = geom.scale;
         self.offset = geom.offset;
         self.canvas.resize(geom.canvas.0, geom.canvas.1);
+    }
+
+    /// Adopt a new UI scale, clamped to the configured range.
+    ///
+    /// Returns whether anything actually changed, so the caller can skip the
+    /// geometry work when a zoom request lands on a bound.
+    fn set_pixel_scale(&mut self, scale: i32) -> bool {
+        let (lo, hi) = self.config.scale_range;
+        let scale = scale.clamp(lo.max(1), hi.max(lo.max(1)));
+        if scale == self.pixel_scale {
+            return false;
+        }
+        self.pixel_scale = scale;
+        if let Some(size) = self.window.as_ref().map(|w| w.inner_size()) {
+            self.recompute_scale(size.width as i32, size.height as i32);
+            if let Some(p) = self.presenter.as_mut() {
+                p.resize(size.width, size.height);
+            }
+        }
+        true
+    }
+
+    /// Pull zoom shortcuts out of this frame's keys before anything else sees
+    /// them, so an application never has to filter for them itself.
+    fn take_zoom_shortcuts(&mut self) {
+        if !self.config.zoom_shortcuts {
+            return;
+        }
+        let mods = self.input.mods;
+        if !mods.cmd {
+            return;
+        }
+        let home = self.home_scale;
+        let mut wanted = self.pixel_scale;
+        let before = wanted;
+        // Consumed rather than merely observed: an application should never
+        // have to filter zoom keys out of its own keyboard handling.
+        self.input.keys.retain(|key| match zoom_action(*key, mods) {
+            Some(ZoomAction::In) => {
+                wanted += 1;
+                false
+            }
+            Some(ZoomAction::Out) => {
+                wanted -= 1;
+                false
+            }
+            Some(ZoomAction::Reset) => {
+                wanted = home;
+                false
+            }
+            None => true,
+        });
+        if wanted != before {
+            self.set_pixel_scale(wanted);
+        }
     }
 
     /// Undo the scale and letterbox so widgets see virtual coordinates.
@@ -470,6 +591,9 @@ where
         self.input.dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
         self.input.time = (now - self.start).as_secs_f32();
         self.last_frame = now;
+
+        self.take_zoom_shortcuts();
+        self.input.pixel_scale = self.pixel_scale;
 
         let t_ui = Instant::now();
         self.canvas.clear(self.config.theme.background);
@@ -489,6 +613,9 @@ where
             self.config.theme = theme;
         }
         self.quit_requested |= out.quit;
+        if let Some(scale) = out.pixel_scale {
+            self.set_pixel_scale(scale);
+        }
 
         let scanline = self.config.theme.scanline;
         if scanline > 0.0 {
@@ -653,18 +780,18 @@ where
         // Size the window in *logical* units so it comes up the intended
         // physical size on screen; the actual integer scale is then derived
         // from the physical size, which is what makes HiDPI free.
-        let scale = self.config.initial_scale.max(1);
+        let scale = self.config.ui_scale.max(0.1) as f64;
         let logical = LogicalSize::new(
-            (self.config.width * scale) as f64,
-            (self.config.height * scale) as f64,
+            self.config.width as f64 * scale,
+            self.config.height as f64 * scale,
         );
         // Under Adaptive the canvas is the window divided by the scale, so the
         // minimum window size is what guarantees the minimum canvas size.
         let min = match self.config.scaling {
             Scaling::Fixed => LogicalSize::new(self.config.width as f64, self.config.height as f64),
             Scaling::Adaptive => LogicalSize::new(
-                (self.config.min_width * scale) as f64,
-                (self.config.min_height * scale) as f64,
+                self.config.min_width as f64 * scale,
+                self.config.min_height as f64 * scale,
             ),
         };
 
@@ -693,8 +820,17 @@ where
         };
 
         let size = window.inner_size();
+        self.dpr = window.scale_factor();
         self.window = Some(window);
         self.presenter = Some(presenter);
+
+        // Now that the density is known, turn the requested logical scale into
+        // the whole number of physical pixels it actually resolves to.
+        let (lo, hi) = self.config.scale_range;
+        self.pixel_scale = ((self.config.ui_scale as f64 * self.dpr).round() as i32)
+            .clamp(lo.max(1), hi.max(lo.max(1)));
+        self.home_scale = self.pixel_scale;
+
         self.recompute_scale(size.width as i32, size.height as i32);
         self.detect_display();
         self.next_frame = Instant::now();
@@ -724,7 +860,21 @@ where
             // Moving to a display with a different density changes how many
             // physical pixels a virtual one should occupy.
             WindowEvent::ScaleFactorChanged { .. } => {
-                if let Some(size) = self.window.as_ref().map(|w| w.inner_size()) {
+                if let Some(window) = self.window.clone() {
+                    // Re-derive the magnification for the new density so the UI
+                    // stays the same apparent size, keeping any zoom the user
+                    // has applied.
+                    let next = window.scale_factor();
+                    if next > 0.0 && self.dpr > 0.0 {
+                        let (lo, hi) = self.config.scale_range;
+                        self.pixel_scale = ((self.pixel_scale as f64 * next / self.dpr).round()
+                            as i32)
+                            .clamp(lo.max(1), hi.max(lo.max(1)));
+                        self.home_scale =
+                            ((self.home_scale as f64 * next / self.dpr).round() as i32).max(1);
+                    }
+                    self.dpr = next;
+                    let size = window.inner_size();
                     self.recompute_scale(size.width as i32, size.height as i32);
                     if let Some(p) = self.presenter.as_mut() {
                         p.resize(size.width, size.height);

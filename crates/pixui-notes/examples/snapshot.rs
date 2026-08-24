@@ -49,42 +49,42 @@ fn main() -> std::io::Result<()> {
             script: vec![],
             mouse: Point::new(-9, -9),
             settle: 40,
-            canvas: (576, 352),
+            canvas: (768, 470),
         },
         Scene {
             name: "02-insert",
             script: [keys("Go"), keys("A new thought, typed in insert mode.")].concat(),
             mouse: Point::new(-9, -9),
             settle: 40,
-            canvas: (576, 352),
+            canvas: (768, 470),
         },
         Scene {
             name: "03-visual",
             script: keys("jjjvwwwl"),
             mouse: Point::new(-9, -9),
             settle: 30,
-            canvas: (576, 352),
+            canvas: (768, 470),
         },
         Scene {
             name: "04-command",
             script: keys(":w notes-are-files"),
             mouse: Point::new(-9, -9),
             settle: 30,
-            canvas: (576, 352),
+            canvas: (768, 470),
         },
         Scene {
             name: "05-open-dialog",
             script: [keys(":e"), vec![Key::Enter], keys("jj")].concat(),
             mouse: Point::new(-9, -9),
             settle: 40,
-            canvas: (576, 352),
+            canvas: (768, 470),
         },
         Scene {
             name: "06-save-dialog",
             script: [keys(":new"), vec![Key::Enter], keys(":w"), vec![Key::Enter]].concat(),
             mouse: Point::new(-9, -9),
             settle: 40,
-            canvas: (576, 352),
+            canvas: (768, 470),
         },
         // The same app on a larger window. Under `Scaling::Adaptive` a resize
         // produces exactly this: the same pixel size, with more room in it.
@@ -93,7 +93,7 @@ fn main() -> std::io::Result<()> {
             script: vec![],
             mouse: Point::new(-9, -9),
             settle: 40,
-            canvas: (880, 470),
+            canvas: (1050, 620),
         },
         // A text object mid-flight: `ci"` inside a quoted span.
         Scene {
@@ -101,7 +101,7 @@ fn main() -> std::io::Result<()> {
             script: [keys("GA \"quoted words\" here\x1b"), keys("hhhhhhci\"")].concat(),
             mouse: Point::new(-9, -9),
             settle: 30,
-            canvas: (576, 352),
+            canvas: (768, 470),
         },
     ];
 

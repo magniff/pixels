@@ -34,7 +34,16 @@ use text::Buffer;
 use vim::{Mode, Vim, VimEvent};
 
 const GUTTER: i32 = 22;
-const SIDEBAR_W: i32 = 168;
+
+/// How wide the note list should be for a given canvas.
+///
+/// Derived rather than a constant because the canvas is no longer fixed: it
+/// grows with the window and shrinks when the UI is zoomed in. A magic number
+/// tuned for one canvas width becomes a thin strip on a large one and swallows
+/// half the screen on a small one.
+fn sidebar_width(canvas_w: i32) -> i32 {
+    (canvas_w / 5).clamp(120, 300)
+}
 
 /// One open note.
 pub struct Note {
@@ -279,12 +288,18 @@ impl Notes {
 /// opt into [`Scaling::Adaptive`] is invisible until someone drags a window
 /// edge and the whole UI jumps a size.
 pub fn config() -> pixui::Config {
-    pixui::Config::new("pixui notes", 576, 352)
-        .with_scale(2)
+    // 1.5 logical points per virtual pixel, which on a 2x display resolves to a
+    // 3 physical pixel magnification — one step up from 2, and a size no whole
+    // number of logical points can name. The window opens the same size on
+    // screen either way; Cmd/Ctrl with `+`, `-` and `0` steps it live, one
+    // whole pixel at a time.
+    pixui::Config::new("pixui notes", 768, 470)
+        .with_scale(1.5)
+        .with_scale_range(2, 6)
         // Resizing buys more lines and columns at the same pixel size, rather
         // than magnifying what is already there.
         .adaptive()
-        .with_min_canvas(360, 220)
+        .with_min_canvas(480, 300)
         .with_theme(theme())
 }
 
@@ -313,7 +328,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     ui.input_blocked(modal, |ui| {
         draw_titlebar(ui, titlebar, app);
-        let (side, main) = body.split_left(SIDEBAR_W);
+        let (side, main) = body.split_left(sidebar_width(screen.w));
         draw_sidebar(ui, side.inset(5), app);
         draw_editor(ui, main.inset_xy(0, 5), app);
         draw_statusbar(ui, statusbar, app);
@@ -443,11 +458,15 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
     let inner = ui.panel(rect, "NOTES");
     let (list, footer) = inner.split_bottom(17);
 
+    // Fit the preview text to whatever width the sidebar ended up, allowing for
+    // the scrollbar gutter and the row's own padding.
+    let cols = ((list.w - 20) / pixui::font::ADVANCE).max(8) as usize;
+
     let mut select = None;
     ui.scroll_area(list, "notes", |ui| {
         for (i, note) in app.notes.iter().enumerate() {
             let selected = i == app.current;
-            let preview = markdown::preview(note.buffer.lines(), 2, 24);
+            let preview = markdown::preview(note.buffer.lines(), 2, cols);
             let h = 13 + preview.len() as i32 * 8;
             let row = ui.alloc(h);
             let id = ui.id(&format!("note{i}"));

@@ -133,6 +133,8 @@ pub struct FrameOutput {
     pub theme: Option<Theme>,
     /// Set if the frame asked the application to close.
     pub quit: bool,
+    /// Set if the frame asked for a different pixel scale.
+    pub pixel_scale: Option<i32>,
 }
 
 /// The per-frame UI context handed to application code.
@@ -150,6 +152,7 @@ pub struct Ui<'a> {
     input_blocked: bool,
     keyboard_captured: bool,
     quit: bool,
+    next_pixel_scale: Option<i32>,
 }
 
 impl<'a> Ui<'a> {
@@ -179,6 +182,7 @@ impl<'a> Ui<'a> {
             input_blocked: false,
             keyboard_captured: false,
             quit: false,
+            next_pixel_scale: None,
         }
     }
 
@@ -222,6 +226,7 @@ impl<'a> Ui<'a> {
             cursor: self.cursor,
             theme: self.next_theme,
             quit: self.quit,
+            pixel_scale: self.next_pixel_scale,
         }
     }
 
@@ -451,6 +456,22 @@ impl<'a> Ui<'a> {
     /// so the backend applies it once this frame is presented.
     pub fn request_theme(&mut self, theme: Theme) {
         self.next_theme = Some(theme);
+    }
+
+    /// How many physical pixels one virtual pixel currently occupies.
+    pub fn pixel_scale(&self) -> i32 {
+        self.input.pixel_scale
+    }
+
+    /// Ask for a different pixel scale, applied from the next frame.
+    ///
+    /// Under [`crate::Scaling::Adaptive`] this is the zoom control: a smaller
+    /// scale means smaller chrome and more room, a larger one the reverse. Only
+    /// whole numbers are possible, so the steps are coarse by construction —
+    /// from 2 the next stop up is 3, which is 50% larger, not 30%. The backend
+    /// clamps to the configured range.
+    pub fn request_pixel_scale(&mut self, scale: i32) {
+        self.next_pixel_scale = Some(scale);
     }
 
     /// Ask the application to close after this frame.

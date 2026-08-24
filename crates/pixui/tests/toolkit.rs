@@ -7,7 +7,7 @@
 use pixui::app::blit;
 use pixui::layout::Dir;
 use pixui::{palette, Canvas, Color, Input, Layout, Point, Rect, ScrollState, Theme, Ui, UiState};
-use pixui::{resolve_geometry, Scaling};
+use pixui::{resolve_geometry, zoom_action, Config, Key, Mods, Scaling, ZoomAction};
 
 // ------------------------------------------------------------------ geometry
 
@@ -670,11 +670,11 @@ fn dragging_the_thumb_scrolls_the_content() {
 
 #[test]
 fn adaptive_grows_the_canvas_instead_of_the_pixels() {
-    let base = resolve_geometry(Scaling::Adaptive, (576, 352), 2, 2.0, (2304, 1408));
+    let base = resolve_geometry(Scaling::Adaptive, (576, 352), 4, (2304, 1408));
     assert_eq!(base.scale, 4, "2 logical points per pixel on a 2x display");
     assert_eq!(base.canvas, (576, 352));
 
-    let wider = resolve_geometry(Scaling::Adaptive, (576, 352), 2, 2.0, (2704, 1408));
+    let wider = resolve_geometry(Scaling::Adaptive, (576, 352), 4, (2704, 1408));
     assert_eq!(wider.scale, 4, "the magnification does not change");
     assert_eq!(
         wider.canvas.0, 676,
@@ -686,7 +686,7 @@ fn adaptive_grows_the_canvas_instead_of_the_pixels() {
 fn adaptive_moves_one_canvas_pixel_per_scale_pixels_of_window() {
     // This is the whole point: the step is the scale, not the canvas width.
     let at = |w| {
-        resolve_geometry(Scaling::Adaptive, (576, 352), 2, 2.0, (w, 1408))
+        resolve_geometry(Scaling::Adaptive, (576, 352), 4, (w, 1408))
             .canvas
             .0
     };
@@ -700,7 +700,7 @@ fn adaptive_moves_one_canvas_pixel_per_scale_pixels_of_window() {
 fn fixed_magnifies_in_whole_canvas_widths() {
     // The contrast: a fixed canvas only changes size when a whole extra
     // multiple fits, which is a very large step indeed.
-    let at = |w| resolve_geometry(Scaling::Fixed, (576, 352), 2, 2.0, (w, 4000)).scale;
+    let at = |w| resolve_geometry(Scaling::Fixed, (576, 352), 4, (w, 4000)).scale;
     assert_eq!(at(2304), 4);
     assert_eq!(at(2879), 4, "still 4 until a fifth copy fits");
     assert_eq!(at(2880), 5);
@@ -711,8 +711,8 @@ fn an_adaptive_canvas_never_exceeds_its_window() {
     // The presenter has no way to shrink an oversized canvas without squashing
     // it, so the geometry must guarantee it fits.
     for w in [640, 641, 999, 1000, 1001, 2303, 2304] {
-        for dpr in [1.0, 1.5, 2.0] {
-            let g = resolve_geometry(Scaling::Adaptive, (576, 352), 3, dpr, (w, w));
+        for scale in [1, 3, 6] {
+            let g = resolve_geometry(Scaling::Adaptive, (576, 352), scale, (w, w));
             assert!(
                 g.canvas.0 * g.scale <= w,
                 "canvas {:?} at x{} overflows a {w}px window",
@@ -728,14 +728,14 @@ fn an_adaptive_canvas_is_pinned_to_the_corner() {
     // Centring would split the sub-scale remainder across both edges, shunting
     // the whole UI sideways by a pixel every few pixels of a drag.
     for w in 2300..2320 {
-        let g = resolve_geometry(Scaling::Adaptive, (576, 352), 2, 2.0, (w, 1408));
+        let g = resolve_geometry(Scaling::Adaptive, (576, 352), 4, (w, 1408));
         assert_eq!(g.offset, (0, 0), "width {w} should not shift the canvas");
     }
 }
 
 #[test]
 fn a_fixed_canvas_is_centred_in_its_letterbox() {
-    let g = resolve_geometry(Scaling::Fixed, (576, 352), 2, 2.0, (2500, 1408));
+    let g = resolve_geometry(Scaling::Fixed, (576, 352), 4, (2500, 1408));
     assert_eq!(g.scale, 4);
     assert_eq!(g.offset.0, (2500 - 576 * 4) / 2);
     assert_eq!(g.canvas, (576, 352), "a fixed canvas keeps its size");
@@ -745,8 +745,8 @@ fn a_fixed_canvas_is_centred_in_its_letterbox() {
 fn display_density_changes_the_magnification_not_the_layout() {
     // The same window in logical terms should give the same canvas on a 1x and
     // a 2x display — only the physical magnification differs.
-    let one = resolve_geometry(Scaling::Adaptive, (576, 352), 2, 1.0, (1152, 704));
-    let two = resolve_geometry(Scaling::Adaptive, (576, 352), 2, 2.0, (2304, 1408));
+    let one = resolve_geometry(Scaling::Adaptive, (576, 352), 2, (1152, 704));
+    let two = resolve_geometry(Scaling::Adaptive, (576, 352), 4, (2304, 1408));
     assert_eq!(
         one.canvas, two.canvas,
         "layout gets the same room either way"
@@ -756,10 +756,108 @@ fn display_density_changes_the_magnification_not_the_layout() {
 
 #[test]
 fn a_degenerate_window_still_produces_a_usable_canvas() {
-    let g = resolve_geometry(Scaling::Adaptive, (576, 352), 3, 2.0, (1, 1));
+    let g = resolve_geometry(Scaling::Adaptive, (576, 352), 6, (1, 1));
     assert!(
         g.canvas.0 >= 16 && g.canvas.1 >= 16,
         "never a zero-sized canvas"
     );
     assert!(g.scale >= 1);
+}
+
+// ----------------------------------------------------------------- ui scale
+
+#[test]
+fn halving_the_ui_scale_doubles_the_canvas() {
+    // This is what "scale the UI down 2x" means: the same window, everything in
+    // it half the size, twice as much of it.
+    let big = resolve_geometry(Scaling::Adaptive, (576, 352), 4, (2304, 1408));
+    let small = resolve_geometry(Scaling::Adaptive, (576, 352), 2, (2304, 1408));
+    assert_eq!(big.canvas, (576, 352));
+    assert_eq!(small.canvas, (1152, 704), "half the scale, twice the room");
+    assert_eq!(small.scale * 2, big.scale);
+}
+
+#[test]
+fn zoom_shortcuts_need_the_primary_modifier() {
+    let plain = Mods::default();
+    let cmd = Mods {
+        cmd: true,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        zoom_action(Key::Char('='), plain),
+        None,
+        "bare `=` is just text"
+    );
+    assert_eq!(zoom_action(Key::Char('='), cmd), Some(ZoomAction::In));
+    assert_eq!(zoom_action(Key::Char('-'), cmd), Some(ZoomAction::Out));
+    assert_eq!(zoom_action(Key::Char('0'), cmd), Some(ZoomAction::Reset));
+    assert_eq!(zoom_action(Key::Char('k'), cmd), None);
+}
+
+#[test]
+fn both_forms_of_the_zoom_keys_are_accepted() {
+    // Which of `=`/`+` and `-`/`_` arrives depends on the keyboard layout.
+    let cmd = Mods {
+        cmd: true,
+        ..Default::default()
+    };
+    assert_eq!(zoom_action(Key::Char('+'), cmd), Some(ZoomAction::In));
+    assert_eq!(zoom_action(Key::Char('_'), cmd), Some(ZoomAction::Out));
+}
+
+#[test]
+fn the_scale_range_is_ordered_and_at_least_one() {
+    let c = Config::new("t", 100, 100).with_scale_range(0, 4);
+    assert_eq!(c.scale_range, (1, 4), "a scale below 1 is meaningless");
+
+    let c = Config::new("t", 100, 100).with_scale_range(5, 2);
+    assert!(
+        c.scale_range.0 <= c.scale_range.1,
+        "an inverted range would clamp to nothing"
+    );
+}
+
+#[test]
+fn zoom_shortcuts_are_on_unless_turned_off() {
+    assert!(Config::new("t", 100, 100).zoom_shortcuts);
+    assert!(
+        !Config::new("t", 100, 100)
+            .without_zoom_shortcuts()
+            .zoom_shortcuts
+    );
+}
+
+#[test]
+fn zooming_in_never_makes_the_canvas_overflow_the_window() {
+    // The invariant has to survive the whole zoom range, not just the default.
+    for ui_scale in 1..=6 {
+        let g = resolve_geometry(Scaling::Adaptive, (576, 352), ui_scale, (2304, 1408));
+        assert!(
+            g.canvas.0 * g.scale <= 2304 && g.canvas.1 * g.scale <= 1408,
+            "scale {ui_scale} produced {:?} at x{}",
+            g.canvas,
+            g.scale
+        );
+    }
+}
+
+#[test]
+fn odd_magnifications_are_reachable() {
+    // The step between 2 and 4 physical pixels is the one that matters: it is
+    // 100% larger, and 3 is the only thing in between. Expressing the scale as
+    // a whole number of *logical* points cannot name it on a 2x display, which
+    // is why the opening scale is a float.
+    let two = resolve_geometry(Scaling::Adaptive, (768, 470), 2, (2304, 1408));
+    let three = resolve_geometry(Scaling::Adaptive, (768, 470), 3, (2304, 1408));
+    let four = resolve_geometry(Scaling::Adaptive, (768, 470), 4, (2304, 1408));
+    assert_eq!(two.canvas, (1152, 704));
+    assert_eq!(three.canvas, (768, 469));
+    assert_eq!(four.canvas, (576, 352));
+
+    // Going up a step is +50% in apparent size, not +30%. There is nothing in
+    // between, and that is inherent to keeping every pixel whole.
+    let ratio = three.scale as f32 / two.scale as f32;
+    assert!((ratio - 1.5).abs() < 1e-6);
 }

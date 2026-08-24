@@ -66,6 +66,15 @@ pub struct Input {
     pub dt: f32,
     /// Seconds since the app started.
     pub time: f32,
+    /// How many *physical* pixels one virtual pixel currently occupies.
+    ///
+    /// Always a whole number — that is what keeps the art crisp — so this is
+    /// also the granularity of zoom: the steps available are 1, 2, 3 physical
+    /// pixels per virtual one, and nothing in between.
+    ///
+    /// Set by the backend each frame. Read it to show a zoom indicator; change
+    /// it with [`crate::Ui::request_pixel_scale`].
+    pub pixel_scale: i32,
 }
 
 impl Input {

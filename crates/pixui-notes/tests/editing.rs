@@ -635,6 +635,14 @@ fn the_window_is_configured_to_grow_rather_than_magnify() {
     // size. Assert it rather than trusting it.
     let config = pixui_notes::config();
     assert_eq!(config.scaling, pixui::Scaling::Adaptive);
+    // 1.5 logical points resolves to 3 physical pixels on a 2x display, which
+    // no whole number of logical points can name.
+    assert!((config.ui_scale - 1.5).abs() < 1e-6);
+    let opening = (config.ui_scale * 2.0).round() as i32;
+    assert!(
+        config.scale_range.0 <= opening && opening <= config.scale_range.1,
+        "the opening scale must sit inside the range it can be zoomed within"
+    );
     assert!(
         config.min_width < config.width && config.min_height < config.height,
         "the minimum canvas must be smaller than the starting one, or the window \

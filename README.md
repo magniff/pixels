@@ -97,7 +97,7 @@ use pixui::{Config, Tone, Ui};
 struct State { clicks: u32, loud: bool }
 
 pixui::run(
-    Config::new("hello", 240, 140).with_scale(3),
+    Config::new("hello", 240, 140).with_scale(3.0),
     State { clicks: 0, loud: false },
     |ui: &mut Ui, state: &mut State| {
         let screen = ui.canvas.bounds().inset(8);
@@ -126,6 +126,7 @@ A markdown editor with a modal (vim-style) editing engine.
 | **Visual** | `v` charwise, then `d y c` |
 | **Commands** | `:w`, `:w name`, `:e`, `:e name`, `:q`, `:qa`, `:new`, `:help` |
 | **Other** | `Ctrl-n` / `Ctrl-p` between notes, `Ctrl-d` / `Ctrl-u` half-page |
+| **Zoom** | `Cmd`/`Ctrl` with `+`, `-`, `0` — handled by the toolkit, not the app |
 
 Normal mode is *parsed*, not switch-cased, because vim's grammar really is a
 grammar: `[count] operator [count] motion`. Keystrokes accumulate in a pending
@@ -176,6 +177,28 @@ when a whole extra multiple fits — for a 576-wide canvas that is a 576 pixel
 step, with up to 500 pixels of letterbox in between. Under `Adaptive` the step
 is the magnification itself: one canvas pixel per 4 physical pixels at a 4x
 scale, which reads as continuous.
+
+**The UI scale is a runtime property, not a startup constant.**
+`Ui::request_pixel_scale` changes it at any time, and the primary modifier with
+`+`, `-` and `0` does so out of the box (`without_zoom_shortcuts` if you would
+rather wire your own). Zoom keys are *consumed* by the backend, so an
+application never has to filter them out of its own keyboard handling.
+`with_scale_range` bounds the zoom.
+
+**Zoom steps are coarse, and that is not a bug.** The live value is the
+*physical* magnification, which must be a whole number or the pixels stop being
+pixels. From 2 the next stop is 3 — 50% larger, not 30%. There is nothing in
+between and there cannot be.
+
+`Config::with_scale` takes a **float** for a related reason. It is a
+density-independent opening size in logical points, and on a 2x display an
+integer there could only ever produce an even magnification: 1 gives 2, 2 gives
+4, and 3 is unreachable. `1.5` names it.
+
+Under `Adaptive`, halving the scale doubles the canvas: the same window, every
+piece of chrome half the size, twice as much content. That also means a layout
+built from magic pixel constants stops working once the user can zoom — the note
+app derives its sidebar width from the canvas for exactly this reason.
 
 An adaptive canvas is pinned to the top-left rather than centred. Centring would
 split the sub-scale remainder — always fewer than `scale` pixels — across both
