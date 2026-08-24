@@ -585,12 +585,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         if width != before {
             app.sidebar_w = Some(width);
         }
-        draw_sidebar(ui, side.inset(5), app);
-        // The sidebar holds two of the three panes, so the cue lands on the
-        // whole drawer for either of them.
-        if app.pane != Pane::Editor {
-            ui.focus_flare("pane:side", side.inset(4), arrived);
-        }
+        draw_sidebar(ui, side.inset(5), app, arrived);
 
         // The two views of the same note: its source, and what it means.
         let pane = main.inset_xy(0, 5);
@@ -848,7 +843,7 @@ pub fn note_matches(note: &Note, needle: &str) -> bool {
         .any(|line| line.to_lowercase().contains(needle))
 }
 
-fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
+fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
     let th = *ui.theme;
     let inner = ui.panel(rect, "NOTES");
     let (search, rest) = inner.split_top(17);
@@ -1017,6 +1012,14 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
             }
         });
     });
+
+    // The cue lands on the thing that took the keys, not on the drawer that
+    // happens to contain it. Drawn last so nothing paints over the ring.
+    match app.pane {
+        Pane::Search => ui.focus_flare("pane:search", field, arrived),
+        Pane::Notes => ui.focus_flare("pane:list", list, arrived),
+        Pane::Editor => {}
+    }
 }
 
 // ------------------------------------------------------------------- preview
