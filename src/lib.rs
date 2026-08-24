@@ -1016,9 +1016,11 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
     // second ring outside the first — which is what a doubled outline looks
     // like, not what an arrival looks like.
     if app.pane == Pane::Notes {
-        // Drawn last so nothing paints over it, and over the panel, which is
-        // what the list sits on.
-        ui.focus_flare("pane:list", list, th.panel, arrived);
+        // Around the whole drawer, not just the rows: the pane the keyboard
+        // is aimed at is the notes widget, and ringing a part of it points at
+        // something that is not a thing you can move to. Drawn last so nothing
+        // paints over it, and over the background the panel sits on.
+        ui.focus_flare("pane:notes", rect, th.background, arrived);
     }
 }
 
