@@ -391,3 +391,282 @@ pub fn locate(ranges: &[(usize, usize)], col: usize) -> (usize, usize) {
     let (i, (start, end)) = (ranges.len() - 1, ranges[ranges.len() - 1]);
     (i, end.saturating_sub(start))
 }
+
+// ------------------------------------------------------------ document model
+
+/// How a table column is aligned, from its `---`/`:-:` separator row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CellAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// What sits at the head of a list item.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Marker {
+    Bullet,
+    Number(usize),
+    /// A task item, checked or not.
+    Task(bool),
+}
+
+#[derive(Clone, Debug)]
+pub struct Item {
+    pub marker: Marker,
+    /// Nesting level, from the leading indent.
+    pub depth: usize,
+    pub spans: Vec<Span>,
+}
+
+/// One block of a parsed document.
+///
+/// The highlighter deals in lines because that is what an editor draws. A
+/// *rendering* has to deal in blocks, because a paragraph is not a line and a
+/// list is not its items — the shape of the thing is the whole point.
+#[derive(Clone, Debug)]
+pub enum Block {
+    Heading {
+        level: u8,
+        spans: Vec<Span>,
+    },
+    Paragraph(Vec<Span>),
+    List(Vec<Item>),
+    Quote(Vec<Vec<Span>>),
+    Code {
+        lang: String,
+        lines: Vec<String>,
+    },
+    Table {
+        align: Vec<CellAlign>,
+        header: Vec<Vec<Span>>,
+        rows: Vec<Vec<Vec<Span>>>,
+    },
+    Rule,
+}
+
+/// Inline spans with the markup taken out, for rendering rather than editing.
+///
+/// The highlighter keeps `**` and backticks visible and dims them, because in
+/// the source view they are text you can put a caret in. Rendered, they are
+/// instructions that have already been carried out.
+pub fn inline_spans(text: &str) -> Vec<Span> {
+    inline(text)
+        .into_iter()
+        .filter(|s| s.tok != Tok::Marker)
+        .collect()
+}
+
+/// Whether a line is a horizontal rule.
+fn is_rule(line: &str) -> bool {
+    let t = line.trim();
+    t.len() >= 3
+        && (t.chars().all(|c| c == '-')
+            || t.chars().all(|c| c == '*')
+            || t.chars().all(|c| c == '_'))
+}
+
+/// The cells of a table row, if the line looks like one.
+fn table_cells(line: &str) -> Option<Vec<String>> {
+    let t = line.trim();
+    if !t.contains('|') {
+        return None;
+    }
+    let t = t.strip_prefix('|').unwrap_or(t);
+    let t = t.strip_suffix('|').unwrap_or(t);
+    Some(t.split('|').map(|c| c.trim().to_string()).collect())
+}
+
+/// A `| --- | :-: |` row, which is what turns the line above it into a header.
+fn table_alignment(line: &str) -> Option<Vec<CellAlign>> {
+    let cells = table_cells(line)?;
+    let mut out = Vec::new();
+    for cell in &cells {
+        let c = cell.trim();
+        if c.len() < 3 || !c.chars().all(|ch| ch == '-' || ch == ':') || !c.contains('-') {
+            return None;
+        }
+        out.push(match (c.starts_with(':'), c.ends_with(':')) {
+            (true, true) => CellAlign::Center,
+            (false, true) => CellAlign::Right,
+            _ => CellAlign::Left,
+        });
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// The marker at the head of a list item, and how far past it the text starts.
+fn item_marker(line: &str) -> Option<(Marker, usize)> {
+    let trimmed = line.trim_start();
+    let rest = if let Some(r) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_else(|| trimmed.strip_prefix("+ "))
+    {
+        r
+    } else {
+        // An ordered item: digits, then `.` or `)`, then a space.
+        let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+        if digits == 0 || digits > 9 {
+            return None;
+        }
+        let after = &trimmed[digits..];
+        let rest = after
+            .strip_prefix(". ")
+            .or_else(|| after.strip_prefix(") "))?;
+        let n = trimmed[..digits].parse().unwrap_or(1);
+        let used = line.len() - rest.len();
+        return Some((Marker::Number(n), used));
+    };
+
+    // A task box turns a bullet into a checkbox.
+    let (marker, rest) = if let Some(r) = rest.strip_prefix("[ ] ") {
+        (Marker::Task(false), r)
+    } else if let Some(r) = rest
+        .strip_prefix("[x] ")
+        .or_else(|| rest.strip_prefix("[X] "))
+    {
+        (Marker::Task(true), r)
+    } else {
+        (Marker::Bullet, rest)
+    };
+    Some((marker, line.len() - rest.len()))
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// Parse lines into blocks.
+pub fn parse(lines: &[String]) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = &lines[i];
+        let trimmed = line.trim();
+
+        // ---- blank ---------------------------------------------------
+        if trimmed.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        // ---- fenced code ---------------------------------------------
+        if is_fence(line) {
+            let lang = trimmed.trim_start_matches('`').trim().to_string();
+            i += 1;
+            let mut body = Vec::new();
+            while i < lines.len() && !is_fence(&lines[i]) {
+                body.push(lines[i].clone());
+                i += 1;
+            }
+            i += 1; // the closing fence
+            blocks.push(Block::Code { lang, lines: body });
+            continue;
+        }
+
+        // ---- rule ----------------------------------------------------
+        if is_rule(line) {
+            blocks.push(Block::Rule);
+            i += 1;
+            continue;
+        }
+
+        // ---- heading -------------------------------------------------
+        if let Some(hashes) = leading_run(trimmed, '#') {
+            if hashes <= 6 && trimmed[hashes..].starts_with(' ') {
+                blocks.push(Block::Heading {
+                    level: hashes as u8,
+                    spans: inline_spans(trimmed[hashes + 1..].trim()),
+                });
+                i += 1;
+                continue;
+            }
+        }
+
+        // ---- table ---------------------------------------------------
+        // A row only becomes a table if the line under it is an alignment
+        // row; otherwise it is a paragraph that happens to contain pipes.
+        if let (Some(header), Some(align)) = (
+            table_cells(line),
+            lines.get(i + 1).and_then(|l| table_alignment(l)),
+        ) {
+            i += 2;
+            let mut rows = Vec::new();
+            while i < lines.len() {
+                match table_cells(&lines[i]) {
+                    Some(cells) if !lines[i].trim().is_empty() => {
+                        rows.push(cells.iter().map(|c| inline_spans(c)).collect());
+                        i += 1;
+                    }
+                    _ => break,
+                }
+            }
+            blocks.push(Block::Table {
+                align,
+                header: header.iter().map(|c| inline_spans(c)).collect(),
+                rows,
+            });
+            continue;
+        }
+
+        // ---- quote ---------------------------------------------------
+        if trimmed.starts_with('>') {
+            let mut body = Vec::new();
+            while i < lines.len() && lines[i].trim_start().starts_with('>') {
+                let text = lines[i].trim_start().trim_start_matches('>').trim_start();
+                body.push(inline_spans(text));
+                i += 1;
+            }
+            blocks.push(Block::Quote(body));
+            continue;
+        }
+
+        // ---- list ----------------------------------------------------
+        if item_marker(line).is_some() {
+            let mut items = Vec::new();
+            while i < lines.len() {
+                let Some((marker, used)) = item_marker(&lines[i]) else {
+                    break;
+                };
+                items.push(Item {
+                    marker,
+                    depth: indent_of(&lines[i]) / 2,
+                    spans: inline_spans(lines[i][used..].trim()),
+                });
+                i += 1;
+            }
+            blocks.push(Block::List(items));
+            continue;
+        }
+
+        // ---- paragraph -----------------------------------------------
+        // Consecutive plain lines are one paragraph: a hard wrap in the
+        // source is not a line break in the output.
+        let mut text = String::new();
+        while i < lines.len() {
+            let l = &lines[i];
+            if l.trim().is_empty()
+                || is_fence(l)
+                || is_rule(l)
+                || item_marker(l).is_some()
+                || l.trim_start().starts_with('>')
+                || leading_run(l.trim(), '#').is_some_and(|n| n <= 6)
+            {
+                break;
+            }
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(l.trim());
+            i += 1;
+        }
+        if !text.is_empty() {
+            blocks.push(Block::Paragraph(inline_spans(&text)));
+        }
+    }
+
+    blocks
+}

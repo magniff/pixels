@@ -6,9 +6,9 @@
 
 use std::time::Instant;
 
+use demo::{frame, theme, Demo};
 use pixui::app::blit;
 use pixui::{palette, Canvas, Input, Point, Ui, UiState};
-use pixui_demo::{frame, theme, Demo};
 
 const ITERS: u32 = 600;
 

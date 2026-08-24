@@ -11,8 +11,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
+use notes::{frame, theme, Notes};
 use pixui::{Canvas, Input, Key, Mods, Point, Theme, Ui, UiState};
-use pixui_notes::{frame, theme, Notes};
 
 /// One capture: a name, keys to type, and how long to let things settle.
 struct Scene {
@@ -73,7 +73,7 @@ fn main() -> std::io::Result<()> {
 
     let scenes = vec![
         Scene {
-            name: "01-editor",
+            name: "editor",
             script: vec![],
             mouse: Point::new(430, 120),
             click_first: false,
@@ -83,7 +83,7 @@ fn main() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
-            name: "02-insert",
+            name: "insert",
             script: [keys("Go"), keys("A new thought, typed in insert mode.")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -93,7 +93,7 @@ fn main() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
-            name: "03-visual",
+            name: "visual",
             script: keys("jjjvwwwl"),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -103,7 +103,7 @@ fn main() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
-            name: "04-command",
+            name: "command",
             script: keys(":w notes-are-files"),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -113,7 +113,7 @@ fn main() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
-            name: "05-open-dialog",
+            name: "dialog-open",
             script: [keys(":e"), keys("\n"), keys("jj")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -123,7 +123,7 @@ fn main() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
-            name: "06-save-dialog",
+            name: "dialog-save",
             script: [keys(":new"), keys("\n"), keys(":w"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -135,7 +135,7 @@ fn main() -> std::io::Result<()> {
         // The same app on a larger window. Under `Scaling::Adaptive` a resize
         // produces exactly this: the same pixel size, with more room in it.
         Scene {
-            name: "07-resized",
+            name: "resized",
             script: vec![],
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -146,7 +146,7 @@ fn main() -> std::io::Result<()> {
         },
         // Search hits highlighted, with the pointer over the divider.
         Scene {
-            name: "10-search",
+            name: "search",
             script: keys("/pixui\n"),
             mouse: Point::new(153, 200),
             click_first: false,
@@ -157,7 +157,7 @@ fn main() -> std::io::Result<()> {
         },
         // Typing in the sidebar filter narrows the list live.
         Scene {
-            name: "11-filter",
+            name: "filter",
             script: keys("export"),
             mouse: Point::new(80, 44),
             click_first: true,
@@ -166,9 +166,54 @@ fn main() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
+        // The rendered view of the welcome note.
+        Scene {
+            name: "preview",
+            script: [keys(":preview"), keys("\n")].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 30,
+            canvas: (768, 470),
+        },
+        // The rendered view of the note with a table and a code block.
+        Scene {
+            name: "preview-table",
+            script: [
+                keys(":e vim-keys.md"),
+                keys("\n"),
+                keys(":preview"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 30,
+            canvas: (768, 470),
+        },
+        // Task list items and a fenced code block.
+        Scene {
+            name: "preview-tasks",
+            script: [
+                keys(":e ideas.md"),
+                keys("\n"),
+                keys(":preview"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            settle: 30,
+            canvas: (768, 470),
+        },
         // Double-clicking a note in the drawer renames it in place.
         Scene {
-            name: "12-rename",
+            name: "rename",
             script: keys("about-the-toolkit"),
             mouse: Point::new(80, 118),
             click_first: true,
@@ -179,7 +224,7 @@ fn main() -> std::io::Result<()> {
         },
         // Dragging in the editor selects, as a mouse-driven visual mode.
         Scene {
-            name: "13-drag-select",
+            name: "drag-select",
             script: vec![],
             mouse: Point::new(340, 43),
             click_first: false,
@@ -190,7 +235,7 @@ fn main() -> std::io::Result<()> {
         },
         // A blockwise selection over the list items.
         Scene {
-            name: "09-visual-block",
+            name: "visual-block",
             script: [keys("11G"), ctrl('v'), keys("jjj"), keys("llllllll")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -201,7 +246,7 @@ fn main() -> std::io::Result<()> {
         },
         // A text object mid-flight: `ci"` inside a quoted span.
         Scene {
-            name: "08-text-object",
+            name: "text-object",
             script: [keys("GA \"quoted words\" here\x1b"), keys("hhhhhhci\"")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -212,7 +257,7 @@ fn main() -> std::io::Result<()> {
         },
     ];
 
-    std::fs::create_dir_all("snapshots")?;
+    std::fs::create_dir_all("screenshots")?;
 
     for scene in &scenes {
         // A fresh vault and a fresh UI per scene keeps them independent.
@@ -304,7 +349,7 @@ fn main() -> std::io::Result<()> {
             input.begin_frame();
         }
 
-        let path = format!("snapshots/notes-{}.ppm", scene.name);
+        let path = format!("screenshots/{}.ppm", scene.name);
         write_ppm(&path, &canvas, 2)?;
         println!("wrote {path}");
     }

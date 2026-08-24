@@ -21,6 +21,7 @@
 
 pub mod dialog;
 pub mod markdown;
+pub mod render;
 pub mod text;
 pub mod vim;
 
@@ -91,6 +92,8 @@ pub struct Notes {
     pub filter: String,
     /// Where a pointer drag in the editor started, while it is in progress.
     pub drag_anchor: Option<text::Cursor>,
+    /// Which editor tab is showing: 0 the source, 1 the rendering.
+    pub editor_tab: usize,
     /// A note being renamed in place: which one, and the name so far.
     pub renaming: Option<(usize, String)>,
     /// Set on the frame a rename begins, to move focus into its field.
@@ -151,6 +154,7 @@ impl Notes {
             scroll: 0,
             filter: String::new(),
             drag_anchor: None,
+            editor_tab: 0,
             renaming: None,
             focus_rename: false,
             sidebar_w: None,
@@ -248,6 +252,14 @@ impl Notes {
                     let path = self.notes_dir.join(arg);
                     self.open_path(&path);
                 }
+            }
+            "preview" | "p" => {
+                self.editor_tab = 1;
+                self.status = "PREVIEW".into();
+            }
+            "source" | "s" | "edit!" => {
+                self.editor_tab = 0;
+                self.status = "SOURCE".into();
             }
             "q" | "close" => self.close_current(),
             "qa" | "quit" => ui.request_quit(),
@@ -409,7 +421,17 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             app.sidebar_w = Some(width);
         }
         draw_sidebar(ui, side.inset(5), app);
-        draw_editor(ui, main.inset_xy(0, 5), app);
+
+        // The two views of the same note: its source, and what it means.
+        let pane = main.inset_xy(0, 5);
+        let (tabs, content) = pane.split_top(16);
+        let strip = Rect::new(tabs.x, tabs.y, 150, 14);
+        ui.segmented_at("view", strip, &["SOURCE", "PREVIEW"], &mut app.editor_tab);
+        if app.editor_tab == 0 {
+            draw_editor(ui, content, app);
+        } else {
+            draw_preview(ui, content, app);
+        }
         draw_statusbar(ui, statusbar, app);
     });
 
@@ -694,6 +716,24 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes) {
                 app.dialog = Some(FileDialog::new(DialogKind::Open, &app.notes_dir, ""));
             }
         });
+    });
+}
+
+// ------------------------------------------------------------------- preview
+
+fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) {
+    let th = *ui.theme;
+    let area = Rect::new(rect.x, rect.y, rect.w - 5, rect.h);
+    ui.canvas.box_chamfer(area, th.well, th.well_border, 2);
+
+    let inner = area.inset(6);
+    // Parsed every frame. A note is a few kilobytes and the parse is a linear
+    // scan, so caching it would buy nothing and could go stale.
+    let blocks = markdown::parse(app.note().buffer.lines());
+    // The scroll area keeps a gutter for its bar; the document gets the rest.
+    let width = inner.w - 12;
+    ui.scroll_area(inner, "preview", |ui| {
+        render::draw_document(ui, &blocks, width);
     });
 }
 

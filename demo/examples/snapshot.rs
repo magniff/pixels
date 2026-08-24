@@ -12,8 +12,8 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
+use demo::{frame, theme, Demo};
 use pixui::{Canvas, Input, Point, Theme, Ui, UiState};
-use pixui_demo::{frame, theme, Demo};
 
 /// One thing to render: a name, some state tweaks, and a synthetic pointer.
 struct Scene {
@@ -31,17 +31,17 @@ struct Scene {
 fn main() -> std::io::Result<()> {
     #[rustfmt::skip]
     let scenes = [
-        Scene { name: "01-widgets",    tab: 0, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 90 },
-        Scene { name: "02-hover",      tab: 0, dark: false, mouse: Point::new(60, 98),   down: false, wheel:  0.0, settle: 90 },
-        Scene { name: "03-press",      tab: 0, dark: false, mouse: Point::new(60, 98),   down: true,  wheel:  0.0, settle: 90 },
-        Scene { name: "04-scroll-top", tab: 1, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 60 },
-        Scene { name: "05-scroll-mid", tab: 1, dark: false, mouse: Point::new(180, 120), down: false, wheel: -9.0, settle: 90 },
-        Scene { name: "06-palette",    tab: 2, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 40 },
-        Scene { name: "07-about",      tab: 3, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 40 },
-        Scene { name: "08-midnight",   tab: 1, dark: true,  mouse: Point::new(180, 120), down: false, wheel: -5.0, settle: 90 },
+        Scene { name: "demo-widgets",    tab: 0, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 90 },
+        Scene { name: "demo-hover",      tab: 0, dark: false, mouse: Point::new(60, 98),   down: false, wheel:  0.0, settle: 90 },
+        Scene { name: "demo-press",      tab: 0, dark: false, mouse: Point::new(60, 98),   down: true,  wheel:  0.0, settle: 90 },
+        Scene { name: "demo-scroll", tab: 1, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 60 },
+        Scene { name: "demo-scroll-mid", tab: 1, dark: false, mouse: Point::new(180, 120), down: false, wheel: -9.0, settle: 90 },
+        Scene { name: "demo-palette",    tab: 2, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 40 },
+        Scene { name: "demo-about",      tab: 3, dark: false, mouse: Point::new(-9, -9),   down: false, wheel:  0.0, settle: 40 },
+        Scene { name: "demo-midnight",   tab: 1, dark: true,  mouse: Point::new(180, 120), down: false, wheel: -5.0, settle: 90 },
     ];
 
-    std::fs::create_dir_all("snapshots")?;
+    std::fs::create_dir_all("screenshots")?;
 
     for scene in &scenes {
         let mut canvas = Canvas::new(384, 240);
@@ -92,7 +92,7 @@ fn main() -> std::io::Result<()> {
             input.begin_frame();
         }
 
-        let path = format!("snapshots/{}.ppm", scene.name);
+        let path = format!("screenshots/{}.ppm", scene.name);
         write_ppm(&path, &canvas, 3)?;
         println!("wrote {path}");
     }

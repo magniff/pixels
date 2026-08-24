@@ -5,10 +5,10 @@
 //! separate from the drawing so that `dw` can be asserted on rather than
 //! eyeballed.
 
+use notes::markdown::{self, Tok};
+use notes::text::{Buffer, Cursor};
+use notes::vim::{self, Mode, Selection, Vim, VimEvent, VisualKind};
 use pixui::{Key, Mods};
-use pixui_notes::markdown::{self, Tok};
-use pixui_notes::text::{Buffer, Cursor};
-use pixui_notes::vim::{self, Mode, Selection, Vim, VimEvent, VisualKind};
 
 /// Type a sequence of keys, as a user would.
 fn press(vim: &mut Vim, buf: &mut Buffer, s: &str) -> Vec<VimEvent> {
@@ -637,7 +637,7 @@ fn the_window_is_configured_to_grow_rather_than_magnify() {
     // Opting into adaptive scaling is a single builder call that is invisible
     // when missing until someone drags a window edge and the whole UI jumps a
     // size. Assert it rather than trusting it.
-    let config = pixui_notes::config();
+    let config = notes::config();
     assert_eq!(config.scaling, pixui::Scaling::Adaptive);
     // 1.5 logical points resolves to 3 physical pixels on a 2x display, which
     // no whole number of logical points can name.
@@ -1074,8 +1074,8 @@ fn a_find_does_not_run_off_the_line() {
 
 // -------------------------------------------------------------- note filter
 
-fn note(body: &str, path: Option<&str>) -> pixui_notes::Note {
-    pixui_notes::Note {
+fn note(body: &str, path: Option<&str>) -> notes::Note {
+    notes::Note {
         path: path.map(std::path::PathBuf::from),
         buffer: Buffer::from_text(body),
     }
@@ -1084,33 +1084,33 @@ fn note(body: &str, path: Option<&str>) -> pixui_notes::Note {
 #[test]
 fn an_empty_filter_keeps_everything() {
     let n = note("# Title\n\nbody", Some("a.md"));
-    assert!(pixui_notes::note_matches(&n, ""));
+    assert!(notes::note_matches(&n, ""));
 }
 
 #[test]
 fn the_filter_looks_at_the_title_the_filename_and_the_body() {
     let n = note("# Shopping\n\nmilk and honey", Some("groceries.md"));
-    assert!(pixui_notes::note_matches(&n, "shopping"), "the title");
-    assert!(pixui_notes::note_matches(&n, "groceries"), "the filename");
+    assert!(notes::note_matches(&n, "shopping"), "the title");
+    assert!(notes::note_matches(&n, "groceries"), "the filename");
     assert!(
-        pixui_notes::note_matches(&n, "honey"),
+        notes::note_matches(&n, "honey"),
         "and the body — what you half-remember is rarely in the title"
     );
-    assert!(!pixui_notes::note_matches(&n, "bicycle"));
+    assert!(!notes::note_matches(&n, "bicycle"));
 }
 
 #[test]
 fn the_filter_ignores_case() {
     let n = note("# Vim Keys\n\nMotions", Some("vim-keys.md"));
-    assert!(pixui_notes::note_matches(&n, "vim"));
-    assert!(pixui_notes::note_matches(&n, "motions"));
+    assert!(notes::note_matches(&n, "vim"));
+    assert!(notes::note_matches(&n, "motions"));
 }
 
 #[test]
 fn a_note_with_no_file_still_filters_on_its_text() {
     let n = note("scratch thoughts", None);
-    assert!(pixui_notes::note_matches(&n, "thoughts"));
-    assert!(!pixui_notes::note_matches(&n, "untitled"));
+    assert!(notes::note_matches(&n, "thoughts"));
+    assert!(!notes::note_matches(&n, "untitled"));
 }
 
 // -------------------------------------------------------------------- rename
@@ -1130,7 +1130,7 @@ fn vault(tag: &str) -> std::path::PathBuf {
 #[test]
 fn renaming_a_note_moves_its_file() {
     let dir = vault("moves");
-    let mut app = pixui_notes::Notes::open(dir.clone());
+    let mut app = notes::Notes::open(dir.clone());
     let i = app
         .notes
         .iter()
@@ -1149,7 +1149,7 @@ fn renaming_a_note_moves_its_file() {
 #[test]
 fn renaming_onto_an_existing_note_refuses() {
     let dir = vault("collides");
-    let mut app = pixui_notes::Notes::open(dir.clone());
+    let mut app = notes::Notes::open(dir.clone());
     let i = app
         .notes
         .iter()
@@ -1169,7 +1169,7 @@ fn renaming_onto_an_existing_note_refuses() {
 #[test]
 fn an_empty_name_is_rejected() {
     let dir = vault("empty");
-    let mut app = pixui_notes::Notes::open(dir);
+    let mut app = notes::Notes::open(dir);
     let before = app.notes[0].filename();
     app.rename_note(0, "   ");
     assert_eq!(app.notes[0].filename(), before);
@@ -1178,8 +1178,8 @@ fn an_empty_name_is_rejected() {
 #[test]
 fn naming_a_note_that_was_never_saved_writes_it() {
     let dir = vault("unsaved");
-    let mut app = pixui_notes::Notes::open(dir.clone());
-    app.notes.push(pixui_notes::Note {
+    let mut app = notes::Notes::open(dir.clone());
+    app.notes.push(notes::Note {
         path: None,
         buffer: Buffer::from_text("scratch"),
     });
@@ -1195,4 +1195,198 @@ fn naming_a_note_that_was_never_saved_writes_it() {
         "scratch"
     );
     assert!(!app.notes[i].buffer.dirty, "and it counts as saved");
+}
+
+// ----------------------------------------------------------- document parser
+
+use notes::markdown::{Block, CellAlign, Marker};
+
+fn doc(text: &str) -> Vec<Block> {
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    notes::markdown::parse(&lines)
+}
+
+/// The plain text of a run of spans, with the markup already removed.
+fn flat(spans: &[notes::markdown::Span]) -> String {
+    spans.iter().map(|s| s.text.as_str()).collect()
+}
+
+#[test]
+fn headings_carry_their_level() {
+    let blocks = doc("# One\n\n### Three");
+    match (&blocks[0], &blocks[1]) {
+        (
+            Block::Heading {
+                level: a,
+                spans: s1,
+            },
+            Block::Heading {
+                level: b,
+                spans: s2,
+            },
+        ) => {
+            assert_eq!((*a, *b), (1, 3));
+            assert_eq!(flat(s1), "One");
+            assert_eq!(flat(s2), "Three");
+        }
+        other => panic!("expected two headings, got {other:?}"),
+    }
+}
+
+#[test]
+fn consecutive_lines_are_one_paragraph() {
+    // A hard wrap in the source is not a line break in the output; that is the
+    // whole difference between highlighting lines and rendering a document.
+    let blocks = doc("one line\nand another\n\nseparate");
+    assert_eq!(blocks.len(), 2);
+    match &blocks[0] {
+        Block::Paragraph(spans) => assert_eq!(flat(spans), "one line and another"),
+        other => panic!("expected a paragraph, got {other:?}"),
+    }
+}
+
+#[test]
+fn rendered_spans_drop_the_markup_but_keep_the_emphasis() {
+    let blocks = doc("a **bold** and `code` and [link](x.md)");
+    let Block::Paragraph(spans) = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(
+        flat(spans),
+        "a bold and code and link",
+        "the asterisks, backticks and target are instructions, not text"
+    );
+    assert!(spans.iter().any(|s| s.bold && s.text == "bold"));
+}
+
+#[test]
+fn lists_capture_their_markers_and_depth() {
+    let blocks = doc("- one\n- two\n  - nested\n3. third");
+    let Block::List(items) = &blocks[0] else {
+        panic!("expected a list")
+    };
+    assert_eq!(items.len(), 4);
+    assert_eq!(items[0].marker, Marker::Bullet);
+    assert_eq!(items[0].depth, 0);
+    assert_eq!(items[2].depth, 1, "two spaces of indent is one level");
+    assert_eq!(items[3].marker, Marker::Number(3));
+    assert_eq!(flat(&items[2].spans), "nested");
+}
+
+#[test]
+fn task_items_are_recognised_either_way() {
+    let blocks = doc("- [ ] todo\n- [x] done");
+    let Block::List(items) = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(items[0].marker, Marker::Task(false));
+    assert_eq!(items[1].marker, Marker::Task(true));
+    assert_eq!(flat(&items[0].spans), "todo");
+}
+
+#[test]
+fn a_fence_keeps_its_language_and_its_lines_verbatim() {
+    let blocks = doc("```rust\nfn main() {}\n    indented\n```");
+    match &blocks[0] {
+        Block::Code { lang, lines } => {
+            assert_eq!(lang, "rust");
+            assert_eq!(lines, &["fn main() {}", "    indented"]);
+        }
+        other => panic!("expected code, got {other:?}"),
+    }
+}
+
+#[test]
+fn markup_inside_a_fence_is_left_alone() {
+    let blocks = doc("```\n# not a heading\n- not a list\n```");
+    let Block::Code { lines, .. } = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(lines, &["# not a heading", "- not a list"]);
+}
+
+#[test]
+fn quotes_gather_their_consecutive_lines() {
+    let blocks = doc("> first\n> second\n\nafter");
+    match &blocks[0] {
+        Block::Quote(lines) => {
+            assert_eq!(lines.len(), 2);
+            assert_eq!(flat(&lines[1]), "second");
+        }
+        other => panic!("expected a quote, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_table_needs_its_alignment_row() {
+    let blocks = doc("| key | moves |\n| --- | ----: |\n| h | left |\n| j | down |");
+    match &blocks[0] {
+        Block::Table {
+            align,
+            header,
+            rows,
+        } => {
+            assert_eq!(align, &[CellAlign::Left, CellAlign::Right]);
+            assert_eq!(flat(&header[0]), "key");
+            assert_eq!(rows.len(), 2);
+            assert_eq!(flat(&rows[1][1]), "down");
+        }
+        other => panic!("expected a table, got {other:?}"),
+    }
+}
+
+#[test]
+fn pipes_without_an_alignment_row_are_just_prose() {
+    let blocks = doc("this | that | the other");
+    assert!(
+        matches!(blocks[0], Block::Paragraph(_)),
+        "a sentence containing pipes is not a table"
+    );
+}
+
+#[test]
+fn centre_alignment_is_read_from_the_colons() {
+    let blocks = doc("| a |\n| :-: |\n| x |");
+    let Block::Table { align, .. } = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(align, &[CellAlign::Center]);
+}
+
+#[test]
+fn rules_are_recognised_and_are_not_headings() {
+    let blocks = doc("above\n\n---\n\nbelow");
+    assert!(matches!(blocks[1], Block::Rule));
+    assert_eq!(blocks.len(), 3);
+}
+
+#[test]
+fn an_empty_document_parses_to_nothing() {
+    assert!(doc("").is_empty());
+    assert!(doc("\n\n   \n").is_empty());
+}
+
+#[test]
+fn a_table_sizes_to_its_content_until_it_cannot() {
+    let cell = |s: &str| {
+        vec![notes::markdown::Span {
+            text: s.into(),
+            tok: notes::markdown::Tok::Text,
+            bold: false,
+        }]
+    };
+    let header = vec![cell("ab"), cell("cd")];
+    let rows: Vec<Vec<_>> = vec![];
+
+    let roomy = notes::render::column_widths(&header, &rows, 4000);
+    assert!(
+        roomy.iter().sum::<i32>() < 200,
+        "a small table should not stretch to fill"
+    );
+
+    let cramped = notes::render::column_widths(&header, &rows, 40);
+    assert!(
+        cramped.iter().sum::<i32>() <= 40,
+        "and should shrink when it must"
+    );
 }

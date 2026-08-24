@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use pixui_notes::{config, frame, Notes};
+use notes::{config, frame, Notes};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Notes live in ./notes by default; point PIXUI_NOTES_DIR somewhere else to

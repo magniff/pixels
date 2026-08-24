@@ -1,7 +1,7 @@
 //! Entry point. See `lib.rs` for the actual application.
 
+use demo::{frame, theme, Demo};
 use pixui::Config;
-use pixui_demo::{frame, theme, Demo};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     pixui::run(

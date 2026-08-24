@@ -1,5 +1,5 @@
 [package]
-name = "pixui-demo"
+name = "demo"
 description = "Demo application showing off the pixui toolkit. Uses only the public pixui API."
 version.workspace = true
 edition.workspace = true

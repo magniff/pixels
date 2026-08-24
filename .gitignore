@@ -2,8 +2,8 @@
 # own crate as the working directory, so a relative path can create a nested one.
 target/
 
-# Generated locally by the snapshot examples; regenerate rather than commit.
-/snapshots
+# Screenshots are committed as PNG; the intermediate PPMs are not.
+*.ppm
 
-# Seeded at runtime by pixui-notes: a user's vault, not source.
+# Seeded at runtime by the app: a user's notes, not source.
 /notes

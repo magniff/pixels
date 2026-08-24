@@ -1,6 +1,19 @@
+# The note editor is the root package: `cargo run` at the top of this repo
+# starts it. `pixui`, the toolkit it is drawn with, is a path dependency —
+# an implementation detail of this app rather than the point of the repo.
+[package]
+name = "notes"
+description = "A markdown note editor with vim keys, drawn one pixel at a time."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pixui = { path = "pixui", features = ["gpu"] }
+
 [workspace]
 resolver = "2"
-members = ["crates/pixui", "crates/pixui-demo", "crates/pixui-notes"]
+members = ["pixui", "demo"]
 
 [workspace.package]
 version = "0.1.0"
