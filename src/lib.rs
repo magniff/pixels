@@ -291,7 +291,8 @@ impl Notes {
                 self.status = "MOTIONS hjkl w b e 0 $ gg G f t ; , | EDIT i a o x dd cw \
                      yy p u C-r | OBJECTS diw ciw ci\" di( dip | VISUAL v V C-v then \
                      d y c o | FIND / ? n N * | MOUSE click to place, drag to select, \
-                     double-click a note to rename | :w :e :q :qa"
+                     double-click a note to rename | VIEWS cmd-1 SOURCE cmd-2 PREVIEW \
+                     | :w :e :q :qa"
                     .into();
             }
             "" => {}
@@ -516,6 +517,19 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
                 (app.current + n - 1) % n
             };
             app.scroll = 0;
+            continue;
+        }
+        // Cmd-1 and Cmd-2 pick a view. Held down rather than bare digits,
+        // because bare digits are vim's counts — `2j` has to keep meaning two
+        // lines down, and `1` is the start of `11G`.
+        if mods.cmd && matches!(key, Key::Char('1') | Key::Char('2')) {
+            app.editor_tab = usize::from(key == Key::Char('2'));
+            app.status = if app.editor_tab == 0 {
+                "SOURCE"
+            } else {
+                "PREVIEW"
+            }
+            .into();
             continue;
         }
         let i = app.current.min(app.notes.len() - 1);

@@ -21,8 +21,10 @@ The source view highlights markdown as you type it, and hands fenced code to
 a real grammar — [syntect](https://github.com/trishume/syntect)'s, remapped
 onto the sixteen colours here rather than dragging its own theme in. The
 preview renders the document: paragraphs reflow, markup disappears, tables
-become tables. `:preview` and `:source`, or click the tabs — `<>` for the
-source, a folded page for the rendering.
+become tables. Switch with `cmd-1` and `cmd-2` (Ctrl off macOS), with
+`:preview` and `:source`, or by clicking the tabs — `<>` for the source, a
+folded page for the rendering. The shortcut takes a modifier because bare
+digits are vim's counts, and `2j` has to keep meaning two lines down.
 
 | source | preview |
 |---|---|
