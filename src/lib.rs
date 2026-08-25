@@ -16,6 +16,7 @@
 //! `std::fs` appears in `dialog.rs` and nowhere in `pixui`.
 
 pub mod dialog;
+pub mod indent;
 pub mod markdown;
 pub mod render;
 pub mod shots;
@@ -123,6 +124,9 @@ pub struct Notes {
     /// Where the preview was left, so switching tabs comes back to it rather
     /// than to the top.
     pub preview_scroll: pixui::ScrollState,
+    /// A source line the preview should bring into view on the next draw,
+    /// which is when the document's heights are known.
+    pub preview_reveal: Option<usize>,
     /// Whether a `g` is waiting for its second half in the preview.
     pub preview_g: bool,
     /// The source view's scrollbar. The scrolling itself lives in `scroll`,
@@ -211,6 +215,7 @@ impl Notes {
             preview_scroll: pixui::ScrollState::default(),
             editor_scroll: pixui::ScrollState::default(),
             preview_g: false,
+            preview_reveal: None,
             tab_shown: 0,
             tab_anim: 0.0,
             fade: pixui::Canvas::new(1, 1),
@@ -717,7 +722,11 @@ fn handle_search_keys(ui: &mut Ui, app: &mut Notes) {
     // would empty and be abandoned in the same keystroke, and there would be
     // no way to clear a search you are still working on.
     ui.capture_keyboard();
-    if ui.input.key_pressed(Key::Down) {
+    // Down steps into the results; Enter says the same thing with the key the
+    // hand is already on after typing. Both do nothing when nothing matched —
+    // there is no first result to step onto, and dropping the keyboard into an
+    // empty list would strand it.
+    if ui.input.key_pressed(Key::Down) || ui.input.key_pressed(Key::Enter) {
         app.enter_list();
     } else if ui.input.key_pressed(Key::Escape) {
         // Clear first, leave second. A search you are still reading is worth
@@ -764,14 +773,25 @@ fn handle_preview_keys(ui: &mut Ui, app: &mut Notes) {
         if mods.cmd && !mods.ctrl {
             continue;
         }
-        // `:` still opens the command line, and once open it owns the keys:
-        // writing a note is about the note, not about which view of it happens
-        // to be showing.
-        if app.vim.mode == Mode::Command || key == Key::Char(':') {
+        // Two things belong to the note rather than to the view of it, and both
+        // are handed to vim whole: the command line, and the search. A search
+        // lands on a source line, and the preview scrolls to the block that
+        // line was parsed into.
+        let searching = matches!(app.vim.mode, Mode::Search { .. });
+        let steps = matches!(key, Key::Char('n') | Key::Char('N'));
+        let opens = matches!(key, Key::Char(':') | Key::Char('/') | Key::Char('?'));
+        if searching || steps || opens || app.vim.mode == Mode::Command {
             let i = app.current.min(app.notes.len() - 1);
             let event = app.vim.handle(&mut app.notes[i].buffer, key, mods);
             if let Some(VimEvent::Command(cmd)) = event {
                 app.run_command(&cmd, ui);
+            }
+            // A finished search has put the cursor on its hit. Not while the
+            // pattern is still being typed, and not for the command line,
+            // which moves nothing and should not move the page either.
+            let landed = matches!(key, Key::Enter) && searching;
+            if landed || steps {
+                app.preview_reveal = Some(app.notes[i].buffer.cursor.line);
             }
             continue;
         }
@@ -1174,12 +1194,24 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let width = inner.w - Ui::SCROLL_GUTTER;
     // The app holds the scroll position, so it survives the tab being hidden.
     let mut scroll = app.preview_scroll;
-    let mut clicked = None;
+    let req = render::Request {
+        width,
+        // The same pattern the source view lights up, so a search made in
+        // either view is answered in both.
+        search: app.vim.search_pattern().map(str::to_owned),
+        reveal: app.preview_reveal.take(),
+    };
+    let mut drawn = render::Drawn::default();
     ui.scroll_area_with(inner, "preview", &mut scroll, |ui| {
-        clicked = render::draw_document(ui, &blocks, width);
+        drawn = render::draw_document(ui, &blocks, req);
     });
+    if let Some(y) = drawn.reveal {
+        // A couple of rows of lead-in, so the hit lands inside the page rather
+        // than jammed against its top edge.
+        scroll.target = (y - pixui::font::LINE_H * 2).max(0) as f32;
+    }
     app.preview_scroll = scroll;
-    if let Some(href) = clicked {
+    if let Some(href) = drawn.clicked {
         app.follow_link(&href);
     }
     area.inset(1)

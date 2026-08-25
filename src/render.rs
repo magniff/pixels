@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use pixui::{font, icon, palette, Color, Cursor, Rect, Theme, Ui};
 
 use crate::markdown::{slice_spans, wrap_ranges};
-use crate::markdown::{Block, CellAlign, Item, Marker, Span, Tok};
+use crate::markdown::{Block, CellAlign, Item, Located, Marker, Span, Tok};
 
 const LINE_H: i32 = font::LINE_H;
 const ADVANCE: i32 = font::ADVANCE;
@@ -83,6 +83,10 @@ fn heading_style(th: &Theme, level: u8) -> Heading {
 /// Everything the layout needs that does not change between blocks.
 struct Ctx {
     th: Theme,
+    /// Left edge of the column the source lines are numbered down. Blocks draw
+    /// their own numbers into it, because only a block knows which of its rows
+    /// are rows somebody typed: a list item is one, a wrapped line is not.
+    gutter: std::cell::Cell<i32>,
     /// Width available for content, in pixels. A cell because a quote lends
     /// its contents a narrower one and hands it back, and everything below is
     /// reached through a shared reference.
@@ -91,6 +95,15 @@ struct Ctx {
     /// the quieter ink a quote has always had. Only prose: a heading inside a
     /// quote is still a heading, and code inside one is still code.
     quoted: std::cell::Cell<bool>,
+    /// The pattern the search is highlighting, if there is one. The same one
+    /// the source view lights up: a search is about the note, not about which
+    /// view of it happens to be showing.
+    search: Option<String>,
+    /// The source line the caller wants brought into view, and where the block
+    /// holding it turned out to be. Answered during the draw, because that is
+    /// when the document's heights are known.
+    reveal: Option<usize>,
+    reveal_y: std::cell::Cell<Option<i32>>,
     /// A link activated this frame, on its way back out to the application.
     ///
     /// A cell rather than a return value because a link is found six calls
@@ -113,6 +126,38 @@ impl Ctx {
         let r = f();
         self.width.set(was);
         r
+    }
+}
+
+/// Number one row in the gutter.
+fn number(ui: &mut Ui, ctx: &Ctx, y: i32, line: usize) {
+    let num = format!("{:>3}", line + 1);
+    font::draw_text(
+        ui.canvas,
+        ctx.gutter.get() + 1,
+        y,
+        &num,
+        ctx.th.ink_soft.shade(-0.2),
+    );
+}
+
+/// Light up the search hits in one row of text.
+///
+/// Drawn before the glyphs, and measured in characters, because every run in
+/// this renderer is placed on the same character grid.
+fn highlight_hits(ui: &mut Ui, ctx: &Ctx, x: i32, y: i32, text: &str) {
+    let Some(pattern) = ctx.search.as_deref() else {
+        return;
+    };
+    for (a, b) in crate::vim::matches_in(text, pattern) {
+        let cell = Rect::new(
+            x + a as i32 * ADVANCE - 1,
+            y - 1,
+            (b - a) as i32 * ADVANCE,
+            LINE_H,
+        );
+        ui.canvas
+            .fill_rect(cell, ctx.th.well.lerp(palette::YELLOW, 0.30));
     }
 }
 
@@ -153,6 +198,10 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
 
 /// Draw one wrapped line of runs, positioning by character offset.
 fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
+    if ctx.search.is_some() {
+        let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+        highlight_hits(ui, ctx, x, y, &text);
+    }
     let mut col = 0i32;
     for span in spans {
         let sx = x + col * ADVANCE;
@@ -234,7 +283,7 @@ fn measure(block: &Block, ctx: &Ctx) -> i32 {
         Block::Quote(inner) => {
             let indent = QUOTE_INDENT;
             ctx.narrowed(indent, || {
-                inner.iter().map(|b| measure(b, ctx)).sum::<i32>()
+                inner.iter().map(|(_, b)| measure(b, ctx)).sum::<i32>()
             }) + 4
                 + PARA_GAP
         }
@@ -281,62 +330,78 @@ fn list_indent(items: &[Item], item: &Item) -> i32 {
 /// lines of its own to count — a paragraph is one block however many rows it
 /// wraps into — so the number says where the block *came from*, which is the
 /// only number about a rendered document that means anything.
-pub fn draw_document(ui: &mut Ui, blocks: &[(usize, Block)], width: i32) -> Option<String> {
+pub fn draw_document(ui: &mut Ui, blocks: &[Located], req: Request) -> Drawn {
     let ctx = Ctx {
         th: *ui.theme,
-        width: std::cell::Cell::new(width - crate::GUTTER),
+        gutter: std::cell::Cell::new(0),
+        width: std::cell::Cell::new(req.width - crate::GUTTER),
         quoted: std::cell::Cell::new(false),
+        search: req.search,
+        reveal: req.reveal,
+        reveal_y: std::cell::Cell::new(None),
         clicked: RefCell::new(None),
     };
     if blocks.is_empty() {
         ui.label_dim("  (EMPTY NOTE)");
-        return None;
+        return Drawn::default();
     }
+    // Distance down the document, taken from the rows themselves rather than
+    // from the heights: the layout puts its own gap between them, and adding
+    // that up a second time here is how the two would drift apart.
+    let mut top = None;
     for (line, block) in blocks {
         let h = measure(block, &ctx);
         let row = ui.alloc(h);
+        let top = *top.get_or_insert(row.y);
+        ctx.gutter.set(row.x);
         let body = Rect::new(row.x + crate::GUTTER, row.y, row.w - crate::GUTTER, h);
-        let num = format!("{:>3}", line + 1);
-        font::draw_text(
-            ui.canvas,
-            row.x + 1,
-            body.y + first_row(block, &ctx, h),
-            &num,
-            ctx.th.ink_soft.shade(-0.2),
-        );
-        draw_block(ui, body, block, &ctx);
+        // The block holding a line is the last one that starts at or above it.
+        if ctx.reveal.is_some_and(|want| *line <= want) {
+            ctx.reveal_y.set(Some(row.y - top));
+        }
+        draw_block(ui, body, block, &ctx, *line);
     }
-    ctx.clicked.into_inner()
-}
-
-/// How far below a block's top its first row of text sits.
-///
-/// Kept in step with `draw_block` by hand, for the one thing that has to line
-/// up with the text rather than with the space the block reserves: the number
-/// in the gutter beside it.
-fn first_row(block: &Block, ctx: &Ctx, h: i32) -> i32 {
-    match block {
-        Block::Heading { level, .. } => heading_style(&ctx.th, *level).top,
-        Block::Quote(_) => 2,
-        Block::Code { .. } => 4,
-        Block::Table { .. } => 3,
-        // A rule is all one gesture; the number sits level with it.
-        Block::Rule => h / 2 - 3,
-        _ => 0,
+    Drawn {
+        clicked: ctx.clicked.into_inner(),
+        reveal: ctx.reveal_y.get(),
     }
 }
 
-fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
+/// What the caller wants drawn, and what it wants to know.
+pub struct Request {
+    /// Width available to the document, gutter included.
+    pub width: i32,
+    /// A pattern to light up wherever it appears in the rendered text.
+    pub search: Option<String>,
+    /// A source line to report the position of, for scrolling to it.
+    pub reveal: Option<usize>,
+}
+
+/// What came back out of a draw.
+#[derive(Default)]
+pub struct Drawn {
+    /// A link the pointer activated.
+    pub clicked: Option<String>,
+    /// How far down the document the requested line's block begins.
+    pub reveal: Option<i32>,
+}
+
+fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx, line: usize) {
     let th = ctx.th;
     match block {
         Block::Heading { level, spans } => {
             let style = heading_style(&th, *level);
             let y = rect.y + style.top;
+            number(ui, ctx, y, line);
             let mut widest = 0i32;
-            for (i, line) in wrap(spans, ctx.cols(0)).iter().enumerate() {
+            for (i, row) in wrap(spans, ctx.cols(0)).iter().enumerate() {
                 let ly = y + i as i32 * LINE_H;
+                if ctx.search.is_some() {
+                    let text: String = row.iter().map(|s| s.text.as_str()).collect();
+                    highlight_hits(ui, ctx, rect.x, ly, &text);
+                }
                 let mut col = 0i32;
-                for span in line {
+                for span in row {
                     let sx = rect.x + col * ADVANCE;
                     // A heading is one weight and one colour, whatever emphasis
                     // the source put inside it.
@@ -359,14 +424,19 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
         }
 
         Block::Paragraph(spans) => {
-            for (i, line) in wrap(spans, ctx.cols(0)).iter().enumerate() {
-                draw_line(ui, rect.x, rect.y + i as i32 * LINE_H, line, ctx);
+            // One number, at the top. A paragraph is not its source lines —
+            // they reflow into however many rows the pane is wide enough for,
+            // and no row below the first is a line anybody typed.
+            number(ui, ctx, rect.y, line);
+            for (i, row) in wrap(spans, ctx.cols(0)).iter().enumerate() {
+                draw_line(ui, rect.x, rect.y + i as i32 * LINE_H, row, ctx);
             }
         }
 
         Block::List(items) => {
             let mut y = rect.y;
             for item in items {
+                number(ui, ctx, y, item.line);
                 let indent = list_indent(items, item);
                 let mx = rect.x + item.depth as i32 * (ADVANCE * 2);
                 match item.marker {
@@ -394,8 +464,8 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
                         }
                     }
                 }
-                for (i, line) in wrap(&item.spans, ctx.cols(indent)).iter().enumerate() {
-                    draw_line(ui, rect.x + indent, y + i as i32 * LINE_H, line, ctx);
+                for (i, row) in wrap(&item.spans, ctx.cols(indent)).iter().enumerate() {
+                    draw_line(ui, rect.x + indent, y + i as i32 * LINE_H, row, ctx);
                 }
                 y += wrap(&item.spans, ctx.cols(indent)).len().max(1) as i32 * LINE_H;
             }
@@ -411,26 +481,35 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
             let was = ctx.quoted.replace(true);
             ctx.narrowed(indent, || {
                 let mut y = rect.y + 2;
-                for block in inner {
+                for (at_line, block) in inner {
                     let h = measure(block, ctx);
                     let at = Rect::new(rect.x + indent, y, rect.w - indent, h);
-                    draw_block(ui, at, block, ctx);
+                    draw_block(ui, at, block, ctx, *at_line);
                     y += h;
                 }
             });
             ctx.quoted.set(was);
         }
 
-        Block::Code { lang, lines } => {
+        Block::Code { lang, lines, first } => {
             let slab = Rect::new(rect.x, rect.y, rect.w, rect.h - PARA_GAP);
             ui.canvas.box_chamfer(slab, th.well, th.well_border, 1);
             let highlighted = crate::syntax::highlight(lang, lines);
+            // Every row of a code block is a line of the source, in order and
+            // never re-wrapped, so every one of them can be numbered.
+            for i in 0..highlighted.len() {
+                number(ui, ctx, slab.y + 4 + i as i32 * LINE_H, first + i);
+            }
             ui.clipped(slab.inset(3), |ui| {
                 for (i, spans) in highlighted.iter().enumerate() {
                     // Code is not wrapped: a break inserted into code is a lie
                     // about what the code says. Runs are placed by character
                     // offset for the same reason prose is.
                     let y = slab.y + 4 + i as i32 * LINE_H;
+                    if ctx.search.is_some() {
+                        let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+                        highlight_hits(ui, ctx, slab.x + 4, y, &text);
+                    }
                     let mut col = 0i32;
                     for span in spans {
                         let sx = slab.x + 4 + col * ADVANCE;
@@ -445,10 +524,11 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
             align,
             header,
             rows,
-        } => draw_table(ui, rect, align, header, rows, ctx),
+        } => draw_table(ui, rect, align, header, rows, ctx, line),
 
         Block::Rule => {
             let y = rect.y + rect.h / 2;
+            number(ui, ctx, y - 3, line);
             ui.canvas.hline(rect.x, y, rect.w, th.ink_soft);
             ui.canvas.hline(rect.x, y + 1, rect.w, th.panel.shade(0.4));
         }
@@ -500,6 +580,7 @@ fn draw_table(
     header: &[Vec<Span>],
     rows: &[Vec<Vec<Span>>],
     ctx: &Ctx,
+    line: usize,
 ) {
     let th = ctx.th;
     let widths = column_widths(header, rows, rect.w);
@@ -524,11 +605,13 @@ fn draw_table(
             CellAlign::Right => (w - tw - 4).max(4),
         };
         let color = if bold { th.accent.hi } else { th.ink_light };
+        highlight_hits(ui, ctx, x + ox, y, &text);
         font::draw_text_styled(ui.canvas, x + ox, y, &text, color, bold);
     };
 
     // ---- header ------------------------------------------------------
     let mut y = body.y + 3;
+    number(ui, ctx, y, line);
     let mut x = body.x;
     for (i, cells) in header.iter().enumerate() {
         let w = widths[i];
@@ -548,7 +631,10 @@ fn draw_table(
         .hline(body.x + 1, y - 2, body.w - 2, th.well_border);
 
     // ---- body --------------------------------------------------------
-    for row in rows {
+    // The header is the block's line, the alignment row the one after it, and
+    // the body follows from there — a table's rows are always consecutive.
+    for (r, row) in rows.iter().enumerate() {
+        number(ui, ctx, y, line + 2 + r);
         let mut x = body.x;
         for (i, cells) in row.iter().enumerate().take(widths.len()) {
             let w = widths[i];

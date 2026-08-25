@@ -11,6 +11,7 @@
 
 use pixui::{Key, Mods};
 
+use crate::indent;
 use crate::text::{Buffer, Cursor};
 
 /// Which shape a visual selection takes.
@@ -345,13 +346,37 @@ impl Vim {
                 buf.cursor.col = buf.cursor.col.saturating_sub(1);
                 buf.clamp_cursor(false);
             }
-            Key::Enter => buf.insert_newline(),
+            // A new line inherits where it is: the list it is in, the quote
+            // around that, or the indent of the code it sits inside.
+            Key::Enter => match indent::opened(buf.lines(), buf.cursor.line, buf.cursor.col) {
+                indent::Opened::Plain => buf.insert_newline(),
+                indent::Opened::With(prefix) => {
+                    buf.insert_newline();
+                    buf.insert_str_at(buf.cursor.line, 0, &prefix);
+                    buf.cursor.col = prefix.chars().count();
+                }
+                // The item was empty, so the list is over. The line is emptied
+                // rather than a new one opened: one Enter ends the list, and a
+                // second one is an ordinary blank line.
+                indent::Opened::Ending => {
+                    let line = buf.cursor.line;
+                    buf.delete_range_in_line(line, 0, buf.line_len(line));
+                    buf.cursor.col = 0;
+                }
+            },
             Key::Backspace => buf.backspace(),
             Key::Space => buf.insert_char(' '),
+            // Tab moves the whole line rather than inserting at the caret: in a
+            // document made of nested lists and indented code, one level in or
+            // out is what it is nearly always for.
             Key::Tab => {
-                for _ in 0..2 {
-                    buf.insert_char(' ');
-                }
+                let line = buf.cursor.line;
+                let step = indent::step(buf.lines(), line);
+                let (text, moved) = indent::shifted(buf.line(line), mods.shift, step);
+                buf.delete_range_in_line(line, 0, buf.line_len(line));
+                buf.insert_str_at(line, 0, &text);
+                buf.cursor.col = (buf.cursor.col as i32 + moved).max(0) as usize;
+                buf.clamp_cursor(true);
             }
             Key::Char(c) if !mods.cmd && !mods.ctrl => buf.insert_char(c),
             Key::Left => buf.cursor.col = buf.cursor.col.saturating_sub(1),
@@ -659,14 +684,17 @@ impl Vim {
                 buf.cursor.col = buf.line_len(buf.cursor.line);
                 self.mode = Mode::Insert;
             }
-            'o' => {
+            'o' | 'O' => {
                 buf.checkpoint();
-                buf.open_line(true);
-                self.mode = Mode::Insert;
-            }
-            'O' => {
-                buf.checkpoint();
-                buf.open_line(false);
+                // The line it inherits from is the one you are standing on,
+                // whichever side the new one opens.
+                let from = buf.cursor.line;
+                let carried = indent::opened(buf.lines(), from, usize::MAX);
+                buf.open_line(c == 'o');
+                if let indent::Opened::With(prefix) = carried {
+                    buf.insert_str_at(buf.cursor.line, 0, &prefix);
+                    buf.cursor.col = prefix.chars().count();
+                }
                 self.mode = Mode::Insert;
             }
             'v' => self.enter_visual(buf, VisualKind::Char),

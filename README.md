@@ -70,10 +70,22 @@ scrollbar in the same place, so flipping between them does not shift the page.
 The preview's numbers are the *source* lines its blocks were parsed from — a
 rendering has no lines of its own to count, since a paragraph is one block
 however many rows it wraps into, so the only number that means anything is
-where the block came from. The preview scrolls with the vim motions that move
-a page: `j k`, `Ctrl-d Ctrl-u`, `Ctrl-f Ctrl-b`, `Ctrl-e Ctrl-y`, `gg`, `G`,
-space, and the wheel. The keys that move a caret are not taken, because there
-is no caret there to move.
+where the block came from. Everything that *is* a row somebody typed gets its
+own number: every item of a list, every line of a code block, every row of a
+table, and everything inside a quote. What cannot is a wrapped row and a blank
+line, for the same reason the source view puts a tick rather than a number
+beside a continuation.
+
+The preview scrolls with the vim motions that move a page: `j k`,
+`Ctrl-d Ctrl-u`, `Ctrl-f Ctrl-b`, `Ctrl-e Ctrl-y`, `gg`, `G`, space, and the
+wheel. The keys that move a caret are not taken, because there is no caret
+there to move — except `/`, `n` and `N`, which are vim's search and belong to
+the note rather than to the view of it. A search finds a line in the source,
+scrolls the preview to the block that line was parsed into, and lights up every
+hit in the rendered text; the source view lights up the same pattern, so a
+search made in either view is answered in both.
+
+![a search, answered in the preview](screenshots/preview-search.png)
 
 Headings have six levels and the font has one size, so the ladder is built out
 of everything else: the top three rule themselves off — full width, full width,
@@ -91,7 +103,9 @@ the search box. A ring marks the region that just
 took the keyboard and fades out again; the list's own outline fades in behind
 it. Nothing moves — an arrival cue that travels has to cross whatever chrome
 lies between where it starts and where it stops, and that reads as flicker. In the search box, `Down` steps into the
-results and `Escape` clears the term — a second one leaves. In the list, `j`
+results, and so does `Enter`, which is the key the hand is already on after
+typing; both stay put when nothing matched. `Escape` clears the term — a
+second one leaves. In the list, `j`
 and `k` walk the notes the filter is actually showing, and `Enter` drops back
 into the text. Command specifically,
 not Control — Control is vim's.
@@ -111,6 +125,20 @@ not Control — Control is vim's.
 | **Visual** | `v` charwise, `V` linewise, `Ctrl-v` blockwise; `I`/`A` on a block type once and apply to every row |
 | **Search** | `/` `?`, `n` `N`, `*` for the word under the cursor |
 | **Commands** | `:w`, `:e`, `:q`, `:qa`, `:new`, `:preview`, `:source`, `:help` |
+| **Indenting** | `Tab` a level in, `Shift-Tab` a level out |
+
+A new line inherits where it is. Enter in a list opens the next item already
+marked up — the same bullet, the next number, an unchecked box for a task, at
+the nesting it found — and `o` and `O` do the same. Enter on an item holding
+nothing but its marker takes the marker away instead, because a list you cannot
+leave is worse than one you have to start twice. A quote carries its bar down,
+and a list inside a quote continues as both. Inside a fenced code block the
+markdown rules stop applying and the code's do: the indent carries, a line
+ending in `:` or an opening bracket takes one more level, and a level is four
+spaces rather than two. `Tab` and `Shift-Tab` move the whole line in or out by
+one level, taking the caret with them.
+
+![o on a list item, then Tab](screenshots/auto-indent.png)
 
 Normal mode is *parsed*, not switch-cased, because vim's grammar really is one:
 `[count] operator [count] motion`. Keystrokes accumulate and are re-parsed on
@@ -145,7 +173,7 @@ of the repo, and `pixui/README.md` covers it properly.
 
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 245 tests
+cargo test --workspace                         # 264 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 

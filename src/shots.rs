@@ -68,6 +68,17 @@ fn cmd(c: char) -> Vec<Press> {
     }]
 }
 
+/// Tab, or Shift-Tab — neither of which a character can express.
+fn tab(shift: bool) -> Vec<Press> {
+    vec![Press {
+        key: Key::Tab,
+        mods: Mods {
+            shift,
+            ..Default::default()
+        },
+    }]
+}
+
 /// A Ctrl chord, which a bare character cannot express.
 fn ctrl(c: char) -> Vec<Press> {
     vec![Press {
@@ -240,6 +251,39 @@ pub fn run() -> std::io::Result<()> {
             settle: 20,
             canvas: (768, 470),
         },
+        // `o` on a list item opens the next one already marked up, and Tab
+        // takes it a level in.
+        Scene {
+            name: "auto-indent",
+            script: [
+                keys(":e ideas.md"),
+                keys("\n"),
+                keys("jjjo"),
+                keys("and a nested one"),
+                tab(false),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            settle: 20,
+            canvas: (768, 470),
+        },
+        // Enter in the search box hands the keyboard to the results, on the
+        // first of them.
+        Scene {
+            name: "search-enter",
+            script: [cmd('s'), keys("vim"), keys("\n")].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            settle: 20,
+            canvas: (768, 470),
+        },
         // Caught mid-transition: the two views dissolving into each other.
         Scene {
             name: "tab-fade",
@@ -292,6 +336,28 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: -1.0,
             settle: 30,
+            canvas: (900, 660),
+        },
+        // `/` in the preview is vim's search: it finds the line in the source,
+        // scrolls to the block that line was parsed into, and lights up every
+        // hit in the rendered text.
+        Scene {
+            name: "preview-search",
+            script: [
+                keys(":e markdown-showcase.md"),
+                keys("\n"),
+                keys(":preview"),
+                keys("\n"),
+                keys("/alignment"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            settle: 40,
             canvas: (900, 660),
         },
         // The preview taking the vim motions that move a page: `G` to the end

@@ -1197,6 +1197,164 @@ fn naming_a_note_that_was_never_saved_writes_it() {
     assert!(!app.notes[i].buffer.dirty, "and it counts as saved");
 }
 
+// -------------------------------------------------------------- auto-indent
+
+use notes::indent::{self, Opened};
+
+fn lines_of(text: &str) -> Vec<String> {
+    text.lines().map(str::to_owned).collect()
+}
+
+/// What Enter would open, pressed at the end of the last line.
+fn open_end(text: &str) -> Opened {
+    let lines = lines_of(text);
+    let at = lines.len() - 1;
+    indent::opened(&lines, at, lines[at].chars().count())
+}
+
+#[test]
+fn enter_carries_a_bullet_down() {
+    assert_eq!(open_end("- one"), Opened::With("- ".into()));
+    assert_eq!(open_end("* one"), Opened::With("* ".into()));
+    assert_eq!(open_end("+ one"), Opened::With("+ ".into()));
+}
+
+#[test]
+fn enter_keeps_the_nesting_it_found() {
+    assert_eq!(open_end("- one\n  - nested"), Opened::With("  - ".into()));
+    assert_eq!(
+        open_end("- one\n    - deeper"),
+        Opened::With("    - ".into())
+    );
+}
+
+#[test]
+fn an_ordered_item_counts_on() {
+    assert_eq!(open_end("1. one"), Opened::With("2. ".into()));
+    assert_eq!(open_end("9. nine"), Opened::With("10. ".into()));
+    // A list that changes punctuation halfway down stops being one.
+    assert_eq!(open_end("1) one"), Opened::With("2) ".into()));
+}
+
+#[test]
+fn a_new_task_is_one_you_have_not_done() {
+    assert_eq!(open_end("- [x] done"), Opened::With("- [ ] ".into()));
+    assert_eq!(open_end("- [ ] todo"), Opened::With("- [ ] ".into()));
+}
+
+#[test]
+fn enter_on_an_empty_item_ends_the_list() {
+    assert_eq!(open_end("- one\n- "), Opened::Ending);
+    assert_eq!(open_end("1. "), Opened::Ending);
+    assert_eq!(open_end("- [ ] "), Opened::Ending);
+}
+
+#[test]
+fn a_quote_carries_its_bar_down() {
+    assert_eq!(open_end("> quoted"), Opened::With("> ".into()));
+    assert_eq!(
+        open_end("> - a list in a quote"),
+        Opened::With("> - ".into())
+    );
+    // The list inside ends; the quote around it does not.
+    assert_eq!(open_end("> - "), Opened::With("> ".into()));
+}
+
+#[test]
+fn splitting_a_marker_in_half_does_not_make_two() {
+    let lines = lines_of("- one");
+    assert_eq!(indent::opened(&lines, 0, 0), Opened::Plain);
+    assert_eq!(indent::opened(&lines, 0, 1), Opened::Plain);
+    assert_eq!(indent::opened(&lines, 0, 2), Opened::With("- ".into()));
+}
+
+#[test]
+fn prose_carries_only_its_indent() {
+    assert_eq!(open_end("plain text"), Opened::Plain);
+    assert_eq!(open_end("  hanging text"), Opened::With("  ".into()));
+}
+
+#[test]
+fn inside_a_fence_the_indent_is_the_code_s() {
+    // Markdown's markers mean nothing in here, and four spaces is what code
+    // means by a level.
+    assert_eq!(
+        open_end("```python\ndef f():\n    return 1"),
+        Opened::With("    ".into())
+    );
+    assert_eq!(open_end("```python\ndef f():"), Opened::With("    ".into()));
+    assert_eq!(
+        open_end("```rust\nfn main() {"),
+        Opened::With("    ".into())
+    );
+    assert_eq!(open_end("```rust\nlet x = 1;"), Opened::Plain);
+}
+
+#[test]
+fn a_fence_that_has_closed_is_prose_again() {
+    assert!(indent::in_code(&lines_of("```\ncode\n"), 1));
+    assert!(!indent::in_code(&lines_of("```\ncode\n```\nafter"), 3));
+    assert_eq!(indent::step(&lines_of("```\ncode"), 1), 4);
+    assert_eq!(indent::step(&lines_of("- item"), 0), 2);
+}
+
+#[test]
+fn shifting_moves_the_line_and_says_how_far() {
+    assert_eq!(indent::shifted("item", false, 2), ("  item".into(), 2));
+    assert_eq!(indent::shifted("  item", true, 2), ("item".into(), -2));
+    // Three spaces come all the way back rather than leaving one nobody meant.
+    assert_eq!(indent::shifted("   item", true, 2), (" item".into(), -2));
+    assert_eq!(indent::shifted("item", true, 2), ("item".into(), 0));
+    assert_eq!(indent::shifted("\titem", true, 4), ("item".into(), -1));
+}
+
+#[test]
+fn typing_enter_continues_the_list_for_real() {
+    let (mut v, mut b) = buffer("- one");
+    press(&mut v, &mut b, "A");
+    v.handle(&mut b, Key::Enter, Mods::default());
+    press(&mut v, &mut b, "two");
+    assert_eq!(b.to_text(), "- one\n- two");
+    assert_eq!(b.cursor, Cursor::new(1, 5));
+}
+
+#[test]
+fn a_second_enter_leaves_the_list() {
+    let (mut v, mut b) = buffer("- one");
+    press(&mut v, &mut b, "A");
+    v.handle(&mut b, Key::Enter, Mods::default());
+    v.handle(&mut b, Key::Enter, Mods::default());
+    assert_eq!(b.to_text(), "- one\n", "the marker goes, the line stays");
+    assert_eq!(b.cursor, Cursor::new(1, 0));
+}
+
+#[test]
+fn tab_moves_the_line_a_level_at_a_time() {
+    let (mut v, mut b) = buffer("- one");
+    press(&mut v, &mut b, "A");
+    v.handle(&mut b, Key::Tab, Mods::default());
+    assert_eq!(b.to_text(), "  - one");
+    assert_eq!(b.cursor.col, 7, "the caret travelled with the text");
+    v.handle(
+        &mut b,
+        Key::Tab,
+        Mods {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(b.to_text(), "- one");
+    assert_eq!(b.cursor.col, 5);
+}
+
+#[test]
+fn o_opens_the_next_item_rather_than_a_bare_line() {
+    let (mut v, mut b) = buffer("  - nested\nafter");
+    press(&mut v, &mut b, "o");
+    press(&mut v, &mut b, "next");
+    assert_eq!(b.to_text(), "  - nested\n  - next\nafter");
+}
+
 // ------------------------------------------------------- source line numbers
 
 fn located(text: &str) -> Vec<(usize, notes::markdown::Block)> {
@@ -1248,6 +1406,63 @@ fn parse_and_parse_located_agree_about_the_document() {
         last = *n;
     }
     assert!(numbered.last().unwrap().0 < lines.len());
+}
+
+#[test]
+fn list_items_carry_their_own_lines() {
+    // A list is one block but many rows, and each row is a line somebody
+    // typed — so the gutter numbers them one by one rather than numbering the
+    // list once and leaving the rest blank.
+    let blocks = located("intro\n\n- one\n- two\n  still two\n\n- four");
+    let notes::markdown::Block::List(items) = &blocks[1].1 else {
+        panic!("expected a list, got {:?}", blocks[1].1);
+    };
+    assert_eq!(
+        items.iter().map(|i| i.line).collect::<Vec<_>>(),
+        vec![2, 3, 6]
+    );
+}
+
+#[test]
+fn a_fenced_block_numbers_from_inside_its_fence() {
+    // The fence is not drawn, so the first row of the slab is the line after
+    // it. Numbering the slab from the fence would put every line one out.
+    let blocks = located("intro\n\n```rust\nlet x = 1;\nlet y = 2;\n```");
+    match &blocks[1].1 {
+        notes::markdown::Block::Code { first, lines, .. } => {
+            assert_eq!(*first, 3);
+            assert_eq!(lines.len(), 2);
+        }
+        other => panic!("expected code, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_indented_block_numbers_from_its_first_line() {
+    // There is no fence to skip past: the block starts where the code does.
+    let blocks = located("intro\n\n    fn main() {}\n    // two");
+    match &blocks[1].1 {
+        notes::markdown::Block::Code { first, .. } => assert_eq!(*first, 2),
+        other => panic!("expected code, got {other:?}"),
+    }
+}
+
+#[test]
+fn blocks_inside_a_quote_know_their_lines_too() {
+    let blocks = located("> # Quoted\n>\n> - a bullet\n> - another");
+    let notes::markdown::Block::Quote(inner) = &blocks[0].1 else {
+        panic!("expected a quote");
+    };
+    assert_eq!(inner[0].0, 0, "the heading is on the first line");
+    assert_eq!(inner[1].0, 2, "the list starts on the third");
+    let notes::markdown::Block::List(items) = &inner[1].1 else {
+        panic!("expected a list");
+    };
+    assert_eq!(
+        items.iter().map(|i| i.line).collect::<Vec<_>>(),
+        vec![2, 3],
+        "and its items are numbered in the document's terms, not the quote's"
+    );
 }
 
 // ----------------------------------------------------------- document parser
@@ -1341,7 +1556,7 @@ fn task_items_are_recognised_either_way() {
 fn a_fence_keeps_its_language_and_its_lines_verbatim() {
     let blocks = doc("```rust\nfn main() {}\n    indented\n```");
     match &blocks[0] {
-        Block::Code { lang, lines } => {
+        Block::Code { lang, lines, .. } => {
             assert_eq!(lang, "rust");
             assert_eq!(lines, &["fn main() {}", "    indented"]);
         }
@@ -1365,7 +1580,7 @@ fn quotes_gather_their_consecutive_lines() {
         // One paragraph, not two lines: a soft wrap inside a quote is a soft
         // wrap like any other.
         Block::Quote(inner) => match &inner[..] {
-            [Block::Paragraph(spans)] => assert_eq!(flat(spans), "first second"),
+            [(_, Block::Paragraph(spans))] => assert_eq!(flat(spans), "first second"),
             other => panic!("expected one paragraph, got {other:?}"),
         },
         other => panic!("expected a quote, got {other:?}"),
@@ -1760,7 +1975,7 @@ fn a_row_of_dashes_on_its_own_is_still_a_rule() {
 #[test]
 fn four_spaces_of_indent_is_a_code_block() {
     match &doc("text\n\n    fn main() {}\n    // and this\n\nafter")[1] {
-        Block::Code { lines, lang } => {
+        Block::Code { lines, lang, .. } => {
             assert!(lang.is_empty(), "an indented block names no language");
             assert_eq!(lines, &["fn main() {}", "// and this"]);
         }
@@ -1821,8 +2036,8 @@ fn a_blank_line_between_items_does_not_split_the_list() {
 fn a_quote_can_hold_anything_a_document_can() {
     match &doc("> # Heading\n>\n> - a bullet\n> - another")[0] {
         Block::Quote(inner) => {
-            assert!(matches!(inner[0], Block::Heading { level: 1, .. }));
-            match &inner[1] {
+            assert!(matches!(inner[0].1, Block::Heading { level: 1, .. }));
+            match &inner[1].1 {
                 Block::List(items) => assert_eq!(items.len(), 2),
                 other => panic!("expected a list inside the quote, got {other:?}"),
             }
@@ -1835,7 +2050,9 @@ fn a_quote_can_hold_anything_a_document_can() {
 fn a_quote_runs_on_without_repeating_its_marker() {
     match &doc("> first line\nsecond line\n\nafter")[0] {
         Block::Quote(inner) => match &inner[..] {
-            [Block::Paragraph(spans)] => assert_eq!(flat(spans), "first line second line"),
+            [(_, Block::Paragraph(spans))] => {
+                assert_eq!(flat(spans), "first line second line")
+            }
             other => panic!("expected one paragraph, got {other:?}"),
         },
         other => panic!("expected a quote, got {other:?}"),
@@ -1914,7 +2131,11 @@ fn all_spans(blocks: &[Block]) -> Vec<notes::markdown::Span> {
         match block {
             Block::Heading { spans, .. } | Block::Paragraph(spans) => out.extend(spans.clone()),
             Block::List(items) => out.extend(items.iter().flat_map(|i| i.spans.clone())),
-            Block::Quote(inner) => out.extend(all_spans(inner)),
+            Block::Quote(inner) => {
+                for (_, b) in inner {
+                    out.extend(all_spans(std::slice::from_ref(b)));
+                }
+            }
             Block::Table { header, rows, .. } => {
                 out.extend(header.iter().flatten().cloned());
                 out.extend(rows.iter().flatten().flatten().cloned());
@@ -2036,7 +2257,13 @@ fn the_showcase_nests_a_quote_inside_a_quote() {
         blocks
             .iter()
             .map(|b| match b {
-                Block::Quote(inner) => 1 + depth(inner),
+                Block::Quote(inner) => {
+                    1 + inner
+                        .iter()
+                        .map(|(_, b)| depth(std::slice::from_ref(b)))
+                        .max()
+                        .unwrap_or(0)
+                }
                 _ => 0,
             })
             .max()
@@ -2054,6 +2281,7 @@ fn the_showcase_puts_other_blocks_inside_a_quote() {
             _ => None,
         })
         .flatten()
+        .map(|(_, b)| b)
         .collect();
     assert!(
         quoted.iter().any(|b| matches!(b, Block::Heading { .. })),
@@ -2071,7 +2299,7 @@ fn the_showcase_has_a_code_block_of_each_kind() {
     let code: Vec<(String, Vec<String>)> = showcase()
         .into_iter()
         .filter_map(|b| match b {
-            Block::Code { lang, lines } => Some((lang, lines)),
+            Block::Code { lang, lines, .. } => Some((lang, lines)),
             _ => None,
         })
         .collect();

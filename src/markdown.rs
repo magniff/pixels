@@ -848,6 +848,10 @@ pub struct Item {
     /// Nesting level, from the leading indent.
     pub depth: usize,
     pub spans: Vec<Span>,
+    /// The source line the item's marker is on. An item is a row of its own in
+    /// the rendering, so it carries its own number rather than borrowing the
+    /// list's.
+    pub line: usize,
 }
 
 /// One block of a parsed document.
@@ -864,11 +868,16 @@ pub enum Block {
     Paragraph(Vec<Span>),
     List(Vec<Item>),
     /// A quote holds blocks, not lines: everything markdown has can go
-    /// inside one.
-    Quote(Vec<Block>),
+    /// inside one. Located, like the document itself — a heading inside a
+    /// quote was typed on a line like any other.
+    Quote(Vec<Located>),
     Code {
         lang: String,
         lines: Vec<String>,
+        /// The source line `lines[0]` came from — past the fence, if there was
+        /// one. Every line below it follows in order, so one number is enough
+        /// to number the whole slab.
+        first: usize,
     },
     Table {
         align: Vec<CellAlign>,
@@ -929,7 +938,7 @@ fn table_alignment(line: &str) -> Option<Vec<CellAlign>> {
 }
 
 /// The marker at the head of a list item, and how far past it the text starts.
-fn item_marker(line: &str) -> Option<(Marker, usize)> {
+pub(crate) fn item_marker(line: &str) -> Option<(Marker, usize)> {
     let trimmed = line.trim_start();
     let rest = if let Some(r) = trimmed
         .strip_prefix("- ")
@@ -971,6 +980,8 @@ fn indent_of(line: &str) -> usize {
 }
 
 /// Parse lines into blocks.
+pub type Located = (usize, Block);
+
 pub fn parse(lines: &[String]) -> Vec<Block> {
     parse_located(lines).into_iter().map(|(_, b)| b).collect()
 }
@@ -982,7 +993,7 @@ pub fn parse(lines: &[String]) -> Vec<Block> {
 /// text it came from. Only the top level is numbered: a quote's contents are
 /// parsed out of lines that have had their markers stripped, and counting
 /// those would be counting a document that was never typed.
-pub fn parse_located(lines: &[String]) -> Vec<(usize, Block)> {
+pub fn parse_located(lines: &[String]) -> Vec<Located> {
     let (refs, defs) = link_defs(lines);
     let kept: Vec<String> = lines
         .iter()
@@ -1101,14 +1112,7 @@ fn hard_break(line: &str) -> bool {
     line.ends_with("  ") || line.ends_with('\\')
 }
 
-fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
-    parse_located_blocks(lines, refs)
-        .into_iter()
-        .map(|(_, b)| b)
-        .collect()
-}
-
-fn parse_located_blocks(lines: &[String], refs: &Refs) -> Vec<(usize, Block)> {
+fn parse_located_blocks(lines: &[String], refs: &Refs) -> Vec<Located> {
     let mut blocks = Vec::new();
     let mut i = 0;
 
@@ -1134,7 +1138,14 @@ fn parse_located_blocks(lines: &[String], refs: &Refs) -> Vec<(usize, Block)> {
                 i += 1;
             }
             i += 1; // the closing fence, if there was one
-            blocks.push((start, Block::Code { lang, lines: body }));
+            blocks.push((
+                start,
+                Block::Code {
+                    lang,
+                    lines: body,
+                    first: start + 1,
+                },
+            ));
             continue;
         }
 
@@ -1162,6 +1173,9 @@ fn parse_located_blocks(lines: &[String], refs: &Refs) -> Vec<(usize, Block)> {
                 Block::Code {
                     lang: String::new(),
                     lines: body,
+                    // No fence to skip past: the first line of an indented
+                    // block is the block.
+                    first: start,
                 },
             ));
             continue;
@@ -1241,7 +1255,13 @@ fn parse_located_blocks(lines: &[String], refs: &Refs) -> Vec<(usize, Block)> {
                     break;
                 }
             }
-            blocks.push((start, Block::Quote(parse_blocks(&body, refs))));
+            // The body was built one entry per line consumed, so an index
+            // into it is that many lines below where the quote began.
+            let inner = parse_located_blocks(&body, refs)
+                .into_iter()
+                .map(|(n, b)| (start + n, b))
+                .collect();
+            blocks.push((start, Block::Quote(inner)));
             continue;
         }
 
@@ -1333,6 +1353,7 @@ fn parse_list(lines: &[String], start: usize, refs: &Refs) -> (Vec<Item>, usize)
         };
         let indent = indent_of(&lines[i]);
         let mut text = lines[i][used..].trim().to_string();
+        let line = i;
         i += 1;
 
         // Continuation lines: indented past the marker, or a plain run-on.
@@ -1353,6 +1374,7 @@ fn parse_list(lines: &[String], start: usize, refs: &Refs) -> (Vec<Item>, usize)
             marker,
             depth: indent / 2,
             spans: inline_spans_with(&text, refs),
+            line,
         });
     }
 
