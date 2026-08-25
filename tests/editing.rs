@@ -1341,6 +1341,62 @@ fn the_rehearsal_backend_fixes_what_it_claims_to() {
 }
 
 #[test]
+fn a_panel_is_not_painted_until_it_knows_how_tall_it_is() {
+    use notes::panels::{settings, Chrome};
+    use pixui::{Canvas, Input, Ui, UiState};
+
+    let theme = pixui::theme::scheme_named("GRUVBOX DARK").expect("a scheme by that name");
+    let mut canvas = Canvas::new(600, 400);
+    let mut state = UiState::new();
+    let input = Input {
+        mouse_in_window: true,
+        dt: 1.0 / 60.0,
+        ..Default::default()
+    };
+    let mut config = Settings::default();
+    let mut chrome = Chrome::default();
+
+    let blank = pixui::Color::hex(0x123456);
+    let mut draw = |canvas: &mut Canvas, chrome: Option<&mut Chrome>| {
+        canvas.clear(blank);
+        let mut ui = Ui::begin(canvas, &input, &theme, &mut state);
+        if let Some(chrome) = chrome {
+            settings(&mut ui, &mut config, chrome);
+        }
+        let out = ui.finish();
+        (out.animating, canvas.pixels().to_vec())
+    };
+
+    // A frame with no panel in it at all, for the two below to be measured
+    // against: the toolkit's own post-frame passes paint every row, so "blank"
+    // means "the same as a frame that drew nothing", not "untouched".
+    let (_, nothing) = draw(&mut canvas, None);
+
+    // The first frame with the panel has no height it can trust, so it lays
+    // itself out and paints none of it.
+    let (animating, first) = draw(&mut canvas, Some(&mut chrome));
+    // Counted rather than compared whole: two screenfuls of pixels printed on
+    // failure tell you nothing that the count does not.
+    let differing = |a: &[u32], b: &[u32]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+    assert_eq!(
+        differing(&first, &nothing),
+        0,
+        "a panel drawn at a height measured for some other page is the flicker"
+    );
+    assert!(animating, "and it has to ask for the frame that does paint it");
+    let measured = chrome.panel_h;
+    assert!(measured > 72, "it measured itself while it was invisible");
+
+    // The next one paints, at the height the first one worked out.
+    let (_, second) = draw(&mut canvas, Some(&mut chrome));
+    assert!(
+        differing(&second, &nothing) > 1000,
+        "the second frame is the one you see"
+    );
+    assert_eq!(chrome.panel_h, measured, "and it did not move on arrival");
+}
+
+#[test]
 fn the_view_can_reach_the_end_of_a_wrapping_note() {
     use notes::last_top;
     use notes::text::Buffer;

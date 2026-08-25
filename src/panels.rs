@@ -250,6 +250,9 @@ pub struct Chrome {
     pub menu_open: bool,
     /// How tall the settings panel wanted to be last time it drew.
     pub panel_h: i32,
+    /// Which page that height belongs to. A height measured for another page is
+    /// somebody else's, and drawing at it is the flicker this avoids.
+    pub measured: Option<Page>,
     /// The settings as they were when the panel opened, so closing it can tell
     /// whether anything actually changed. Rebuilding the assistant means
     /// loading a model again, which is not a thing to do for nothing.
@@ -307,13 +310,27 @@ pub fn about(ui: &mut Ui) -> bool {
 pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Action {
     let th = *ui.theme;
     let screen = ui.canvas.bounds();
+
+    // A panel is as tall as what goes in it, and what goes in it is only known
+    // once it has been laid out — which is a frame too late to draw it at the
+    // right size. The old answer was to draw it at the last height and let the
+    // next frame correct it, and the correction is visible: the panel arrives,
+    // shifts, and settles.
+    //
+    // So the frame that has no height to trust is laid out and not painted.
+    // Everything runs — the layout, the measuring, the request for another
+    // frame — into a clip with nothing inside it, and the panel appears one
+    // frame later at the size it actually wants. Hit testing goes through the
+    // same clip, so there is nothing to click on a panel that is not there yet.
+    let drawing = chrome.page;
+    let sized = chrome.measured == Some(drawing);
+    if !sized {
+        ui.canvas.push_clip(Rect::new(0, 0, 0, 0));
+        ui.request_repaint();
+    }
+
     ui.canvas
         .fill_rect_blend(screen, pixui::palette::VOID, 0.55);
-
-    // As tall as what goes in it, measured from the frame before: the contents
-    // change with what is installed and what is being fetched, and dead space
-    // under the last control reads as a layout bug. One frame at the guessed
-    // height when it first opens, and the right height from then on.
     let height = chrome.panel_h.clamp(72, screen.h - 20);
     let rect = screen.centered(WIDTH, height);
     let inner = ui.panel(rect, "SETTINGS");
@@ -658,6 +675,7 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
     // The chrome a panel spends on itself: border, title strip, the line under
     // it, and the padding inside.
     let want = used + 24 + 19 + 4;
+    chrome.measured = Some(drawing);
     if want != chrome.panel_h {
         chrome.panel_h = want;
         // The panel is drawn at the height measured on the frame before, so the
@@ -685,6 +703,9 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
     let close = Rect::new(footer.right() - 70, footer.y + 4, 70, 15);
     if ui.button_at(close, "CLOSE", Tone::Accent).clicked {
         action = Action::Close;
+    }
+    if !sized {
+        ui.canvas.pop_clip();
     }
     action
 }

@@ -1046,6 +1046,9 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.chrome.prompt = None;
                 app.chrome.page = panels::Page::Index;
                 app.chrome.panel = Some(panels::Panel::Settings);
+                // Opened fresh: whatever height is on file was measured for a
+                // panel that is no longer on screen.
+                app.chrome.measured = None;
             }
             Some(1) => {
                 app.chrome.menu_open = false;
