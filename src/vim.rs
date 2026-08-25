@@ -234,7 +234,16 @@ impl Vim {
     }
 
     /// The pattern currently highlighted, if any.
+    ///
+    /// While one is being typed, it *is* the pattern. Vim lights the hits up
+    /// as the characters go in, and that is not decoration: it is how you know
+    /// you have typed enough to mean the thing you meant, before committing to
+    /// a jump. Escape puts the last committed pattern back, because abandoning
+    /// a search should leave the note looking the way it did.
     pub fn search_pattern(&self) -> Option<&str> {
+        if matches!(self.mode, Mode::Search { .. }) && !self.cmdline.is_empty() {
+            return Some(&self.cmdline);
+        }
         self.search_hl.as_deref()
     }
 

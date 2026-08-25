@@ -25,7 +25,8 @@ it at a real vault.
 - Text objects `iw aw`, `ip ap`, `i" i' i\``, `i( i[ i{ i<` and the `a` variants
 - Visual charwise, linewise and blockwise; `I`/`A` on a block types once and
   applies to every row
-- Search `/` `?`, `n` `N`, `*`; commands `:w :e :q :qa :new :preview :source`
+- Search `/` `?`, `n` `N`, `*`, lighting the hits up as the pattern is typed;
+  commands `:w :e :q :qa :new :preview :source`
 - Undo and redo, a register that knows charwise from linewise from blockwise
 - A new line inherits its list marker, its quote, or the indent of the code it
   is in; `Tab` and `Shift-Tab` move a line a level in or out
@@ -42,11 +43,13 @@ it at a real vault.
   same source lines
 - `/` searches the preview and lights up every hit
 
-| source | preview |
-|---|---|
-| ![source](screenshots/showcase-source.png) | ![preview](screenshots/showcase-preview.png) |
+| finding a note | source | preview |
+|---|---|---|
+| ![the finder](screenshots/finder.png) | ![source](screenshots/showcase-source.png) | ![preview](screenshots/showcase-preview.png) |
 
 **Notes** — a drawer of them, filtered as you type, `Ctrl-n`/`Ctrl-p` to walk.
+`Cmd-p` opens the whole library to a fuzzy search: `mdsh` finds
+`markdown-showcase.md`, and the letters that answered are lit in the row.
 `cmd-e`, `cmd-n` and `cmd-s` put the keyboard in the editor, the list or the
 search box, and a ring says where it went. The file dialogs are not the
 system's — they are built from the same widgets as everything else.

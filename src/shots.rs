@@ -221,6 +221,47 @@ pub fn run() -> std::io::Result<()> {
         },
         // Search hits highlighted, with the pointer over the divider.
         Scene {
+            // Cmd-P, and a few letters of the note wanted.
+            name: "finder",
+            script: [
+                keys(":e welcome.md"),
+                keys("\n"),
+                cmd_key(Key::Char('p')),
+                keys("m"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
+            // A pattern half typed: vim lights the hits before you commit.
+            name: "incsearch",
+            script: [
+                keys(":e markdown-showcase.md"),
+                keys("\n"),
+                keys("/ital"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
             name: "search",
             script: keys("/pixui\n"),
             mouse: Point::new(153, 200),

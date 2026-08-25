@@ -1340,6 +1340,126 @@ fn the_rehearsal_backend_fixes_what_it_claims_to() {
     );
 }
 
+// --------------------------------------------------------------- the finder
+
+fn library() -> Vec<notes::finder::Candidate> {
+    [
+        ("Ideas", "ideas.md"),
+        ("Markdown showcase", "markdown-showcase.md"),
+        ("Vim keys", "vim-keys.md"),
+        ("Meeting notes", "meeting-notes.md"),
+    ]
+    .iter()
+    .map(|(title, file)| notes::finder::Candidate {
+        title: title.to_string(),
+        file: file.to_string(),
+    })
+    .collect()
+}
+
+#[test]
+fn a_note_is_found_by_a_few_of_its_letters() {
+    use notes::finder::fuzzy;
+
+    // A subsequence, not a substring: the letters in order, wherever they are.
+    assert!(fuzzy("markdown-showcase.md", "mdsh").is_some());
+    assert!(fuzzy("markdown-showcase.md", "show").is_some());
+    // Case is not something anybody wants to think about while typing fast.
+    assert!(fuzzy("Markdown showcase", "MARK").is_some());
+    // Order is, though: every letter of "sid" is in "ideas.md", and none of
+    // them are in that order.
+    assert!(fuzzy("ideas.md", "sid").is_none());
+    assert!(fuzzy("markdown-showcase.md", "zebra").is_none());
+
+    // The characters that answered come back, so they can be lit in the list.
+    let (_, at) = fuzzy("vim-keys.md", "vk").expect("a match");
+    assert_eq!(at, vec![0, 4], "the v of vim and the k of keys");
+}
+
+#[test]
+fn the_notes_that_answer_best_are_offered_first() {
+    use notes::finder::{fuzzy, search, On};
+
+    // A run of characters together beats the same characters scattered.
+    let together = fuzzy("ideas.md", "idea").expect("a match").0;
+    let scattered = fuzzy("i do enjoy a break", "idea").expect("a match").0;
+    assert!(
+        together > scattered,
+        "together {together} should beat scattered {scattered}"
+    );
+
+    // And a word beginning beats the middle of one.
+    let start = fuzzy("vim keys", "key").expect("a match").0;
+    let middle = fuzzy("monkeys", "key").expect("a match").0;
+    assert!(start > middle, "start {start} should beat middle {middle}");
+
+    let lib = library();
+    let hits = search(&lib, "mark");
+    assert_eq!(hits[0].note, 1, "the showcase is what 'mark' means here");
+
+    // Every note in a library of markdown ends in `.md`, so the extension is
+    // not part of the name: a query of "m" is about the names, not the filing.
+    let hits = search(&lib, "m");
+    assert!(
+        lib[hits[0].note].title.to_lowercase().starts_with('m'),
+        "a note whose name starts with it, not the first one whose extension \
+         happens to contain it - got {:?}",
+        lib[hits[0].note].title
+    );
+    assert!(
+        !hits.iter().any(|h| lib[h.note].title == "Ideas"),
+        "ideas.md answers 'm' only through its extension"
+    );
+
+    // Either name can be typed at, and the one that answered is the one lit.
+    let hits = search(&lib, "vim-k");
+    assert_eq!(hits[0].note, 2);
+    assert_eq!(hits[0].on, On::File, "that is a filename, hyphen and all");
+
+    // No query is the whole library, in the order it came.
+    let all = search(&lib, "");
+    assert_eq!(all.len(), lib.len());
+    assert_eq!(all[0].note, 0);
+
+    // And a query nothing answers is an empty list rather than a bad guess.
+    assert!(search(&lib, "zzz").is_empty());
+}
+
+#[test]
+fn a_search_lights_up_as_it_is_typed() {
+    use notes::text::Buffer;
+    use notes::vim::Vim;
+    use pixui::{Key, Mods};
+
+    let mut buf = Buffer::from_text("alpha beta\ngamma delta\nbeta again");
+    let mut vim = Vim::new();
+    assert_eq!(vim.search_pattern(), None, "nothing to light up yet");
+
+    let none = Mods::default();
+    vim.handle(&mut buf, Key::Char('/'), none);
+    assert_eq!(vim.search_pattern(), None, "an empty pattern matches nothing");
+
+    vim.handle(&mut buf, Key::Char('b'), none);
+    assert_eq!(vim.search_pattern(), Some("b"), "one character is a pattern");
+    vim.handle(&mut buf, Key::Char('e'), none);
+    vim.handle(&mut buf, Key::Char('t'), none);
+    assert_eq!(vim.search_pattern(), Some("bet"));
+    // Backspace takes it back with it.
+    vim.handle(&mut buf, Key::Backspace, none);
+    assert_eq!(vim.search_pattern(), Some("be"));
+
+    // Committed, and it stays lit after the prompt closes.
+    vim.handle(&mut buf, Key::Enter, none);
+    assert_eq!(vim.search_pattern(), Some("be"));
+
+    // A search abandoned leaves the note looking the way it did.
+    vim.handle(&mut buf, Key::Char('/'), none);
+    vim.handle(&mut buf, Key::Char('z'), none);
+    assert_eq!(vim.search_pattern(), Some("z"));
+    vim.handle(&mut buf, Key::Escape, none);
+    assert_eq!(vim.search_pattern(), Some("be"), "the last committed one");
+}
+
 #[test]
 fn a_panel_is_not_painted_until_it_knows_how_tall_it_is() {
     use notes::panels::{settings, Chrome};

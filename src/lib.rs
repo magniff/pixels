@@ -17,6 +17,7 @@
 
 pub mod assist;
 pub mod dialog;
+pub mod finder;
 pub mod diff;
 pub mod fetch;
 pub mod indent;
@@ -157,6 +158,8 @@ pub struct Notes {
     pub current: usize,
     pub vim: Vim,
     pub dialog: Option<FileDialog>,
+    /// Open while somebody is looking for a line of the note they are in.
+    pub finder: Option<finder::Finder>,
     pub notes_dir: PathBuf,
     /// Which pane the keyboard is aimed at.
     pub pane: Pane,
@@ -277,6 +280,7 @@ impl Notes {
             current,
             vim: Vim::new(),
             dialog: None,
+            finder: None,
             notes_dir,
             pane: Pane::Editor,
             pane_grab: false,
@@ -793,6 +797,22 @@ impl Notes {
         }
     }
 
+    /// Open a note, from something that found it by name.
+    ///
+    /// The keyboard goes to the editor rather than to the sidebar: somebody who
+    /// asked for a note by typing its name is on their way into it, not on
+    /// their way to a list of it.
+    fn go_to_note(&mut self, i: usize) {
+        if i >= self.notes.len() {
+            return;
+        }
+        self.current = i;
+        self.scroll = 0;
+        let title = self.notes[i].title();
+        self.focus_pane(Pane::Editor);
+        self.status = title;
+    }
+
     fn open_save_dialog(&mut self) {
         let suggested = self
             .note()
@@ -911,7 +931,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     // around it, and its own layer settles who gets a click that lands on it.
     // Both, though, take the keyboard away from vim entirely, because a model
     // rewriting the note behind you while you type at it is not a feature.
-    let modal = app.dialog.is_some() || app.chrome.panel.is_some();
+    let modal = app.dialog.is_some() || app.chrome.panel.is_some() || app.finder.is_some();
     let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
     app.step_pick(ui.input.dt);
@@ -1014,6 +1034,25 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         draw_statusbar(ui, statusbar, app);
     });
 
+    if app.finder.is_some() {
+        // Taken out while it draws, because what it decides is about the notes
+        // it is drawn over, and it cannot hold a borrow of them.
+        let mut finder = app.finder.take().expect("checked above");
+        let library: Vec<finder::Candidate> = app
+            .notes
+            .iter()
+            .map(|note| finder::Candidate {
+                title: note.title(),
+                file: note.filename(),
+            })
+            .collect();
+        match finder.show(ui, &library) {
+            finder::Found::None => app.finder = Some(finder),
+            finder::Found::Close => app.status = "EDITOR".into(),
+            finder::Found::Open(i) => app.go_to_note(i),
+        }
+    }
+
     if let Some(dialog) = app.dialog.as_mut() {
         match dialog.show(ui) {
             Some(DialogResult::Cancel) => {
@@ -1104,6 +1143,8 @@ fn handle_shortcuts(ui: &mut Ui, app: &mut Notes) {
             // keeps what it suggests. Off macOS the toolkit maps `cmd` onto
             // Control, which is where this lives on those keyboards anyway.
             Key::Enter => app.want_assist(),
+            // The note list answers "which note?"; this answers "where in it?".
+            Key::Char('p') => app.finder = Some(finder::Finder::new()),
             Key::Char('e') => app.focus_pane(Pane::Editor),
             Key::Char('n') => app.focus_pane(Pane::Notes),
             Key::Char('s') => app.focus_pane(Pane::Search),
