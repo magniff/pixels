@@ -397,6 +397,21 @@ pub fn run() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
+        // Caught mid-choice: the old highlight shrinking away and the new one
+        // springing open under it.
+        Scene {
+            name: "note-pick",
+            script: [cmd('n'), keys("j")].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![],
+            then: vec![],
+            settle: 4,
+            canvas: (768, 470),
+        },
         // The application menu, open.
         Scene {
             name: "menu",

@@ -85,6 +85,52 @@ impl Note {
     }
 }
 
+/// The selection travelling between two notes.
+///
+/// It does not slide: the highlight lets go of the note it was on and takes
+/// hold of the new one, which is what choosing something feels like. The old
+/// one shrinks away quickly and the new one springs open a moment later, so
+/// the two halves read as one movement rather than as a cross-fade.
+pub struct Pick {
+    /// The row being left, while there is still any of it to draw.
+    pub from: Option<usize>,
+    /// How much of the old highlight is left, 1 down to 0.
+    pub leave: f32,
+    /// The new one arriving, which overshoots a little on the way in.
+    pub enter: pixui::Spring,
+    /// The selection this last saw, so a change can be noticed.
+    seen: usize,
+}
+
+impl Pick {
+    fn at(current: usize) -> Self {
+        // Softer and slower than the button press this borrows from: a press
+        // is an answer to something you did, and this is a thing moving across
+        // the screen, which wants long enough to be seen moving.
+        let mut enter = pixui::Spring::new(520.0, 26.0);
+        // Already arrived: the first frame is not an animation of anything.
+        enter.snap(1.0);
+        Self {
+            from: None,
+            leave: 0.0,
+            enter,
+            seen: current,
+        }
+    }
+
+    /// How much of row `i`'s highlight to draw, where 1.0 is all of it and
+    /// more than that is the overshoot on the way in.
+    pub fn grow(&self, i: usize, current: usize) -> f32 {
+        if i == current {
+            self.enter.pos.max(0.0)
+        } else if self.from == Some(i) {
+            self.leave
+        } else {
+            0.0
+        }
+    }
+}
+
 /// Which of the three panes the keyboard is currently aimed at.
 ///
 /// The editor is modal on its own, so this cannot be the toolkit's focus
@@ -133,6 +179,8 @@ pub struct Notes {
     /// Set by the key that asks for the assistant, and spent by the drawing,
     /// which is where the selection's position on screen is known.
     pub assist_wanted: bool,
+    /// The selection moving from one note to another.
+    pub pick: Pick,
     /// The assistant's panel, while one is open.
     pub assist: Option<assist::Assist>,
     /// The model on its thread, whichever one this build has.
@@ -235,6 +283,7 @@ impl Notes {
             editor_scroll: pixui::ScrollState::default(),
             preview_g: false,
             preview_reveal: None,
+            pick: Pick::at(current),
             assist: None,
             assist_wanted: false,
             helper: llm::Assistant::spawn(assistant(&config)),
@@ -494,6 +543,26 @@ impl Notes {
                 self.chrome.download = None;
                 self.chrome.notice = why.to_uppercase();
             }
+        }
+    }
+
+    /// Move the selection animation on by a frame.
+    fn step_pick(&mut self, dt: f32) {
+        if self.pick.seen != self.current {
+            self.pick.from = Some(self.pick.seen);
+            self.pick.leave = 1.0;
+            self.pick.enter.snap(0.0);
+            self.pick.seen = self.current;
+        }
+        self.pick.leave = pixui::smooth(self.pick.leave, 0.0, 22.0, dt);
+        // The new highlight waits for the old one to be mostly gone. Started
+        // together they read as a dissolve, and choosing something is not a
+        // dissolve.
+        let target = f32::from(u8::from(self.pick.leave < 0.25));
+        self.pick.enter.step(target, dt);
+        if self.pick.leave < 0.02 {
+            self.pick.leave = 0.0;
+            self.pick.from = None;
         }
     }
 
@@ -787,6 +856,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     let modal = app.dialog.is_some() || app.chrome.panel.is_some();
     let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
+    app.step_pick(ui.input.dt);
 
     // A dialog, or the assistant's block, takes the keyboard for itself while
     // it is open; nothing below it sees a key.
@@ -1325,28 +1395,43 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                 begin_rename = Some(i);
             }
 
-            let face = if selected {
-                th.accent.face
-            } else if resp.hovered {
+            let face = if resp.hovered && !selected {
                 th.panel.shade(-0.08)
             } else {
                 th.panel
             };
             ui.canvas.fill_chamfer(row, face, 1);
-            if selected {
-                ui.canvas.vline(row.x, row.y, row.h, th.accent.lo);
+
+            // The highlight lets go of one row and takes hold of another. The
+            // movement is in the colour; the size only breathes with it, a few
+            // pixels in and a pixel back out past full on the spring. A patch
+            // that grew from nothing would be a different effect and a louder
+            // one, and this is a list you walk with `j`.
+            let grow = app.pick.grow(i, app.current);
+            let held = grow.clamp(0.0, 1.0);
+            let patch = if grow > 0.01 {
+                let shrink = ((1.0 - held) * 3.0).round() as i32;
+                let bulge = ((grow - 1.0).max(0.0) * 6.0).round() as i32;
+                Some(row.inset(shrink - bulge))
+            } else {
+                None
+            };
+            if let Some(patch) = patch {
+                ui.canvas
+                    .fill_chamfer(patch, th.panel.lerp(th.accent.face, held), 1);
+                ui.canvas
+                    .vline(row.x, patch.y, patch.h, th.panel.lerp(th.accent.lo, held));
                 // When the list itself has the keyboard, say so on the row the
                 // keys will move — otherwise j and k appear to do nothing.
-                if app.notes_focus > 0.03 {
+                if selected && app.notes_focus > 0.03 {
                     // Fades in with the pane rather than snapping on, so
                     // arriving here reads as one movement and not two events.
                     let ring = th.accent.face.lerp(th.accent.ink, app.notes_focus);
                     ui.canvas
-                        .stroke_rect_dashed(row, ring, 2, 2, (ui.input.time * 14.0) as i32);
+                        .stroke_rect_dashed(patch, ring, 2, 2, (ui.input.time * 14.0) as i32);
                 }
             }
 
-            let ink = if selected { th.accent.ink } else { th.ink };
             let title_at = Rect::new(row.x + 4, row.y + 1, row.w - 8, 9);
 
             if renaming {
@@ -1368,6 +1453,13 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                     app.renaming = Some((i, name));
                 }
             } else {
+                // The ink travels with the fill under it. The patch covers the
+                // words the whole way, so this is a blend rather than the two
+                // clipped passes a patch growing from nothing would need.
+                let ink = th.ink.lerp(th.accent.ink, held);
+                let dim = th
+                    .ink_soft
+                    .lerp(th.accent.ink.lerp(th.accent.face, 0.4), held);
                 pixui::font::draw_text_styled(
                     ui.canvas,
                     title_at.x,
@@ -1376,20 +1468,14 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                     ink,
                     true,
                 );
+                for (n, line) in preview.iter().enumerate() {
+                    let y = row.y + 11 + n as i32 * 8;
+                    pixui::font::draw_text(ui.canvas, title_at.x, y, line, dim);
+                }
                 if dirty {
                     ui.canvas
                         .fill_rect(Rect::new(row.right() - 5, row.y + 3, 3, 3), th.danger.face);
                 }
-            }
-
-            for (n, line) in preview.iter().enumerate() {
-                let y = row.y + 11 + n as i32 * 8;
-                let dim = if selected {
-                    th.accent.ink.lerp(th.accent.face, 0.4)
-                } else {
-                    th.ink_soft
-                };
-                pixui::font::draw_text(ui.canvas, title_at.x, y, line, dim);
             }
         }
     });
