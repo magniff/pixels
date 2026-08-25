@@ -271,6 +271,113 @@ impl Harness {
     }
 }
 
+// ------------------------------------------------------------------- schemes
+
+/// WCAG relative luminance, which is what a contrast ratio is defined from.
+fn relative_luminance(c: Color) -> f32 {
+    let channel = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
+}
+
+/// The contrast ratio between two colours, 1.0 (identical) to 21.0 (black on
+/// white).
+fn contrast(a: Color, b: Color) -> f32 {
+    let (x, y) = (relative_luminance(a), relative_luminance(b));
+    let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+#[test]
+fn every_scheme_can_actually_be_read() {
+    // The check that a palette has been mapped onto the roles rather than
+    // merely pasted into them: a scheme where the ink and the thing under it
+    // are both dark is a scheme nobody can use, and it is not obvious from the
+    // hex values that this has happened.
+    for (name, build) in pixui::SCHEMES {
+        let t = build();
+        // Three bars rather than one. Anything a sentence is written in has to
+        // clear 3:1; muted text is allowed to be quieter, because some of these
+        // schemes are low contrast on purpose and Solarized says so in its
+        // name — but not so quiet that it is gone.
+        // The button bars sit a hair under WCAG's 3:1 for large text: Solarized's
+        // own green lands at 2.99 against its own lightest tone, and inventing
+        // a darker green to clear a round number would be inventing a colour
+        // the scheme does not have.
+        let pairs = [
+            (3.0, "body text on a panel", t.ink, t.panel),
+            (3.0, "body text in a well", t.ink_light, t.well),
+            (2.0, "muted text on a panel", t.ink_soft, t.panel),
+            (
+                2.9,
+                "a label on an accent button",
+                t.accent.ink,
+                t.accent.face,
+            ),
+            (
+                2.9,
+                "a label on a neutral button",
+                t.neutral.ink,
+                t.neutral.face,
+            ),
+            (
+                2.9,
+                "a label on a danger button",
+                t.danger.ink,
+                t.danger.face,
+            ),
+            (
+                2.9,
+                "a label on a positive button",
+                t.positive.ink,
+                t.positive.face,
+            ),
+            (
+                3.0,
+                "a title on its strip",
+                t.panel_title_ink,
+                t.panel_title,
+            ),
+        ];
+        for (want, what, ink, under) in pairs {
+            let ratio = contrast(ink, under);
+            assert!(
+                ratio >= want,
+                "{name}: {what} is {ratio:.1}:1, and wants {want:.1}:1"
+            );
+        }
+        // And code, which is most of what a scheme is for.
+        for (what, ink) in [
+            ("keywords", t.syntax.keyword),
+            ("strings", t.syntax.string),
+            ("numbers", t.syntax.number),
+            ("comments", t.syntax.comment),
+        ] {
+            // 2.4, because Solarized Light's own comment tone is 2.45:1
+            // against its own page. Low contrast is the scheme's whole idea;
+            // this bar is here to catch invisible, not to catch quiet.
+            let ratio = contrast(ink, t.well);
+            assert!(ratio >= 2.4, "{name}: {what} are {ratio:.1}:1 on the well");
+        }
+    }
+}
+
+#[test]
+fn a_scheme_can_be_found_by_name_however_it_is_typed() {
+    assert!(pixui::scheme_named("nord").is_some());
+    assert!(pixui::scheme_named("Gruvbox Dark").is_some());
+    assert!(pixui::scheme_named("not a scheme").is_none());
+    for (name, _) in pixui::SCHEMES {
+        assert!(pixui::scheme_named(name).is_some(), "{name} is unreachable");
+    }
+}
+
 // -------------------------------------------------------------------- layers
 
 /// One frame of a page-wide widget with a small floating one over it, with the

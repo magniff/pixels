@@ -33,7 +33,7 @@ pub mod vim;
 
 use std::path::{Path, PathBuf};
 
-use pixui::{palette, Align, Color, Key, Point, Rect, Theme, Tone, Ui};
+use pixui::{Align, Color, Key, Point, Rect, Theme, Tone, Ui};
 
 use dialog::{DialogKind, DialogResult, FileDialog};
 use markdown::Tok;
@@ -408,12 +408,20 @@ impl Notes {
     /// A change of weights or of prompt means a new assistant, which means
     /// loading the model again — so it is done when the panel closes rather
     /// than on every keystroke in the prompt.
-    fn apply_settings(&mut self, action: panels::Action) {
+    fn apply_settings(&mut self, ui: &mut Ui, action: panels::Action) {
         match action {
+            panels::Action::Scheme(name) => {
+                self.settings.scheme = name;
+                // Worn immediately: a colour scheme you have to close a panel
+                // to see is a colour scheme you cannot choose between. Written
+                // down when the panel closes, along with everything else.
+                ui.request_theme(theme_for(&self.settings));
+            }
             panels::Action::None | panels::Action::Prompt => {}
             panels::Action::Use(file) => {
                 self.settings.model = Some(file);
                 self.rebuild_assistant();
+                let _ = self.settings.save();
             }
             panels::Action::Fetch(i) => {
                 let weights = &settings::CATALOGUE[i];
@@ -432,8 +440,21 @@ impl Notes {
             panels::Action::Close => {
                 self.chrome.panel = None;
                 self.chrome.prompt = None;
-                let changed = self.chrome.opened_with.take() != Some(self.settings.clone());
-                if changed {
+                let was = self.chrome.opened_with.take();
+                if was.as_ref() != Some(&self.settings) {
+                    if let Err(why) = self.settings.save() {
+                        self.status = format!("COULD NOT SAVE SETTINGS: {why}").to_uppercase();
+                    }
+                }
+                // Only what the assistant is made of is worth rebuilding it
+                // for. A colour scheme is not, and rebuilding means loading a
+                // model again.
+                let assistant_changed = was.is_some_and(|before| {
+                    before.assist != self.settings.assist
+                        || before.model != self.settings.model
+                        || before.prompt != self.settings.prompt
+                });
+                if assistant_changed {
                     self.rebuild_assistant();
                 }
             }
@@ -442,9 +463,6 @@ impl Notes {
 
     /// Write the settings down and start an assistant that matches them.
     fn rebuild_assistant(&mut self) {
-        if let Err(why) = self.settings.save() {
-            self.status = format!("COULD NOT SAVE SETTINGS: {why}").to_uppercase();
-        }
         self.helper = llm::Assistant::spawn(assistant(&self.settings));
         self.status = if self.settings.assist {
             format!("ASSISTANT: {}", self.helper.name())
@@ -711,7 +729,15 @@ pub fn config() -> pixui::Config {
 /// The default theme: the stock warm look, with the library's scanline pass off
 /// — a text editor should not have anything drawn across its text.
 pub fn theme() -> Theme {
-    let mut t = Theme::warm();
+    theme_for(&settings::Settings::load())
+}
+
+/// The theme these settings ask for.
+///
+/// The scanline is turned off whichever scheme it is: it belongs to the
+/// toolkit's demo, and a note editor is a thing to read from for an hour.
+pub fn theme_for(config: &settings::Settings) -> Theme {
+    let mut t = pixui::scheme_named(&config.scheme).unwrap_or_else(Theme::warm);
     t.scanline = 0.0;
     t
 }
@@ -912,7 +938,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             let mut config = std::mem::take(&mut app.settings);
             let action = panels::settings(ui, &mut config, &mut app.chrome);
             app.settings = config;
-            app.apply_settings(action);
+            app.apply_settings(ui, action);
         }
         None => {}
     }
@@ -1139,7 +1165,10 @@ fn draw_titlebar(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Point {
 
 fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {
     let th = *ui.theme;
-    ui.canvas.fill_rect(rect, th.background.shade(-0.35));
+    // A well, like the editor and the fields: a band derived from the
+    // background is a band that goes grey in a light scheme and black in a
+    // dark one, and the ink on it has to guess which.
+    ui.canvas.fill_rect(rect, th.well);
     ui.canvas.hline(rect.x, rect.y, rect.w, th.panel_border);
 
     // A coloured mode badge, the one piece of vim UI everyone relies on.
@@ -1722,7 +1751,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                             let x0 = text_x + (a - from) as i32 * advance - 1;
                             ui.canvas.fill_rect(
                                 Rect::new(x0, y - 1, (b - a) as i32 * advance, line_h),
-                                th.well.lerp(palette::YELLOW, 0.30),
+                                th.well.lerp(th.highlight, 0.30),
                             );
                         }
                     }
@@ -1909,7 +1938,7 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
         Tok::Text => th.ink_light,
         Tok::Marker => th.ink_soft,
         Tok::Heading => th.accent.hi,
-        Tok::Bold => th.ink_light.lerp(palette::YELLOW, 0.7),
+        Tok::Bold => th.ink_light.lerp(th.highlight, 0.7),
         Tok::Italic => th.info.hi,
         Tok::Code => th.positive.face,
         Tok::Link => th.info.face,
@@ -1917,13 +1946,13 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
         Tok::Strike => th.ink_soft,
         Tok::Image => th.info.hi,
         Tok::CodePlain => th.ink_light,
-        Tok::CodeKeyword => palette::ACCENT,
-        Tok::CodeType => palette::TEAL,
-        Tok::CodeFunction => palette::TEAL_HI,
-        Tok::CodeString => palette::GREEN,
-        Tok::CodeNumber => palette::YELLOW,
-        Tok::CodeComment => th.ink_soft,
-        Tok::CodePunct => th.ink_light.shade(-0.30),
+        Tok::CodeKeyword => th.syntax.keyword,
+        Tok::CodeType => th.syntax.type_name,
+        Tok::CodeFunction => th.syntax.function,
+        Tok::CodeString => th.syntax.string,
+        Tok::CodeNumber => th.syntax.number,
+        Tok::CodeComment => th.syntax.comment,
+        Tok::CodePunct => th.syntax.punctuation,
     }
 }
 

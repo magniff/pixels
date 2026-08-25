@@ -146,17 +146,6 @@ fn leave_before_ggml_does() {
     });
 }
 
-/// Take off what a model wraps an answer in when it cannot help itself.
-fn unwrap_reply(text: &str) -> String {
-    let mut out = text.trim();
-    if let Some(rest) = out.strip_prefix("```") {
-        // Drop the info string on the opening fence along with it.
-        let rest = rest.split_once('\n').map_or(rest, |(_, r)| r);
-        out = rest.strip_suffix("```").unwrap_or(rest).trim();
-    }
-    out.to_string()
-}
-
 impl Backend for Local {
     fn name(&self) -> String {
         self.path
@@ -226,7 +215,7 @@ impl Backend for Local {
         }
 
         let text = String::from_utf8_lossy(&out).to_string();
-        let text = unwrap_reply(&text);
+        let text = super::clean_reply(&text);
         if text.is_empty() {
             // Nothing to say is an answer: the passage is already what the
             // instruction asked for. Handing back the source says that in the

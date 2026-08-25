@@ -434,7 +434,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
-            clicks: vec![Point::new(64, 21), Point::new(383, 222)],
+            clicks: vec![Point::new(64, 21), Point::new(383, 236)],
             then: vec![],
             settle: 14,
             canvas: (768, 470),
@@ -449,8 +449,73 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
-            clicks: vec![Point::new(64, 21), Point::new(383, 222)],
+            clicks: vec![Point::new(64, 21), Point::new(383, 236)],
             then: [keys("GA"), keys(" AND A LINE OF MY OWN.")].concat(),
+            settle: 12,
+            canvas: (768, 470),
+        },
+        // The colour schemes, each with a strip of its own colours.
+        Scene {
+            name: "appearance",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![Point::new(64, 21), Point::new(383, 206)],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        // Walking the list with j, which wears each scheme as it goes.
+        Scene {
+            name: "appearance-walk",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![Point::new(64, 21), Point::new(383, 206)],
+            then: keys("jjj"),
+            settle: 12,
+            canvas: (768, 470),
+        },
+        // Worn: the whole app in somebody else's colours, dark and light.
+        Scene {
+            name: "scheme-nord",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![
+                Point::new(64, 21),
+                Point::new(383, 206),
+                Point::new(565, 266),
+                Point::new(558, 319),
+            ],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
+            name: "scheme-latte",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![
+                Point::new(64, 21),
+                Point::new(383, 206),
+                Point::new(565, 296),
+                Point::new(558, 319),
+            ],
+            then: vec![],
             settle: 12,
             canvas: (768, 470),
         },
@@ -480,7 +545,7 @@ pub fn run() -> std::io::Result<()> {
             wheel: 0.0,
             clicks: vec![
                 Point::new(64, 21),
-                Point::new(383, 222),
+                Point::new(383, 236),
                 Point::new(250, 153),
             ],
             then: vec![],
@@ -499,7 +564,7 @@ pub fn run() -> std::io::Result<()> {
             wheel: 0.0,
             clicks: vec![
                 Point::new(64, 21),
-                Point::new(383, 222),
+                Point::new(383, 236),
                 Point::new(250, 153),
                 Point::new(558, 344),
             ],
@@ -790,7 +855,7 @@ pub fn run() -> std::io::Result<()> {
         let mut app = Notes::open(dir.clone());
         let mut canvas = Canvas::new(scene.canvas.0, scene.canvas.1);
         let mut ui_state = UiState::new();
-        let theme: Theme = theme();
+        let mut theme: Theme = theme();
         let mut input = Input {
             mouse_in_window: true,
             // Ask the toolkit for its own pointer, as the backend does.
@@ -905,7 +970,12 @@ pub fn run() -> std::io::Result<()> {
             {
                 let mut ui = Ui::begin(&mut canvas, &input, &theme, &mut ui_state);
                 frame(&mut ui, &mut app);
-                ui.finish();
+                // A frame may ask to be re-skinned, and the real event loop
+                // obliges. A harness that drops the request would show every
+                // scheme looking like the one it started in.
+                if let Some(next) = ui.finish().theme {
+                    theme = next;
+                }
             }
             input.begin_frame();
         }

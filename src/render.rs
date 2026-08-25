@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 
-use pixui::{font, icon, palette, Color, Cursor, Rect, Theme, Ui};
+use pixui::{font, icon, Color, Cursor, Rect, Theme, Ui};
 
 use crate::markdown::{slice_spans, wrap_ranges};
 use crate::markdown::{Block, CellAlign, Item, Located, Marker, Span, Tok};
@@ -157,7 +157,7 @@ fn highlight_hits(ui: &mut Ui, ctx: &Ctx, x: i32, y: i32, text: &str) {
             LINE_H,
         );
         ui.canvas
-            .fill_rect(cell, ctx.th.well.lerp(palette::YELLOW, 0.30));
+            .fill_rect(cell, ctx.th.well.lerp(ctx.th.highlight, 0.30));
     }
 }
 
@@ -186,13 +186,13 @@ fn token_color(th: &Theme, tok: Tok) -> Color {
         Tok::Image => th.info.hi,
         Tok::Marker => th.ink_soft,
         Tok::CodePlain => th.ink_light,
-        Tok::CodeKeyword => palette::ACCENT,
-        Tok::CodeType => palette::TEAL,
-        Tok::CodeFunction => palette::TEAL_HI,
-        Tok::CodeString => palette::GREEN,
-        Tok::CodeNumber => palette::YELLOW,
-        Tok::CodeComment => th.ink_soft,
-        Tok::CodePunct => th.ink_light.shade(-0.30),
+        Tok::CodeKeyword => th.syntax.keyword,
+        Tok::CodeType => th.syntax.type_name,
+        Tok::CodeFunction => th.syntax.function,
+        Tok::CodeString => th.syntax.string,
+        Tok::CodeNumber => th.syntax.number,
+        Tok::CodeComment => th.syntax.comment,
+        Tok::CodePunct => th.syntax.punctuation,
     }
 }
 

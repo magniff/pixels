@@ -1259,6 +1259,29 @@ fn line_breaks_survive_as_pieces_of_their_own() {
 }
 
 #[test]
+fn a_reply_is_taken_out_of_whatever_it_arrived_in() {
+    use notes::llm::clean_reply;
+    // The delimiters the prompt asks for, which is the whole reason it asks.
+    assert_eq!(
+        clean_reply("Here is the proofread version:\n<text>the passage</text>"),
+        "the passage"
+    );
+    // A model that opened the tag and forgot to close it still said where the
+    // answer began, which is the half that matters.
+    assert_eq!(clean_reply("<text>the passage"), "the passage");
+    // And the fallbacks, for a model that ignored the tags entirely.
+    assert_eq!(clean_reply("```\nthe passage\n```"), "the passage");
+    assert_eq!(clean_reply("```markdown\nthe passage\n```"), "the passage");
+    assert_eq!(clean_reply("\"the passage\""), "the passage");
+    // A quotation inside the answer is not a wrapper around it.
+    assert_eq!(
+        clean_reply("he said \"no\" and left"),
+        "he said \"no\" and left"
+    );
+    assert_eq!(clean_reply("  the passage  "), "the passage");
+}
+
+#[test]
 fn a_reply_is_folded_into_the_alphabet_the_font_has() {
     // The font is 5x7 ASCII, so anything else lands in a note as a box. The
     // punctuation a model reaches for has an obvious spelling; the rest goes.
@@ -2501,14 +2524,24 @@ use notes::settings::{Settings, CATALOGUE};
 #[test]
 fn settings_survive_a_round_trip_through_a_file() {
     let config = Settings {
+        scheme: "NORD".into(),
         assist: false,
         model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
         // A prompt has newlines in it, and the format is one line per setting.
         prompt: "first line\nsecond line\nand a backslash \\ too".into(),
     };
     let text = config.to_text();
-    assert_eq!(text.lines().count(), 3, "one line per setting");
+    assert_eq!(text.lines().count(), 4, "one line per setting");
     assert_eq!(Settings::parse(&text), config);
+}
+
+#[test]
+fn the_default_scheme_is_one_the_toolkit_has() {
+    let name = Settings::default().scheme;
+    assert!(
+        pixui::scheme_named(&name).is_some(),
+        "the app defaults to {name}, which the toolkit does not ship"
+    );
 }
 
 #[test]

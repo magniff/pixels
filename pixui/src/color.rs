@@ -47,7 +47,32 @@ impl Color {
         }
     }
 
-    /// Rough perceptual luminance, `0.0..=1.0`. Used to pick readable ink.
+    /// Relative luminance as WCAG defines it, which is what a contrast ratio
+    /// is computed from. Slower than [`Self::luma`] and correct.
+    pub fn relative_luminance(self) -> f32 {
+        let channel = |v: u8| {
+            let v = v as f32 / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(self.r()) + 0.7152 * channel(self.g()) + 0.0722 * channel(self.b())
+    }
+
+    /// The contrast ratio between two colours: 1.0 for identical, 21.0 for
+    /// black on white. Use it to *choose* an ink rather than guessing from
+    /// brightness — a mid-tone green takes dark ink and a mid-tone blue takes
+    /// light, and no single threshold gets both right.
+    pub fn contrast(self, other: Color) -> f32 {
+        let (a, b) = (self.relative_luminance(), other.relative_luminance());
+        let (hi, lo) = if a > b { (a, b) } else { (b, a) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    /// Rough perceptual luminance, `0.0..=1.0`. Cheap, and good enough for
+    /// deciding whether a surface is light or dark.
     pub fn luma(self) -> f32 {
         (0.299 * self.r() as f32 + 0.587 * self.g() as f32 + 0.114 * self.b() as f32) / 255.0
     }

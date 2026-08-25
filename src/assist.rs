@@ -65,6 +65,9 @@ pub struct Assist {
     pub asked: String,
     /// True on the frame the block appears, so the field takes the keyboard.
     grab: bool,
+    /// First row of the diff on screen, when it is taller than the block.
+    scroll: usize,
+    bar: pixui::ScrollState,
 }
 
 impl Assist {
@@ -77,6 +80,8 @@ impl Assist {
             request: String::new(),
             asked: String::new(),
             grab: true,
+            scroll: 0,
+            bar: pixui::ScrollState::default(),
         }
     }
 
@@ -117,6 +122,7 @@ impl Assist {
             }
             Err(why) => Phase::Failed(why),
         };
+        self.scroll = 0;
         // A question that came to nothing goes back in the box, so it can be
         // edited into a better one rather than typed again from scratch.
         if matches!(self.phase, Phase::Failed(_)) && self.request.is_empty() {
@@ -202,26 +208,49 @@ impl Assist {
                 ui.draw_text_in(body, &why.to_uppercase(), th.danger.face, Align::Left);
             }
             Phase::Reviewing { pieces, .. } => {
-                let all = rows(pieces, cols(rect.w - 6));
-                let shown = all.len().min(DIFF_ROWS);
-                for (i, row) in all.iter().take(shown).enumerate() {
+                // A long suggestion scrolls rather than being cut off with a
+                // count of what is missing: the whole point of the diff is that
+                // you can read all of it before agreeing to it.
+                let all = rows(pieces, cols(rect.w - 6 - Ui::SCROLL_GUTTER));
+                let visible = (body.h / font::LINE_H).max(1) as usize;
+                let over = all.len().saturating_sub(visible);
+                self.scroll = self.scroll.min(over);
+
+                if ui.input.key_pressed(Key::Down) {
+                    self.scroll = (self.scroll + 1).min(over);
+                } else if ui.input.key_pressed(Key::Up) {
+                    self.scroll = self.scroll.saturating_sub(1);
+                }
+                if body.contains(ui.input.mouse) && ui.input.wheel != 0.0 {
+                    let step = (ui.input.wheel * 3.0).round() as i32;
+                    self.scroll = (self.scroll as i32 - step).clamp(0, over as i32) as usize;
+                }
+
+                for (i, row) in all.iter().enumerate().skip(self.scroll).take(visible) {
                     let at = Rect::new(
                         body.x,
-                        body.y + i as i32 * font::LINE_H,
-                        body.w,
+                        body.y + (i - self.scroll) as i32 * font::LINE_H,
+                        body.w - Ui::SCROLL_GUTTER,
                         font::LINE_H,
                     );
                     draw_row(ui, at, row);
                 }
-                if all.len() > shown {
-                    let at = Rect::new(
-                        body.x,
-                        body.y + shown as i32 * font::LINE_H,
-                        body.w,
-                        font::LINE_H,
+
+                if over > 0 {
+                    let mut st = self.bar;
+                    st.content = all.len() as i32 * font::LINE_H;
+                    st.viewport = visible as i32 * font::LINE_H;
+                    st.target = self.scroll as f32 * font::LINE_H as f32;
+                    st.shown = st.target;
+                    let track = Rect::new(
+                        body.right() - Ui::BAR_W,
+                        body.y,
+                        Ui::BAR_W,
+                        visible as i32 * font::LINE_H,
                     );
-                    let more = all.len() - shown;
-                    ui.draw_text_in(at, &format!("+{more} MORE LINES"), th.ink_soft, Align::Left);
+                    ui.scroll_bar(track, "assist-diff", &mut st);
+                    self.scroll = (st.target / font::LINE_H as f32).round().max(0.0) as usize;
+                    self.bar = st;
                 }
             }
         }
@@ -279,13 +308,12 @@ impl Assist {
 
     /// Take what is typed and turn it into a question.
     ///
-    /// A follow-up asks about the suggestion on screen rather than the original
-    /// text — "now make it shorter" means shorter than what you are looking at.
+    /// Every question is about the text you selected, including the second and
+    /// third one. Asking about the last answer instead compounds its mistakes:
+    /// a rewrite of a rewrite drifts, and there is no way back to what you
+    /// actually wrote except to throw the whole thing away and start again.
     fn send(&mut self) -> Ask {
-        let source = match &self.phase {
-            Phase::Reviewing { proposal, .. } => proposal.clone(),
-            _ => self.source.clone(),
-        };
+        let source = self.source.clone();
         self.asked = std::mem::take(&mut self.request);
         self.phase = Phase::Thinking;
         Ask {

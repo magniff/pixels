@@ -91,6 +91,6 @@ pub use color::{palette, Color};
 pub use geom::{Point, Rect};
 pub use input::{Cursor, Input, Key, Mods};
 pub use layout::{Align, Dir, Layout};
-pub use theme::{Metrics, Ramp, Theme, Tone};
+pub use theme::{scheme_named, Metrics, Named, Ramp, Scheme, Syntax, Theme, Tone, SCHEMES};
 pub use ui::{FrameOutput, Id, Response, ScrollState, TextState, Ui, UiState};
 pub use widgets::Segment;

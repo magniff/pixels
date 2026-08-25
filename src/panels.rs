@@ -29,6 +29,7 @@ pub enum Panel {
 pub enum Page {
     #[default]
     Index,
+    Appearance,
     Assistant,
 }
 
@@ -44,6 +45,8 @@ pub enum Action {
     Cancel,
     /// The prompt was edited, so the assistant needs rebuilding with it.
     Prompt,
+    /// Wear this colour scheme.
+    Scheme(String),
 }
 
 /// The system prompt, edited the way everything else in this app is edited.
@@ -308,21 +311,101 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
     let (body, footer) = inner.split_bottom(19);
     let (_, used) = ui.column_measured(body, 2, |ui| match chrome.page {
         Page::Index => {
-            // One entry, and a list to hold it. What matters is that the next
-            // setting has somewhere to go.
-            let row = ui.alloc(15);
-            let entry = ui.button_at(row, "AI ASSISTANT", Tone::Neutral);
-            if entry.clicked {
-                chrome.page = Page::Assistant;
+            for (page, label, note) in [
+                (Page::Appearance, "APPEARANCE", "THE COLOUR SCHEME"),
+                (
+                    Page::Assistant,
+                    "AI ASSISTANT",
+                    "WHICH MODEL, AND WHAT TO TELL IT",
+                ),
+            ] {
+                let row = ui.alloc(15);
+                if ui.button_at(row, label, Tone::Neutral).clicked {
+                    chrome.page = page;
+                }
+                ui.space(1);
+                let hint = ui.alloc(8);
+                ui.draw_text_in(hint, note, th.ink_soft, Align::Left);
+                ui.space(2);
             }
-            ui.space(1);
-            let note = ui.alloc(8);
-            ui.draw_text_in(
-                note,
-                "WHICH MODEL, AND WHAT TO TELL IT",
-                th.ink_soft,
-                Align::Left,
-            );
+        }
+
+        Page::Appearance => {
+            // j and k walk the list, and wearing is what walking *is*: the
+            // point of a scheme list is to see the scheme, and a preview you
+            // have to ask for twice is not a preview.
+            let step = if ui.input.key_pressed(Key::Char('j')) || ui.input.key_pressed(Key::Down) {
+                1
+            } else if ui.input.key_pressed(Key::Char('k')) || ui.input.key_pressed(Key::Up) {
+                -1
+            } else {
+                0
+            };
+            if step != 0 {
+                let count = pixui::SCHEMES.len() as i32;
+                let at = pixui::SCHEMES
+                    .iter()
+                    .position(|(name, _)| config.scheme.eq_ignore_ascii_case(name))
+                    .unwrap_or(0) as i32;
+                let next = (at + step).rem_euclid(count) as usize;
+                action = Action::Scheme(pixui::SCHEMES[next].0.to_string());
+            }
+
+            let head = ui.alloc(15);
+            let (back, title) = head.split_left(46);
+            if ui.button_at(back, "BACK", Tone::Neutral).clicked {
+                chrome.page = Page::Index;
+            }
+            ui.draw_text_in(title, "  APPEARANCE", th.ink, Align::Left);
+            ui.draw_text_in(title, "J/K TO TRY THEM ", th.ink_soft, Align::Right);
+
+            // Every scheme the toolkit ships, each with a strip of its own
+            // colours: a name tells you nothing about a palette, and five
+            // swatches tell you most of it without having to put it on.
+            for (name, build) in pixui::SCHEMES {
+                let row = ui.alloc(13);
+                let current = config.scheme.eq_ignore_ascii_case(name);
+                let scheme = build();
+                if current {
+                    ui.canvas.fill_rect(row, th.accent.lo);
+                }
+                // The name takes what is left after the swatches and the
+                // button, both of which are a fixed size.
+                let (label, rest) = row.split_left(row.w - 124);
+                let ink = if current { th.accent.ink } else { th.ink };
+                ui.draw_text_in(label.translate(4, 0), name, ink, Align::Left);
+
+                // The swatches, in the order they matter: the page, the accent,
+                // and the three the app spends most of its colour on.
+                let swatches = [
+                    scheme.background,
+                    scheme.accent.face,
+                    scheme.danger.face,
+                    scheme.positive.face,
+                    scheme.info.face,
+                ];
+                let mut x = rest.x;
+                for (i, colour) in swatches.iter().enumerate() {
+                    let at = Rect::new(x, rest.y + 2, 12, 9);
+                    ui.canvas.fill_rect(at, *colour);
+                    // One outline around the strip rather than five, so the
+                    // swatches read as a palette and not as five buttons.
+                    if i == 0 {
+                        ui.canvas.vline(at.x - 1, at.y - 1, at.h + 2, th.ink_soft);
+                    }
+                    ui.canvas.hline(at.x, at.y - 1, at.w, th.ink_soft);
+                    ui.canvas.hline(at.x, at.bottom(), at.w, th.ink_soft);
+                    x += 12;
+                }
+                ui.canvas.vline(x, rest.y + 1, 11, th.ink_soft);
+
+                let button = Rect::new(rest.right() - 52, rest.y, 52, 13);
+                if current {
+                    ui.draw_text_in(button, "IN USE", th.positive.face, Align::Center);
+                } else if ui.button_at(button, "WEAR", Tone::Accent).clicked {
+                    action = Action::Scheme(name.to_string());
+                }
+            }
         }
         Page::Assistant => {
             let head = ui.alloc(15);

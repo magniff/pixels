@@ -28,8 +28,9 @@ passage back. Even a vague instruction gets a real
 change - handing back the text as you found it is not
 an answer.
 Keep any markdown markup, and keep the author's facts.
-Reply with the rewritten passage and nothing else: no
-preamble, no explanation, no quotes, no code fences.";
+Put the rewritten passage between <text> and </text>
+and write nothing at all outside them: no preamble, no
+explanation, no quotes, no code fences.";
 
 /// Weights the app knows how to fetch.
 ///
@@ -87,6 +88,8 @@ pub fn installed() -> Vec<PathBuf> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
+    /// The colour scheme, by the toolkit's name for it.
+    pub scheme: String,
     /// Whether the editing assistant is offered at all. With this off there is
     /// no mark beside a selection and nothing to ask — the app is a text editor
     /// and nothing else, which is a perfectly good thing for it to be.
@@ -100,6 +103,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            // Gruvbox dark: warm, low contrast, and easy to read from for an
+            // hour, which is what a note editor is for.
+            scheme: "GRUVBOX DARK".to_string(),
             // On, because a feature nobody can see is a feature nobody finds.
             assist: true,
             model: None,
@@ -144,6 +150,7 @@ impl Settings {
             };
             let value = value.trim();
             match key.trim() {
+                "scheme" if !value.is_empty() => out.scheme = value.to_string(),
                 "assist" => out.assist = value != "off",
                 "model" if !value.is_empty() => out.model = Some(value.to_string()),
                 "prompt" if !value.is_empty() => out.prompt = unescape(value),
@@ -155,6 +162,7 @@ impl Settings {
 
     pub fn to_text(&self) -> String {
         let mut out = String::new();
+        out.push_str(&format!("scheme = {}\n", self.scheme));
         out.push_str(&format!(
             "assist = {}\n",
             if self.assist { "on" } else { "off" }

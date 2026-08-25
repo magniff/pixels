@@ -95,6 +95,44 @@ impl Assistant {
     }
 }
 
+/// Take the answer out of whatever a model wrapped it in.
+///
+/// Small models announce themselves — "Here is the proofread version:" — and
+/// fence things they were not asked to fence. The prompt asks for the passage
+/// between `<text>` and `</text>` precisely so this can be exact rather than a
+/// guess about which opening sentence is a preamble and which is the text.
+/// Everything else here is a fallback for a model that ignored that.
+pub fn clean_reply(text: &str) -> String {
+    let mut out = text.trim();
+
+    // The delimiters, when they are there. A missing closing tag still tells
+    // us where the answer began, which is the half that matters.
+    if let Some(start) = out.find("<text>") {
+        out = &out[start + "<text>".len()..];
+        if let Some(end) = out.find("</text>") {
+            out = &out[..end];
+        }
+    }
+    out = out.trim();
+
+    // A code fence around prose, which no instruction ever quite stops.
+    if let Some(rest) = out.strip_prefix("```") {
+        let rest = rest.split_once('\n').map_or(rest, |(_, r)| r);
+        out = rest.strip_suffix("```").unwrap_or(rest).trim();
+    }
+
+    // And a whole answer in quotes, which is not the same as an answer that
+    // happens to contain them.
+    if out.len() > 1
+        && out.starts_with('"')
+        && out.ends_with('"')
+        && !out[1..out.len() - 1].contains('"')
+    {
+        out = &out[1..out.len() - 1];
+    }
+    out.trim().to_string()
+}
+
 /// Fold a reply into the alphabet the editor can actually draw.
 ///
 /// The font is 5x7 and ASCII. A model that answers with em dashes, curly

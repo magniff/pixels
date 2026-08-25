@@ -480,7 +480,9 @@ impl Ui<'_> {
             let chip = Rect::new(rect.right() - w - 3, rect.y + 2, w, rect.h - 5);
             self.canvas.fill_chamfer(chip, th.accent.lo, 1);
             let inner = Rect::new(chip.x, rect.y, chip.w - 5, rect.h - 1);
-            self.draw_text_in(inner, text, th.neutral.hi, Align::Right);
+            // Whichever ink the chip can actually be read in: a fixed one is a
+            // guess about how dark this theme's accent happens to be.
+            self.draw_text_in(inner, text, th.ink_on(th.accent.lo), Align::Right);
             title_right = chip.x - 4;
         }
 
