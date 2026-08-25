@@ -110,7 +110,7 @@ impl Assist {
                     // had no idea what to do with the instruction. Say which of
                     // the two happened, since only one of them is worth
                     // retrying.
-                    Phase::Failed("left it alone - try a more specific instruction".into())
+                    Phase::Failed("no change suggested - try a more specific instruction".into())
                 } else {
                     Phase::Reviewing { proposal, pieces }
                 }

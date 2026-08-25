@@ -37,6 +37,8 @@ pub fn default_path() -> PathBuf {
 pub struct Local {
     path: PathBuf,
     loaded: Option<(LlamaBackend, LlamaModel)>,
+    /// Whether this model reasons out loud unless told the thinking is done.
+    thinks: bool,
 }
 
 impl Local {
@@ -44,10 +46,11 @@ impl Local {
         Self {
             path: path.as_ref().to_path_buf(),
             loaded: None,
+            thinks: false,
         }
     }
 
-    fn load(&mut self) -> Result<&(LlamaBackend, LlamaModel), String> {
+    fn load(&mut self) -> Result<(), String> {
         if self.loaded.is_none() {
             // llama.cpp narrates its whole startup to stderr. Interesting once,
             // and then it is a hundred lines between you and any message the
@@ -61,10 +64,19 @@ impl Local {
             let params = LlamaModelParams::default().with_n_gpu_layers(99);
             let model = LlamaModel::load_from_file(&backend, &self.path, &params)
                 .map_err(|e| format!("loading {}: {e}", self.path.display()))?;
+            // Asked of the model rather than guessed from its filename: the
+            // instruct-tuned builds share a tokeniser with the thinking ones,
+            // and handing one an empty `<think>` block it was never trained on
+            // is how a perfectly good model answers with nothing at all.
+            self.thinks = model
+                .chat_template(None)
+                .ok()
+                .and_then(|t| t.to_string().ok())
+                .is_some_and(|t| t.contains("<think>"));
             leave_before_ggml_does();
             self.loaded = Some((backend, model));
         }
-        Ok(self.loaded.as_ref().expect("just loaded"))
+        Ok(())
     }
 }
 
@@ -78,7 +90,13 @@ impl Local {
 /// it was told as the thing to do, and with the order the other way round it
 /// reliably answered the question "what is this text?" — by handing the text
 /// back.
-fn prompt(ask: &Ask) -> String {
+fn prompt(ask: &Ask, thinks: bool) -> String {
+    // Only a model that would otherwise deliberate gets told not to.
+    let opening = if thinks {
+        "<think>\n\n</think>\n\n"
+    } else {
+        ""
+    };
     format!(
         "<|im_start|>system\n\
          You are the editor built into a markdown note-taking app. Somebody has \
@@ -92,7 +110,7 @@ fn prompt(ask: &Ask) -> String {
          <|im_start|>user\n\
          Text:\n{}\n\n\
          Instruction: {}<|im_end|>\n\
-         <|im_start|>assistant\n<think>\n\n</think>\n\n",
+         <|im_start|>assistant\n{opening}",
         ask.source,
         ask.request.trim()
     )
@@ -148,8 +166,10 @@ impl Backend for Local {
     }
 
     fn edit(&mut self, ask: &Ask) -> Reply {
-        let (backend, model) = self.load()?;
-        let text = prompt(ask);
+        self.load()?;
+        let thinks = self.thinks;
+        let (backend, model) = self.loaded.as_ref().expect("loaded above");
+        let text = prompt(ask, thinks);
         let tokens = model
             .str_to_token(&text, AddBos::Never)
             .map_err(|e| format!("tokenising: {e}"))?;
@@ -208,7 +228,10 @@ impl Backend for Local {
         let text = String::from_utf8_lossy(&out).to_string();
         let text = unwrap_reply(&text);
         if text.is_empty() {
-            return Err("the model had nothing to say".into());
+            // Nothing to say is an answer: the passage is already what the
+            // instruction asked for. Handing back the source says that in the
+            // one vocabulary the caller understands — a diff with nothing in it.
+            return Ok(ask.source.clone());
         }
         Ok(text)
     }

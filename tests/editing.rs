@@ -1259,6 +1259,24 @@ fn line_breaks_survive_as_pieces_of_their_own() {
 }
 
 #[test]
+fn a_reply_is_folded_into_the_alphabet_the_font_has() {
+    // The font is 5x7 ASCII, so anything else lands in a note as a box. The
+    // punctuation a model reaches for has an obvious spelling; the rest goes.
+    let folded =
+        notes::llm::to_ascii("it\u{2019}s \u{201c}fine\u{201d} \u{2014} really\u{2026} \u{1f389}");
+    assert_eq!(folded, "it's \"fine\" -- really...");
+    assert!(folded.is_ascii());
+}
+
+#[test]
+fn folding_keeps_the_shape_of_what_it_was_given() {
+    // The lines are the passage's shape and the indent is a list's nesting.
+    // Only the gap a dropped character leaves behind is tidied away.
+    let folded = notes::llm::to_ascii("one \u{2014} two\n  - a \u{1f389} b\nthree");
+    assert_eq!(folded, "one -- two\n  - a b\nthree");
+}
+
+#[test]
 fn the_rehearsal_backend_fixes_what_it_claims_to() {
     use notes::llm::{Ask, Backend};
     let mut stub = notes::llm::Rehearsal;

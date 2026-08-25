@@ -184,7 +184,7 @@ test covers the whole pane.
 
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 273 tests
+cargo test --workspace                         # 275 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 
@@ -230,10 +230,10 @@ enough that the app still has an assistant when built without one. It says
 `REHEARSAL` in the panel, because a stub that does not admit to being one is a
 demo pretending to be a feature.
 
-The real one is **Qwen3-1.7B**, quantised to four bits and run through
-llama.cpp — on the machine in front of you, offline, no key and no account.
-Build it in with `--features llm`, which compiles llama.cpp from source and so
-wants `cmake` and `clang`, and fetch the weights:
+The real one is **Qwen3**, quantised to four bits and run through llama.cpp —
+on the machine in front of you, offline, no key and no account. Build it in with
+`--features llm`, which compiles llama.cpp from source and so wants `cmake` and
+`clang`, and fetch the weights:
 
 ```sh
 mkdir -p models && curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
@@ -241,8 +241,20 @@ mkdir -p models && curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
 ```
 
 That is where it looks unless `PIXUI_MODEL` says otherwise; without it the build
-falls back to the stub. Point `PIXUI_MODEL` at a bigger one — Qwen3-4B is about
-2.4 GB — and nothing needs rebuilding. The weights load on the first question rather than at
+falls back to the stub.
+
+**1.7B** (1.2 GB) proofreads, tightens and rephrases well. It is poor at style:
+"make it goofy" comes back with a comma moved, because at that size a vague
+instruction gives it nothing to aim at and its safest guess is what you wrote.
+**4B-Instruct** (2.3 GB) is the one to fetch if that matters — same prompt, same
+code, and it will happily turn a sentence about bitmap fonts into a pixelated
+superhero. Point `PIXUI_MODEL` at it; nothing needs rebuilding.
+
+Which prompt a model gets is asked of the model rather than guessed from its
+name: the thinking-tuned Qwen3 builds are told the thinking is already done, by
+prefilling an empty `<think>` block, and the instruct-tuned ones — which share a
+tokeniser but were never trained on that — are not. Handing one an empty think
+block is how a perfectly good model answers with nothing at all. The weights load on the first question rather than at
 startup, so opening a note never waits on them. On Apple silicon the whole
 model goes to the GPU and an edit takes a second or two.
 
@@ -253,16 +265,21 @@ what it costs:
 echo "some prose with an error in it" | cargo run --features llm -- --ask "fix the grammar"
 ```
 
-A 1.7B model is good at proofreading, tightening and rephrasing — the jobs
-where being local matters most, since the note never leaves the machine. It
-wants a *concrete* instruction: "fix the grammar", "split into two sentences",
-"say it as a pirate" all work, where "make it goofy" gets the text handed back
-almost unchanged. At this size the model has no idea what you meant, and its
-safest guess is the passage it was given. When that happens the block says so
-and puts the question back in the field to be edited.
+A local model is good at proofreading, tightening and rephrasing — the jobs
+where being local matters most, since the note never leaves the machine. All of
+them want a *concrete* instruction: "fix the grammar", "split into two
+sentences", "say it as a pirate". When one finds nothing to do — because the
+instruction was vague, or because the passage was already right — the block says
+so and puts the question back in the field to be edited.
 
-It is loaded once and stays loaded, because loading costs about six seconds and
-answering costs a fraction of one. That is also why quitting the app used to
+Whatever comes back is folded into ASCII on the way in — em dashes become two
+hyphens, curly quotes straighten, emoji are dropped — because the font is 5x7
+and has no glyph for any of it. A suggestion arriving as a row of missing-glyph
+boxes is not a suggestion.
+
+The model is loaded once and stays loaded: a few seconds the first time, a
+fraction of one after that, against a tenth of a second to answer. That is also
+why quitting the app used to
 end in a page of backtrace: llama.cpp's Metal backend asserts, on the way out,
 that every buffer has been freed, and nothing frees them — a process on its way
 to `exit` does not unwind, and a quit from the macOS menu runs no Rust

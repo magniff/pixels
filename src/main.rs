@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("[{}]", backend.name());
         let started = std::time::Instant::now();
         match backend.edit(&notes::llm::Ask { source, request }) {
-            Ok(text) => println!("{text}"),
+            // Folded the same way the editor folds it, so this prints what a
+            // note would actually get rather than what the model said.
+            Ok(text) => println!("{}", notes::llm::to_ascii(&text)),
             Err(e) => eprintln!("error: {e}"),
         }
         eprintln!("[{:.1}s]", started.elapsed().as_secs_f32());

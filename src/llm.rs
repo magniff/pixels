@@ -47,7 +47,7 @@ impl Assistant {
         std::thread::spawn(move || {
             // Ends when the application drops its end of the channel.
             while let Ok(ask) = asks.recv() {
-                let reply = backend.edit(&ask);
+                let reply = backend.edit(&ask).map(|text| to_ascii(&text));
                 if replies.send(reply).is_err() {
                     break;
                 }
@@ -93,6 +93,47 @@ impl Assistant {
             }
         }
     }
+}
+
+/// Fold a reply into the alphabet the editor can actually draw.
+///
+/// The font is 5x7 and ASCII. A model that answers with em dashes, curly
+/// quotes and a couple of party emoji is not wrong — it is writing for a
+/// different screen — but every one of those lands in a note as a missing-glyph
+/// box. The common punctuation has an obvious ASCII spelling and gets it;
+/// anything left over is dropped rather than drawn as a box.
+///
+/// Applied to every backend's answer, because the limit belongs to the editor
+/// rather than to whichever model happened to answer.
+pub fn to_ascii(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            c if c.is_ascii() => out.push(c),
+            // An em dash is two hyphens in ASCII prose; a single one reads as a
+            // hyphenated word and joins the two clauses it was separating.
+            '\u{2014}' | '\u{2015}' => out.push_str("--"),
+            '\u{2013}' | '\u{2012}' | '\u{2212}' => out.push('-'),
+            '\u{2026}' => out.push_str("..."),
+            '\u{2018}' | '\u{2019}' | '\u{201b}' => out.push('\''),
+            '\u{201c}' | '\u{201d}' | '\u{201f}' => out.push('"'),
+            '\u{00a0}' | '\u{2007}' | '\u{202f}' => out.push(' '),
+            '\u{2022}' | '\u{00b7}' => out.push('-'),
+            '\u{00d7}' => out.push('x'),
+            _ => {}
+        }
+    }
+    // Dropping a character can leave the space that was holding it up. Tidied
+    // line by line, and past the indent: the lines are the passage's shape and
+    // the indent is a list's nesting, and neither is whitespace to tidy away.
+    out.lines()
+        .map(|line| {
+            let indent = &line[..line.len() - line.trim_start().len()];
+            let words: Vec<&str> = line.split_whitespace().collect();
+            format!("{indent}{}", words.join(" "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A stand-in that does a few mechanical fixes without a model.
