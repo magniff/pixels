@@ -1301,6 +1301,32 @@ fn a_cursor_at_the_edge_does_not_write_out_of_bounds() {
 // ---------------------------------------------------------------- text input
 
 #[test]
+fn a_field_that_goes_away_hands_the_keyboard_back() {
+    let mut h = Harness::new();
+    let rect = Rect::new(0, 0, 120, 15);
+    let mut text = String::new();
+
+    h.input.mouse = Point::new(20, 7);
+    h.input.mouse_down = true;
+    h.input.mouse_pressed = true;
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    h.frame(|ui| ui.text_field_at(rect, "f", &mut text));
+    assert!(
+        h.frame(|ui| ui.text_input_active()),
+        "the field has the keyboard"
+    );
+
+    // The frame after it stops being drawn — a panel closed, a block applied
+    // and dismissed — nobody is typing into anything.
+    assert!(
+        !h.frame(|ui| ui.text_input_active()),
+        "a keyboard held by a field that no longer exists is a keyboard nobody          can take back, and the application's own keys never arrive"
+    );
+}
+
+#[test]
 fn a_focused_text_field_claims_the_keyboard() {
     let mut h = Harness::new();
     let rect = Rect::new(0, 0, 120, 15);

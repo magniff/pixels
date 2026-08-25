@@ -257,6 +257,19 @@ impl<'a> Ui<'a> {
         state.scrolls.retain(|_, s| s.touched == frame);
         state.texts.retain(|_, t| t.touched == frame);
 
+        // A field that was not drawn is gone, and the keyboard cannot be left
+        // with it. Nothing else would ever hand it back: the application asks
+        // whether a text field has the keys before dispatching its own, so a
+        // focus pointing at a field that no longer exists swallows every key
+        // until something else is clicked. Which is exactly how it feels — the
+        // window stops answering and a click anywhere fixes it.
+        if let Some(id) = state.text_focus.filter(|id| !state.texts.contains_key(id)) {
+            state.text_focus = None;
+            if state.focus == Some(id) {
+                state.focus = None;
+            }
+        }
+
         let out = FrameOutput {
             cursor: self.cursor,
             theme: self.next_theme,
