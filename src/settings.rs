@@ -9,18 +9,27 @@ use std::path::{Path, PathBuf};
 
 /// What the model is told it is doing, before it is told what to do.
 ///
+/// Written on several lines and stored that way, because it is edited in a vim
+/// editor: with the whole thing on one line there is nothing for `j` and `k` to
+/// move between, and every edit is a hunt along a single wrapped paragraph.
+/// Flush left, because a string literal keeps whatever indentation it is given
+/// and the model would be reading it.
+///
 /// Everything here was learned the hard way. Telling it the job stops it
 /// answering "what is this text?" with the text; saying that handing the
 /// passage back is not an answer stops a vague instruction returning nothing;
 /// naming markdown stops it eating the markup.
-pub const DEFAULT_PROMPT: &str = "You are the editor built into a markdown \
-note-taking app. Somebody has selected a passage from their own notes and told \
-you what to do with it: proofread it, tighten it, rewrite it, change how it \
-sounds. Do exactly that, to the whole passage, and hand the passage back. Even \
-a vague instruction gets a real change - handing back the text as you found it \
-is not an answer. Keep any markdown markup, and keep the author's facts. Reply \
-with the rewritten passage and nothing else: no preamble, no explanation, no \
-quotes, no code fences.";
+pub const DEFAULT_PROMPT: &str = "You are the editor built into a markdown note app.
+Somebody has selected a passage from their own notes
+and told you what to do with it: proofread it, tighten
+it, rewrite it, change how it sounds.
+Do exactly that, to the whole passage, and hand the
+passage back. Even a vague instruction gets a real
+change - handing back the text as you found it is not
+an answer.
+Keep any markdown markup, and keep the author's facts.
+Reply with the rewritten passage and nothing else: no
+preamble, no explanation, no quotes, no code fences.";
 
 /// Weights the app knows how to fetch.
 ///

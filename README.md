@@ -229,6 +229,11 @@ word in it and `u` undoes that, and the mode shows beside the heading. A
 settings field that cannot do what the rest of the app does is a settings field
 you have to think about.
 
+The default prompt is stored across several lines rather than as one long one,
+because it is edited in a vim editor: with the whole thing on a single line
+there is nothing for `j` and `k` to move between, and every edit becomes a hunt
+along one wrapped paragraph.
+
 All three settle in `~/.config/pixui-notes/settings.conf` — two keys, written by
 hand, because a dependency that can parse anything is a strange price to pay for
 that. `PIXUI_CONFIG` moves the file and `PIXUI_MODELS` moves the weights folder;

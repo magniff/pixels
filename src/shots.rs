@@ -481,7 +481,7 @@ pub fn run() -> std::io::Result<()> {
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 222),
-                Point::new(241, 172),
+                Point::new(250, 153),
             ],
             then: vec![],
             settle: 12,
@@ -500,8 +500,8 @@ pub fn run() -> std::io::Result<()> {
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 222),
-                Point::new(241, 172),
-                Point::new(503, 325),
+                Point::new(250, 153),
+                Point::new(558, 344),
             ],
             then: keys("jjVj"),
             settle: 12,
@@ -517,7 +517,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
-            clicks: vec![Point::new(64, 21), Point::new(503, 308)],
+            clicks: vec![Point::new(64, 21), Point::new(558, 257)],
             then: vec![],
             settle: 14,
             canvas: (768, 470),

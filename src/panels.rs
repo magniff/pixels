@@ -226,16 +226,20 @@ pub struct Chrome {
     pub notice: String,
 }
 
-const WIDTH: i32 = 320;
-/// Room for the prompt: enough of it to read without scrolling.
-const PROMPT_H: i32 = 62;
+/// Wide enough to edit a prompt in. The panel is a place of work, not a
+/// notification, and the prompt inside it is a paragraph.
+const WIDTH: i32 = 430;
+/// A narrower panel for the one that only has something to say.
+const ABOUT_W: i32 = 330;
+/// Room for the prompt: most of it at once, and room to move around in.
+const PROMPT_H: i32 = 100;
 
 /// What the app is, and which build of it this is.
 pub fn about(ui: &mut Ui) -> bool {
     let screen = ui.canvas.bounds();
     ui.canvas
         .fill_rect_blend(screen, pixui::palette::VOID, 0.55);
-    let rect = screen.centered(WIDTH, 150);
+    let rect = screen.centered(ABOUT_W, 150);
     let inner = ui.panel(rect, "ABOUT");
     ui.capture_keyboard();
 
