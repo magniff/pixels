@@ -131,9 +131,9 @@ impl Assist {
     /// open. The status bar is already where this app says what just happened.
     pub fn headline(&self) -> String {
         match &self.phase {
-            Phase::Asking => "ASK FOR A CHANGE, ENTER TO SEND".into(),
-            Phase::Thinking => "WORKING ON IT".into(),
-            Phase::Reviewing { .. } => "SUGGESTED - CTRL-ENTER KEEPS IT".into(),
+            Phase::Asking => "ASK FOR A CHANGE, ENTER TO SEND".to_string(),
+            Phase::Thinking => "WORKING ON IT".to_string(),
+            Phase::Reviewing { .. } => format!("SUGGESTED - {} KEEPS IT", chord()),
             Phase::Failed(why) => why.to_uppercase(),
         }
     }
@@ -292,6 +292,19 @@ impl Assist {
             source,
             request: self.asked.clone(),
         }
+    }
+}
+
+/// What to call the modifier on this keyboard.
+///
+/// The toolkit maps `cmd` onto whichever key the platform means by "the
+/// primary one", so the binding is the same everywhere and only its name
+/// changes.
+fn chord() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "CMD-ENTER"
+    } else {
+        "CTRL-ENTER"
     }
 }
 

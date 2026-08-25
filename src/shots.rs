@@ -85,12 +85,12 @@ fn tab(shift: bool) -> Vec<Press> {
     }]
 }
 
-/// Ctrl with a key that is not a character.
-fn ctrl_key(key: Key) -> Vec<Press> {
+/// The primary modifier with a key that is not a character.
+fn cmd_key(key: Key) -> Vec<Press> {
     vec![Press {
         key,
         mods: Mods {
-            ctrl: true,
+            cmd: true,
             ..Default::default()
         },
     }]
@@ -356,7 +356,7 @@ pub fn run() -> std::io::Result<()> {
                 keys("teh quick brown fox jumped  over teh lazy dog"),
                 keys("\x1b"),
                 keys("V"),
-                ctrl('a'),
+                cmd_key(Key::Enter),
                 keys("fix the typos"),
                 keys("\n"),
             ]
@@ -382,7 +382,7 @@ pub fn run() -> std::io::Result<()> {
                 keys("teh quick brown fox jumped  over teh lazy dog"),
                 keys("\x1b"),
                 keys("V"),
-                ctrl('a'),
+                cmd_key(Key::Enter),
                 keys("fix the typos"),
                 keys("\n"),
             ]
@@ -532,10 +532,10 @@ pub fn run() -> std::io::Result<()> {
                 keys("teh quick brown fox jumped  over teh lazy dog"),
                 keys("\x1b"),
                 keys("V"),
-                ctrl('a'),
+                cmd_key(Key::Enter),
                 keys("fix the typos"),
                 keys("\n"),
-                ctrl_key(Key::Enter),
+                cmd_key(Key::Enter),
             ]
             .concat(),
             mouse: Point::new(-9, -9),

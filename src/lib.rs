@@ -479,6 +479,16 @@ impl Notes {
         }
     }
 
+    /// Note that the assistant was asked for, if there is anything to ask about.
+    ///
+    /// Only a flag: where the block opens depends on where the selection lands
+    /// on screen, and that is not known until the editor has drawn.
+    fn want_assist(&mut self) {
+        if self.settings.assist && self.vim.visual_kind().is_some() {
+            self.assist_wanted = true;
+        }
+    }
+
     /// Open the assistant on whatever is selected.
     ///
     /// The range is taken now and kept: by the time an answer comes back the
@@ -932,6 +942,10 @@ fn handle_shortcuts(ui: &mut Ui, app: &mut Notes) {
                 app.editor_tab = 1;
                 app.status = "PREVIEW".into();
             }
+            // The one key for the assistant: it calls it on a selection, and
+            // keeps what it suggests. Off macOS the toolkit maps `cmd` onto
+            // Control, which is where this lives on those keyboards anyway.
+            Key::Enter => app.want_assist(),
             Key::Char('e') => app.focus_pane(Pane::Editor),
             Key::Char('n') => app.focus_pane(Pane::Notes),
             Key::Char('s') => app.focus_pane(Pane::Search),
@@ -1070,16 +1084,11 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
         if mods.cmd && !mods.ctrl {
             continue;
         }
-        // Ctrl-a asks the assistant about the selection: the same thing the
-        // mark beside it does, for hands that never left the keyboard. Where
-        // the panel hangs is decided by the drawing, which is the only place
-        // that knows where the selection ended up on screen.
-        if mods.ctrl
-            && key == Key::Char('a')
-            && app.settings.assist
-            && app.vim.visual_kind().is_some()
-        {
-            app.assist_wanted = true;
+        // The same call, spelled with the other modifier: the block accepts a
+        // suggestion on either, and the key that opens it should not be fussier
+        // than the key that finishes with it.
+        if mods.ctrl && key == Key::Enter {
+            app.want_assist();
             continue;
         }
         // Ctrl-n / Ctrl-p walk the sidebar without leaving the editor.

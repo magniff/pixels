@@ -126,7 +126,7 @@ not Control — Control is vim's.
 | **Search** | `/` `?`, `n` `N`, `*` for the word under the cursor |
 | **Commands** | `:w`, `:e`, `:q`, `:qa`, `:new`, `:preview`, `:source`, `:help` |
 | **Indenting** | `Tab` a level in, `Shift-Tab` a level out |
-| **Assistant** | `Ctrl-a` on a visual selection, or the mark in the margin |
+| **Assistant** | `Cmd-Enter` on a visual selection, and again to keep what it suggests |
 
 A new line inherits where it is. Enter in a list opens the next item already
 marked up — the same bullet, the next number, an unchecked box for a task, at
@@ -244,7 +244,7 @@ machine took them.
 ## The assistant
 
 Select something in visual mode and a mark appears in the right margin, level
-with the last line of the selection. Press it — or `Ctrl-a`, for hands that
+with the last line of the selection. Press it — or `Cmd-Enter`, for hands that
 never left the keyboard — and the text opens up under the selection to make
 room for the question.
 
@@ -259,7 +259,8 @@ them, and leaves the note reading as a note with a question in it.
 
 The answer comes back as a word-level diff: struck through in red where words
 went, green where they arrived, and the note is not touched until **APPLY** is
-pressed. **REJECT** throws it away. Asking again refines what is on screen
+pressed — or `Cmd-Enter` again, which is the same key that called it. One chord
+for the whole exchange: ask, and keep. **REJECT** throws it away. Asking again refines what is on screen
 rather than starting over, so "now make it shorter" means shorter than the
 suggestion you are looking at.
 
