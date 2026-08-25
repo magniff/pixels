@@ -791,6 +791,21 @@ pub fn run() -> std::io::Result<()> {
         // The wheel over the source pane, which moves the view and takes the
         // caret with it rather than being snapped back by it.
         Scene {
+            // Rolled far past the end: the last line of the note should be
+            // sitting on the last row of the pane, not fifteen rows above it.
+            name: "source-bottom",
+            script: [keys(":e markdown-showcase.md"), keys("\n")].concat(),
+            mouse: Point::new(600, 300),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: -60.0,
+            clicks: vec![],
+            then: vec![],
+            settle: 30,
+            canvas: (900, 660),
+        },
+        Scene {
             name: "wheel-scroll",
             script: [keys(":e markdown-showcase.md"), keys("\n")].concat(),
             mouse: Point::new(600, 300),

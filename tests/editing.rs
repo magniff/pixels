@@ -1341,6 +1341,34 @@ fn the_rehearsal_backend_fixes_what_it_claims_to() {
 }
 
 #[test]
+fn the_view_can_reach_the_end_of_a_wrapping_note() {
+    use notes::last_top;
+    use notes::text::Buffer;
+
+    // Twelve short lines in a pane eight rows tall: the last eight lines fit,
+    // so the view stops with the fifth line at the top.
+    let plain = Buffer::from_text(
+        &(1..=12)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    assert_eq!(last_top(&plain, 40, 8), 4);
+
+    // The same twelve lines, except the last one wraps into four rows. Those
+    // rows crowd out three of the lines that used to fit, so the view has to be
+    // allowed three lines further down than a count of lines would say.
+    let mut lines: Vec<String> = (1..=11).map(|n| format!("line {n}")).collect();
+    lines.push("x".repeat(160));
+    let wrapped = Buffer::from_text(&lines.join("\n"));
+    assert_eq!(last_top(&wrapped, 40, 8), 7);
+
+    // A note shorter than the pane never scrolls at all.
+    let short = Buffer::from_text("one\ntwo");
+    assert_eq!(last_top(&short, 40, 8), 0);
+}
+
+#[test]
 fn the_status_line_says_what_the_model_is_doing() {
     use notes::assist::{Assist, Phase};
     use notes::llm::Progress;

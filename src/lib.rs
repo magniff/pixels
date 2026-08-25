@@ -1665,6 +1665,30 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
 /// position, counting the visual rows each one wraps into, until the row under
 /// the pointer is reached. Wrapping is derived from the raw text, so this and
 /// the renderer cannot disagree about where a character is.
+/// The furthest down the view may go: the line at which the last row of the
+/// note sits on the last row of the pane.
+///
+/// Counted in the rows the lines actually wrap into, and walked from the end.
+/// A note whose last paragraph wraps into six rows has six rows of tail and
+/// one line of it — take the line count for the row count, as a bar measured
+/// in lines does, and the end of the note is somewhere the view is not allowed
+/// to reach. Which is exactly how it looks: the wheel stops, and there is
+/// still text below it.
+pub fn last_top(buf: &Buffer, cols: usize, visible: usize) -> usize {
+    let total = buf.line_count();
+    let mut rows = 0usize;
+    let mut top = total;
+    while top > 0 {
+        let r = markdown::wrap_ranges(buf.line(top - 1), cols).len().max(1);
+        if rows + r > visible {
+            break;
+        }
+        rows += r;
+        top -= 1;
+    }
+    top.min(total.saturating_sub(1))
+}
+
 fn position_at(
     buf: &Buffer,
     scroll: usize,
@@ -1752,18 +1776,21 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // caret and lets the view follow. So both are applied first, and the caret
     // is then pulled into whatever is now on screen — which is what an editor
     // does when you scroll away from the line you were typing on.
+    let max_scroll = last_top(&app.notes[i].buffer, cols, visible);
+
     let was = app.scroll;
     if resp.hovered && ui.input.wheel != 0.0 {
         let step = (ui.input.wheel * 3.0).round() as i32;
-        app.scroll = (app.scroll as i32 - step).max(0) as usize;
+        app.scroll = (app.scroll as i32 - step).clamp(0, max_scroll as i32) as usize;
     }
     {
         // The bar is told about logical lines, not the visual rows they wrap
         // into: the editor scrolls by whole lines, as vim does, and a bar
         // measured in something the scrolling cannot express would stop
-        // exactly where it could not go.
+        // exactly where it could not go. Its content is stated as the distance
+        // it may travel plus a pane, which is the same limit the wheel has.
         let mut st = app.editor_scroll;
-        st.content = total as i32 * line_h;
+        st.content = (max_scroll + visible) as i32 * line_h;
         st.viewport = visible as i32 * line_h;
         st.target = app.scroll as f32 * line_h as f32;
         st.shown = st.target;
@@ -1772,7 +1799,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
         app.scroll = (st.target / line_h as f32).round().max(0.0) as usize;
         app.editor_scroll = st;
     }
-    app.scroll = app.scroll.min(total.saturating_sub(1));
+    app.scroll = app.scroll.min(max_scroll);
     if app.scroll != was {
         // Carry the caret with the view rather than letting the follow below
         // snap the view straight back to it.
