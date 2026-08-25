@@ -480,7 +480,13 @@ impl<'a> Ui<'a> {
     /// what makes a slider survive a sloppy drag.
     pub fn interact(&mut self, id: Id, rect: Rect) -> Response {
         let p: Point = self.input.mouse;
-        let inside = self.input.mouse_in_window
+        // Blocked input means blocked: a widget drawn under a modal must not
+        // take the pointer, and until this said so, `input_blocked` only ever
+        // stopped a field from typing. A dialog's own buttons then went dead
+        // wherever they overlapped something underneath, because the thing
+        // underneath was asked first and said yes.
+        let inside = !self.input_blocked
+            && self.input.mouse_in_window
             && rect.contains(p)
             && self.canvas.clip_contains(p)
             && !self.pointer_covered();

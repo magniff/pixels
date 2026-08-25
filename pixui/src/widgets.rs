@@ -1004,7 +1004,12 @@ impl Ui<'_> {
 
     // ------------------------------------------------------------------ menus
 
-    /// A menu's name in a bar: a word that lights up when its menu is down.
+    /// A menu's name in a bar.
+    ///
+    /// Drawn as a control at rest rather than as a word that happens to react
+    /// to the pointer: a chamfered face and a caret under the name, because a
+    /// menu nobody can see is a menu nobody opens. It lights up on hover and
+    /// sinks in while its menu is down.
     pub fn menu_title(&mut self, rect: Rect, label: &str, open: bool) -> Response {
         let th = *self.theme;
         let id = self.id(label);
@@ -1012,13 +1017,30 @@ impl Ui<'_> {
         if resp.hovered {
             self.request_cursor(Cursor::Pointer);
         }
-        if open || resp.hovered {
-            let tint = if open { th.accent.lo } else { th.accent.hi };
-            self.canvas.fill_rect(rect, tint);
+
+        let face = if open {
+            th.accent.lo
+        } else if resp.hovered {
+            th.accent.hi
+        } else {
+            th.accent.face.shade(0.10)
+        };
+        self.canvas.fill_chamfer(rect, face, 1);
+        if !open {
+            // A lit top edge, the same trick the panel titles use: enough to
+            // read as raised without a full border in a thirteen-pixel strip.
+            self.canvas
+                .hline(rect.x + 1, rect.y, rect.w - 2, th.accent.hi);
         }
+        self.canvas
+            .stroke_chamfer(rect, th.accent.lo.shade(-0.15), 1);
+
         let ink = if open { th.neutral.hi } else { th.ink };
         let y = rect.y + (rect.h - font::GLYPH_H) / 2;
         font::draw_text_styled(self.canvas, rect.x + 5, y, label, ink, true);
+
+        let caret = Rect::new(rect.right() - 10, rect.y + (rect.h - 3) / 2, 5, 3);
+        icon::draw(self.canvas, caret.x, caret.y, icon::CARET_DOWN, ink);
         resp
     }
 

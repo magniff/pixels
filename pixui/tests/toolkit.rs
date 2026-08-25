@@ -307,6 +307,35 @@ fn a_floating_layer_takes_the_click_from_what_is_under_it() {
 }
 
 #[test]
+fn blocked_input_stops_the_pointer_as_well_as_the_keyboard() {
+    // What a modal is made of: the page is drawn inside the block and the
+    // dialog outside it, and the click belongs to the dialog even though the
+    // page was asked first and is sitting right under the pointer.
+    let mut h = Harness::new();
+    let mut run = |press: bool, release: bool| {
+        h.input.mouse = Point::new(20, 20);
+        h.input.mouse_pressed = press;
+        h.input.mouse_down = press || !release;
+        h.input.mouse_released = release;
+        h.frame(|ui| {
+            let page = ui.input_blocked(true, |ui| {
+                let id = ui.id("page");
+                ui.interact(id, Rect::new(0, 0, 200, 100))
+            });
+            let over = Rect::new(10, 10, 40, 20);
+            let id = ui.id("dialog");
+            let dialog = ui.interact(id, over);
+            (page.clicked || page.hovered, dialog.clicked)
+        })
+    };
+    run(false, false);
+    run(true, false);
+    let (page, dialog) = run(false, true);
+    assert!(!page, "nothing under a block is even hovered");
+    assert!(dialog, "and the click lands on what was drawn over it");
+}
+
+#[test]
 fn a_layer_only_covers_its_own_rectangle() {
     let mut h = Harness::new();
     // Same two widgets, pointer outside the floating one.

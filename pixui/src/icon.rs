@@ -39,6 +39,15 @@ pub const CHECK: &[&str] = &[
     ".##...",
 ];
 
+/// A small triangle pointing down, for something that opens onto more: a menu
+/// title, a collapsed section, a dropdown.
+#[rustfmt::skip]
+pub const CARET_DOWN: &[&str] = &[
+    "#####",
+    ".###.",
+    "..#..",
+];
+
 /// A four-pointed star, for the editing assistant.
 #[rustfmt::skip]
 pub const SPARK: &[&str] = &[

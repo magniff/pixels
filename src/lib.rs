@@ -1097,7 +1097,8 @@ fn draw_titlebar(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Point {
     // The strip with no title of its own: the menu stands where the name was.
     ui.title_bar(rect, "", Some(&badge.to_uppercase()));
 
-    let w = pixui::font::advance_width("PIXELS") + 10;
+    // Room for the name and the caret that says it opens onto something.
+    let w = pixui::font::advance_width("PIXELS") + 22;
     let at = Rect::new(rect.x + 12, rect.y + 1, w, rect.h - 3);
     if ui.menu_title(at, "PIXELS", app.chrome.menu_open).clicked {
         app.chrome.menu_open = !app.chrome.menu_open;

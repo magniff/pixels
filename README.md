@@ -184,14 +184,15 @@ test covers the whole pane.
 
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 280 tests
+cargo test --workspace                         # 281 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 
 ## The menu
 
-The strip along the top is a menu. **Pixels** opens onto **Settings** and
-**About**: what the app is and which commit it was built from, and everything
+The strip along the top is a menu. **Pixels** — a chamfered face with a caret
+under the name, so it reads as something that opens rather than as a word that
+happens to react to the pointer — opens onto **Settings** and **About**: what the app is and which commit it was built from, and everything
 the assistant needs to be told.
 
 | the menu | the settings |
