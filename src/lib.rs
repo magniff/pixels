@@ -130,9 +130,6 @@ pub struct Notes {
     /// Set by the key that asks for the assistant, and spent by the drawing,
     /// which is where the selection's position on screen is known.
     pub assist_wanted: bool,
-    /// Where the assistant's mark was drawn last frame, which is where it is
-    /// hit-tested this one.
-    pub mark_rect: Option<Rect>,
     /// The assistant's panel, while one is open.
     pub assist: Option<assist::Assist>,
     /// The model on its thread, whichever one this build has.
@@ -230,7 +227,6 @@ impl Notes {
             preview_g: false,
             preview_reveal: None,
             assist: None,
-            mark_rect: None,
             assist_wanted: false,
             helper: llm::Assistant::spawn(assistant()),
             tab_shown: 0,
@@ -399,8 +395,10 @@ impl Notes {
     /// Open the assistant on whatever is selected.
     ///
     /// The range is taken now and kept: by the time an answer comes back the
-    /// selection may be anywhere, and the answer is about what was asked.
-    fn open_assist(&mut self, at: pixui::Point) {
+    /// selection may be anywhere, and the answer is about what was asked. Where
+    /// the block opens follows from the range, so there is nothing else to
+    /// remember.
+    fn open_assist(&mut self) {
         let i = self.current.min(self.notes.len() - 1);
         let buf = &self.notes[i].buffer;
         let Some(sel) = self.vim.selection(buf) else {
@@ -413,7 +411,7 @@ impl Notes {
         if source.trim().is_empty() {
             return;
         }
-        self.assist = Some(assist::Assist::new(from, to, source, at));
+        self.assist = Some(assist::Assist::new(from, to, source));
     }
 
     /// Put a suggestion in place of the range it was asked about.
@@ -650,12 +648,21 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         }
     }
 
-    let modal = app.dialog.is_some() || app.assist.is_some();
+    // Two different kinds of "something else has the keys".
+    //
+    // The dialog is a layer over the whole screen: nothing underneath it should
+    // take a click either, so the whole page is drawn with input blocked. The
+    // assistant's block is *in* the text — the pointer has to keep working all
+    // around it, and its own layer settles who gets a click that lands on it.
+    // Both, though, take the keyboard away from vim entirely, because a model
+    // rewriting the note behind you while you type at it is not a feature.
+    let modal = app.dialog.is_some();
+    let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
 
-    // A dialog takes the keyboard for itself while it is open; nothing below
-    // it sees a key.
-    if !modal {
+    // A dialog, or the assistant's block, takes the keyboard for itself while
+    // it is open; nothing below it sees a key.
+    if !typing_elsewhere {
         // The pane shortcuts run first and everywhere, including from inside
         // the search field, so there is always a way back out to the editor.
         handle_shortcuts(ui, app);
@@ -764,28 +771,6 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.save_to(&path);
             }
             None => {}
-        }
-    }
-
-    // Drawn last of all, over the dialog as well: it is the thing being
-    // talked to, and nothing should cover it.
-    if let Some(mut open) = app.assist.take() {
-        let model = app.helper.name().to_string();
-        match open.show(ui, &model) {
-            assist::Outcome::None => app.assist = Some(open),
-            assist::Outcome::Ask(ask) => {
-                if !app.helper.ask(ask) {
-                    open.phase = assist::Phase::Failed("still busy with the last one".into());
-                }
-                app.assist = Some(open);
-            }
-            assist::Outcome::Apply(text) => {
-                app.apply_suggestion(&open, &text);
-                app.status = "APPLIED".into();
-            }
-            assist::Outcome::Close => {
-                app.status = "DISMISSED".into();
-            }
         }
     }
 
@@ -1385,19 +1370,6 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let i = app.current.min(app.notes.len() - 1);
     let total = app.notes[i].buffer.line_count();
 
-    // ---- the assistant's mark: asked for first, drawn last ---------------
-    // Its rect is the one it had last frame, because where it goes depends on
-    // where the selection lands on screen and that is not known until the
-    // drawing below has run. One frame of lag on a mark that appears when you
-    // select something is invisible. Taking the pointer *after* the editor's
-    // own hit test, which covers the whole pane, would not be: the click would
-    // move the caret and drop the selection instead of opening the panel.
-    let offer = app.assist.is_none() && app.vim.mode != Mode::Insert;
-    let mark = app
-        .mark_rect
-        .filter(|_| offer)
-        .map(|rect| ui.icon_button_hit(rect, "assist-mark"));
-
     // ---- pointer --------------------------------------------------------
     // Done before the caret-follow below, so a click sets the caret and the
     // scrolling then keeps it visible, rather than the two fighting.
@@ -1516,6 +1488,18 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // block once the block stops changing.
     let code = syntax::code_regions(buf.lines());
 
+    // ---- the assistant, opened between the lines -------------------------
+    // Taken out of the application while the drawing borrows it, and put back
+    // with whatever it decided afterwards.
+    let model = app.helper.name().to_string();
+    let mut open = app.assist.take();
+    let block_w = inner.w - GUTTER;
+    let block_h = open.as_ref().map_or(0, |a| a.height(block_w));
+    let block_rows = ((block_h + line_h - 1) / line_h) as usize;
+    let anchor = open.as_ref().map(|a| a.anchor());
+    let mut outcome = assist::Outcome::None;
+    let mut opened = false;
+
     ui.clipped(inner, |ui| {
         let mut row = 0usize;
         let mut line_no = app.scroll;
@@ -1601,10 +1585,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                         // selection: a charwise selection usually ends in the
                         // middle of a line, and a control sitting there covers
                         // the very words it is offering to change.
-                        mark_at = Some(pixui::Point::new(
-                            inner.right() - assist::MARK - 2,
-                            y,
-                        ));
+                        mark_at = Some(pixui::Point::new(inner.right() - assist::MARK - 2, y));
                     }
                     if b > a {
                         // The cell is the glyph plus a column of padding either
@@ -1675,34 +1656,70 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
 
                 row += 1;
             }
+            // The block opens under the last line of what was selected, and
+            // the lines below it move down to make room, the way an editor
+            // makes room for anything else it has to say.
+            if Some(line_no) == anchor && !opened {
+                if let Some(a) = open.as_mut() {
+                    let y = inner.y + row as i32 * line_h;
+                    let at = Rect::new(inner.x + GUTTER, y, block_w, block_h);
+                    outcome = ui.layer(at, |ui| a.show(ui, at, &model));
+                    row += block_rows;
+                    opened = true;
+                }
+            }
             line_no += 1;
         }
+
+        // The line it belongs to is above the fold, so it goes at the top: a
+        // conversation you cannot reach is worse than one out of place.
+        if let (Some(a), false) = (open.as_mut(), opened) {
+            let at = Rect::new(inner.x + GUTTER, inner.y, block_w, block_h);
+            outcome = ui.layer(at, |ui| a.show(ui, at, &model));
+        }
     });
+
+    app.assist = open;
+    match outcome {
+        assist::Outcome::None => {}
+        assist::Outcome::Ask(ask) => {
+            if !app.helper.ask(ask) {
+                if let Some(a) = app.assist.as_mut() {
+                    a.phase = assist::Phase::Failed("still busy with the last one".into());
+                }
+            }
+        }
+        assist::Outcome::Apply(text) => {
+            if let Some(a) = app.assist.take() {
+                app.apply_suggestion(&a, &text);
+                app.status = "APPLIED".into();
+            }
+        }
+        assist::Outcome::Close => {
+            app.assist = None;
+            app.status = "DISMISSED".into();
+        }
+    }
 
     // ---- the assistant's mark -------------------------------------------
     // Only where there is something to talk about, and only where the end of
     // the selection is actually on screen — a control you cannot see is a
     // control that takes clicks meant for something else.
-    let at = mark_at.filter(|p: &pixui::Point| inner.contains(*p));
-    app.mark_rect = at.map(|p| Rect::new(p.x, p.y - 1, assist::MARK, assist::MARK));
-    if let Some(resp) = mark {
-        // Only painted where there is still something to point at; the rect it
-        // was hit-tested with may describe a selection that has since gone.
-        if at.is_some() {
-            ui.icon_button_drawn(&resp, pixui::icon::SPARK, pixui::Tone::Accent);
-        }
-        if resp.clicked {
-            if let Some(p) = at {
-                app.open_assist(p);
-            }
-        }
-    }
-    // Asked for with the keyboard: same panel, hung off the same mark.
-    if std::mem::take(&mut app.assist_wanted) {
-        if let Some(p) = at {
-            app.open_assist(p);
+    // A floating control over a text view: painted after the text so it is not
+    // drawn over, and in a layer so the editor's own hit test — which covers
+    // the whole pane — does not take the click first and move the caret with it.
+    let offer = app.assist.is_none() && app.vim.mode != Mode::Insert;
+    if let Some(at) = mark_at.filter(|p: &pixui::Point| offer && inner.contains(*p)) {
+        let rect = Rect::new(at.x, at.y - 1, assist::MARK, assist::MARK);
+        let pressed = ui.layer(rect, |ui| {
+            ui.icon_button_at(rect, "assist-mark", pixui::icon::SPARK, pixui::Tone::Accent)
+                .clicked
+        });
+        if pressed || std::mem::take(&mut app.assist_wanted) {
+            app.open_assist();
         }
     }
+    app.assist_wanted = false;
 
     area.inset(1)
 }

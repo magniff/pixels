@@ -1,25 +1,29 @@
 //! The editing assistant: ask for a change to a selection, read what came
 //! back, and keep it or throw it away.
 //!
+//! It sits *in* the text rather than over it. A panel floating beside the
+//! selection covers the words either side of the one thing you are trying to
+//! judge; a block opened between the lines pushes them apart instead, and the
+//! note reads as a note with a question in it. The editor scrolls it like any
+//! other rows, because that is what it is made of.
+//!
 //! The whole point is that nothing is applied behind your back. A model that
 //! rewrites your note the moment it has an opinion is a model you cannot trust
 //! with a note; one that shows you a diff and waits is a colleague. So the
 //! suggestion arrives as a diff with two buttons, and the buffer is not touched
 //! until one of them is pressed.
-//!
-//! The panel is drawn last, over everything, and owns the keyboard while it is
-//! up — the editor underneath is modal, and two modal things fighting over a
-//! keystroke is how a keystroke goes missing.
 
-use pixui::{font, Align, Key, Point, Rect, Tone, Ui};
+use pixui::{font, Align, Key, Rect, Tone, Ui};
 
 use crate::diff::{self, Change, Piece};
 use crate::llm::{Ask, Reply};
 use crate::text::Cursor;
 
-const WIDTH: i32 = 320;
-/// The most the diff is allowed to take before it scrolls instead of growing.
-const DIFF_MAX: i32 = 130;
+/// The most rows of diff to open up for. Past this it is a rewrite rather than
+/// an edit, and burying the note under it helps nobody.
+const DIFF_ROWS: usize = 10;
+/// Height of the row holding the question and the buttons.
+const CONTROLS: i32 = 15;
 
 /// Where the conversation has got to.
 pub enum Phase {
@@ -59,15 +63,12 @@ pub struct Assist {
     pub request: String,
     /// What was last sent, kept above the diff so the answer has a question.
     pub asked: String,
-    /// The corner the panel hangs from — where the selection was.
-    pub at: Point,
-    /// True on the frame the panel appears, so the field takes the keyboard.
+    /// True on the frame the block appears, so the field takes the keyboard.
     grab: bool,
-    scroll: pixui::ScrollState,
 }
 
 impl Assist {
-    pub fn new(from: Cursor, to: Cursor, source: String, at: Point) -> Self {
+    pub fn new(from: Cursor, to: Cursor, source: String) -> Self {
         Self {
             phase: Phase::Asking,
             from,
@@ -75,10 +76,28 @@ impl Assist {
             source,
             request: String::new(),
             asked: String::new(),
-            at,
             grab: true,
-            scroll: pixui::ScrollState::default(),
         }
+    }
+
+    /// The line the block opens under: the last one the selection covered.
+    pub fn anchor(&self) -> usize {
+        self.to.line
+    }
+
+    /// How tall the block needs to be at this width.
+    ///
+    /// Measured the same way it is drawn, from the same word layout, so the
+    /// space reserved for it and the space it takes cannot disagree.
+    pub fn height(&self, width: i32) -> i32 {
+        let body = match &self.phase {
+            Phase::Reviewing { pieces, .. } => {
+                rows(pieces, cols(width)).len().min(DIFF_ROWS + 1) as i32 * font::LINE_H
+            }
+            _ => font::LINE_H,
+        };
+        // Top rule, header, body, controls, and a pixel of air at each seam.
+        3 + font::LINE_H + 2 + body + 3 + CONTROLS + 3
     }
 
     /// Take an answer from the worker.
@@ -101,109 +120,103 @@ impl Assist {
         matches!(self.phase, Phase::Thinking)
     }
 
-    pub fn show(&mut self, ui: &mut Ui, model: &str) -> Outcome {
+    /// Draw the block into the rows the editor opened for it.
+    pub fn show(&mut self, ui: &mut Ui, rect: Rect, model: &str) -> Outcome {
         let th = *ui.theme;
         ui.capture_keyboard();
 
-        // ---- how tall the body needs to be -------------------------------
-        let cols = ((WIDTH - 20) / font::ADVANCE).max(8) as usize;
-        let rows = match &self.phase {
-            Phase::Reviewing { pieces, .. } => layout(pieces, cols),
-            _ => Vec::new(),
-        };
-        let body_h = match &self.phase {
-            Phase::Reviewing { .. } => {
-                (rows.len() as i32 * font::LINE_H + 4).clamp(font::LINE_H, DIFF_MAX)
-            }
-            _ => font::LINE_H + 2,
-        };
-        let footer_h = 15 + 4 + 15;
-        // What the panel spends on itself before any of this is drawn: its
-        // border, its title strip and the line under it, and the padding
-        // inside. Guessed once here rather than discovered by the body coming
-        // out short.
-        let chrome = 2 + th.metrics.title_h + 1 + th.metrics.pad * 2;
-        let height = body_h + 4 + footer_h + chrome;
+        // A well the width of the text, with a lit top edge: it reads as a
+        // drawer opened between two lines rather than as something dropped on
+        // top of them.
+        ui.canvas.fill_rect(rect, th.well.shade(0.06));
+        ui.canvas.hline(rect.x, rect.y, rect.w, th.accent.lo);
+        ui.canvas
+            .hline(rect.x, rect.bottom() - 1, rect.w, th.panel_border);
 
-        // ---- where it hangs ----------------------------------------------
-        // Below the selection where there is room, above it where there is
-        // not, and never off the side.
-        let screen = ui.canvas.bounds();
-        let x = self.at.x.min(screen.right() - WIDTH - 4).max(4);
-        let below = self.at.y + 4;
-        let y = if below + height <= screen.bottom() - 4 {
-            below
-        } else {
-            (self.at.y - height - 6).max(4)
-        };
-        let rect = Rect::new(x, y, WIDTH, height);
-        let inner = ui.panel(rect, "ASSIST");
-
-        // ---- keys ---------------------------------------------------------
         let mut outcome = Outcome::None;
         if ui.input.key_pressed(Key::Escape) {
             return Outcome::Close;
         }
         let submit = ui.input.key_pressed(Key::Enter) && !self.request.trim().is_empty();
 
-        let (body, footer) = inner.split_bottom(footer_h + 4);
+        // ---- header -------------------------------------------------------
+        let head = Rect::new(rect.x + 3, rect.y + 3, rect.w - 6, font::LINE_H);
+        let (badge, tint) = match &self.phase {
+            Phase::Thinking => ("THINKING", th.info.hi),
+            Phase::Reviewing { .. } => ("SUGGESTED", th.positive.face),
+            Phase::Failed(_) => ("FAILED", th.danger.face),
+            Phase::Asking => ("ASSIST", th.accent.face),
+        };
+        font::draw_text_styled(ui.canvas, head.x, head.y, badge, tint, true);
+        let name = Rect::new(head.x, head.y, head.w, head.h);
+        ui.draw_text_in(name, model, th.ink_soft, Align::Right);
 
-        // ---- the body -----------------------------------------------------
+        // ---- body ---------------------------------------------------------
+        let body = Rect::new(
+            rect.x + 3,
+            head.bottom() + 2,
+            rect.w - 6,
+            rect.h - (head.bottom() + 2 - rect.y) - CONTROLS - 6,
+        );
         match &self.phase {
             Phase::Asking => {
                 let what = one_line(&self.source);
-                ui.canvas.fill_rect(body, th.well);
-                let at = Rect::new(body.x + 3, body.y + 2, body.w - 6, font::LINE_H);
-                ui.draw_text_in(at, &what, th.ink_soft, Align::Left);
+                ui.draw_text_in(body, &what, th.ink_soft, Align::Left);
             }
             Phase::Thinking => {
-                ui.canvas.fill_rect(body, th.well);
-                // Three dots that fill and empty: a spinner would be a second
-                // idiom for the same idea the press springs already express.
+                // Three dots that fill and empty. A spinner would be a second
+                // idiom for something the press springs already say.
                 let dots = ((ui.input.time * 3.0) as usize % 4).min(3);
-                let label = format!("{model} IS THINKING{}", ".".repeat(dots));
-                let at = Rect::new(body.x + 3, body.y + 2, body.w - 6, font::LINE_H);
-                ui.draw_text_in(at, &label, th.info.hi, Align::Left);
+                let label = format!("WORKING ON IT{}", ".".repeat(dots));
+                ui.draw_text_in(body, &label, th.info.hi, Align::Left);
             }
             Phase::Failed(why) => {
-                ui.canvas.fill_rect(body, th.well);
-                let at = Rect::new(body.x + 3, body.y + 2, body.w - 6, font::LINE_H);
-                ui.draw_text_in(at, &why.to_uppercase(), th.danger.face, Align::Left);
+                ui.draw_text_in(body, &why.to_uppercase(), th.danger.face, Align::Left);
             }
-            Phase::Reviewing { .. } => {
-                // The diff is written in the inks the editor uses, which are
-                // meant for a dark well; on the panel's cream face they would
-                // be invisible. So it gets a well to sit in.
-                ui.canvas.fill_rect(body, th.well);
-                let mut scroll = self.scroll;
-                ui.scroll_area_with(body, "assist-diff", &mut scroll, |ui| {
-                    for row in &rows {
-                        let at = ui.alloc(font::LINE_H);
-                        draw_row(ui, at, row);
-                    }
-                });
-                self.scroll = scroll;
+            Phase::Reviewing { pieces, .. } => {
+                let all = rows(pieces, cols(rect.w - 6));
+                let shown = all.len().min(DIFF_ROWS);
+                for (i, row) in all.iter().take(shown).enumerate() {
+                    let at = Rect::new(
+                        body.x,
+                        body.y + i as i32 * font::LINE_H,
+                        body.w,
+                        font::LINE_H,
+                    );
+                    draw_row(ui, at, row);
+                }
+                if all.len() > shown {
+                    let at = Rect::new(
+                        body.x,
+                        body.y + shown as i32 * font::LINE_H,
+                        body.w,
+                        font::LINE_H,
+                    );
+                    let more = all.len() - shown;
+                    ui.draw_text_in(at, &format!("+{more} MORE LINES"), th.ink_soft, Align::Left);
+                }
             }
         }
 
-        // ---- the footer ---------------------------------------------------
-        let (field, buttons) = footer.split_top(15 + 4);
+        // ---- the question, and what to do with the answer -----------------
+        let controls = Rect::new(
+            rect.x + 3,
+            rect.bottom() - CONTROLS - 3,
+            rect.w - 6,
+            CONTROLS,
+        );
+        let button_w = 62;
+        let (wide, rest) = controls.split_left(controls.w - button_w * 2 - 8);
+        let left = Rect::new(rest.x + 4, rest.y, button_w, CONTROLS);
+        let right = Rect::new(left.right() + 4, rest.y, button_w, CONTROLS);
+
         let hint = match self.phase {
             Phase::Reviewing { .. } => "ASK FOR ANOTHER CHANGE",
             _ => "WHAT SHOULD CHANGE?",
         };
         let grab = std::mem::take(&mut self.grab);
-        ui.text_field_grab_at(
-            Rect::new(field.x, field.y, field.w, 15),
-            "assist-request",
-            &mut self.request,
-            hint,
-            grab,
-        );
+        ui.text_field_grab_at(wide, "assist-request", &mut self.request, hint, grab);
 
-        let half = (buttons.w - 4) / 2;
-        let left = Rect::new(buttons.x, buttons.y, half, 15);
-        let right = Rect::new(buttons.right() - half, buttons.y, half, 15);
         match &self.phase {
             Phase::Reviewing { proposal, .. } => {
                 if ui.button_at(left, "APPLY", Tone::Positive).clicked {
@@ -214,7 +227,6 @@ impl Assist {
                 }
             }
             Phase::Thinking => {
-                ui.button_at(left, "WORKING", Tone::Neutral);
                 if ui.button_at(right, "CANCEL", Tone::Neutral).clicked {
                     outcome = Outcome::Close;
                 }
@@ -267,8 +279,13 @@ fn one_line(text: &str) -> String {
     format!("EDITING \"{cut}{tail}\"").to_uppercase()
 }
 
+/// How many characters fit in a block this wide.
+fn cols(width: i32) -> usize {
+    ((width / font::ADVANCE).max(8)) as usize
+}
+
 /// Break the diff into rows of words that fit the width.
-fn layout(pieces: &[Piece], cols: usize) -> Vec<Vec<(Change, String)>> {
+fn rows(pieces: &[Piece], cols: usize) -> Vec<Vec<(Change, String)>> {
     let mut rows: Vec<Vec<(Change, String)>> = vec![Vec::new()];
     let mut used = 0usize;
     for piece in pieces {

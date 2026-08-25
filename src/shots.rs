@@ -340,6 +340,31 @@ pub fn run() -> std::io::Result<()> {
             settle: 30,
             canvas: (768, 470),
         },
+        // Keeping the suggestion: the same scene as above, with APPLY pressed.
+        // Line 17 is the answer, and the block has closed behind it.
+        Scene {
+            name: "assist-applied",
+            script: [
+                keys(":e ideas.md"),
+                keys("\n"),
+                keys("Go"),
+                keys("teh quick brown fox jumped  over teh lazy dog"),
+                keys("\x1b"),
+                keys("V"),
+                ctrl('a'),
+                keys("fix the typos"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(650, 227),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            click_after: true,
+            settle: 30,
+            canvas: (768, 470),
+        },
         // Enter in the search box hands the keyboard to the results, on the
         // first of them.
         Scene {
@@ -629,7 +654,9 @@ pub fn run() -> std::io::Result<()> {
                     input.mods = press.mods;
                 }
             }
-            let after = script_start + scene.script.len() as u32;
+            // Late enough that anything the script asked for has come back:
+            // the control being clicked may not exist until it has.
+            let after = script_start + scene.script.len() as u32 + 5;
             if scene.click_after {
                 if f == after + 1 {
                     input.mouse_down = true;

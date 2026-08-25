@@ -120,6 +120,14 @@ pub struct UiState {
     /// next one as a double.
     last_click: Option<(Id, f32, Point)>,
     focus_order: Vec<Id>,
+    /// Floating layers opened this frame, and the ones from the frame before.
+    ///
+    /// Interaction is resolved as each widget is visited, so a widget cannot
+    /// know what will be drawn on top of it later in the same frame. It can
+    /// know what *was* on top of it last frame, which for anything that stays
+    /// on screen long enough to be clicked is the same answer.
+    layers: Vec<(u32, Rect)>,
+    layers_before: Vec<(u32, Rect)>,
     frame: u64,
 }
 
@@ -162,6 +170,8 @@ pub struct Ui<'a> {
     cursor: Cursor,
     next_theme: Option<Theme>,
     input_blocked: bool,
+    /// How deep in floating layers the drawing currently is. Zero is the page.
+    layer_depth: u32,
     keyboard_captured: bool,
     quit: bool,
     next_pixel_scale: Option<i32>,
@@ -192,6 +202,7 @@ impl<'a> Ui<'a> {
             cursor: Cursor::Default,
             next_theme: None,
             input_blocked: false,
+            layer_depth: 0,
             keyboard_captured: false,
             quit: false,
             next_pixel_scale: None,
@@ -226,6 +237,9 @@ impl<'a> Ui<'a> {
             };
             state.focus = Some(next);
         }
+
+        // This frame's layers become the ones the next frame resolves against.
+        state.layers_before = std::mem::take(&mut state.layers);
 
         // Widgets that were not drawn this frame will never be drawn again
         // without being re-created, so their animation state is dead weight.
@@ -414,6 +428,39 @@ impl<'a> Ui<'a> {
         self.input_blocked
     }
 
+    /// Draw `f` as a floating layer covering `rect`.
+    ///
+    /// Everything inside takes the pointer ahead of everything at a shallower
+    /// depth, whatever order it is drawn in. That is the piece immediate mode
+    /// does not give you for free: a panel drawn last is *painted* on top, but
+    /// by the time it is drawn the widgets underneath have already been asked
+    /// whether they were clicked, and one of them will have said yes.
+    ///
+    /// The layer's extent is declared rather than discovered, so a click on a
+    /// bare patch of the panel is swallowed by the panel instead of falling
+    /// through to whatever is behind it.
+    ///
+    /// This does not reorder painting. A layer still has to be drawn after what
+    /// it covers, which is the easy half and the one the caller controls.
+    pub fn layer<R>(&mut self, rect: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
+        self.layer_depth += 1;
+        self.state.layers.push((self.layer_depth, rect));
+        let r = f(self);
+        self.layer_depth -= 1;
+        r
+    }
+
+    /// Whether something floating above this point in the stack has the pointer.
+    ///
+    /// Answered from the previous frame's layers: see [`UiState::layers`].
+    pub fn pointer_covered(&self) -> bool {
+        let p = self.input.mouse;
+        self.state
+            .layers_before
+            .iter()
+            .any(|(depth, rect)| *depth > self.layer_depth && rect.contains(p))
+    }
+
     /// Declare that a widget is handling the keyboard itself this frame, so the
     /// built-in Tab and Escape focus handling should stay out of the way.
     pub fn capture_keyboard(&mut self) {
@@ -433,7 +480,10 @@ impl<'a> Ui<'a> {
     /// what makes a slider survive a sloppy drag.
     pub fn interact(&mut self, id: Id, rect: Rect) -> Response {
         let p: Point = self.input.mouse;
-        let inside = self.input.mouse_in_window && rect.contains(p) && self.canvas.clip_contains(p);
+        let inside = self.input.mouse_in_window
+            && rect.contains(p)
+            && self.canvas.clip_contains(p)
+            && !self.pointer_covered();
 
         let mut resp = Response {
             id,

@@ -172,9 +172,19 @@ immediate-mode widget set, and a swappable presenter with CPU (softbuffer) and
 GPU (wgpu) backends. It is a path dependency of this app rather than the point
 of the repo, and `pixui/README.md` covers it properly.
 
+The assistant needed one thing the toolkit did not have: **layers**. Immediate
+mode resolves interaction as each widget is visited, so a control drawn on top
+of another is *painted* over it but asks about the pointer second — and by then
+whatever is underneath has already said the click was for it. `ui.layer(rect,
+…)` declares that everything inside floats above everything shallower, and
+interaction is resolved against the layers the previous frame declared, which
+for anything on screen long enough to be clicked is the same answer. It is what
+makes the block's own buttons work while sitting inside a text view whose hit
+test covers the whole pane.
+
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 271 tests
+cargo test --workspace                         # 273 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 
@@ -182,16 +192,25 @@ PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 
 Select something in visual mode and a mark appears in the right margin, level
 with the last line of the selection. Press it — or `Ctrl-a`, for hands that
-never left the keyboard — and a panel opens asking what should change. The
-answer comes back as a word-level diff: struck through in red where words went,
-green where they arrived, and the note itself is not touched until **APPLY** is
+never left the keyboard — and the text opens up under the selection to make
+room for the question.
+
+It sits *in* the note rather than over it. A panel floating beside the
+selection covers the words either side of the one thing you are trying to
+judge; a block opened between the lines pushes them apart instead, scrolls with
+them, and leaves the note reading as a note with a question in it.
+
+| asked | answered |
+|---|---|
+| ![the block opening under the selection](screenshots/assist-open.png) | ![the diff](screenshots/assist-diff.png) |
+
+The answer comes back as a word-level diff: struck through in red where words
+went, green where they arrived, and the note is not touched until **APPLY** is
 pressed. **REJECT** throws it away. Asking again refines what is on screen
 rather than starting over, so "now make it shorter" means shorter than the
 suggestion you are looking at.
 
-| offered | answered |
-|---|---|
-| ![the mark on a selection](screenshots/assist-open.png) | ![the diff](screenshots/assist-diff.png) |
+![kept](screenshots/assist-applied.png)
 
 A line diff would be the wrong tool: a rewritten paragraph is one line in the
 source, so a line diff would say "all of it changed" and leave you reading two

@@ -754,6 +754,7 @@ impl Ui<'_> {
 
         // ---- wheel ------------------------------------------------------
         let over = !self.is_input_blocked()
+            && !self.pointer_covered()
             && rect.contains(self.input.mouse)
             && self.canvas.clip_contains(self.input.mouse);
         if over && self.input.wheel != 0.0 {
@@ -984,19 +985,7 @@ impl Ui<'_> {
         rows: &[&str],
         tone: Tone,
     ) -> Response {
-        let resp = self.icon_button_hit(rect, name);
-        self.icon_button_drawn(&resp, rows, tone);
-        resp
-    }
-
-    /// The hit-testing half of an icon button.
-    ///
-    /// Split out for a control that has to take the pointer *before* something
-    /// underneath it and be painted *after* it: the first widget to ask for a
-    /// point gets it, so a mark floating over a text view has to ask early —
-    /// but the view's own drawing would paint straight over it, so it has to be
-    /// drawn late. Pair with [`Self::icon_button_drawn`].
-    pub fn icon_button_hit(&mut self, rect: Rect, name: &str) -> Response {
+        let ramp = self.theme.ramp(tone);
         let id = self.id(name);
         let mut resp = self.interact(id, rect);
         if self.focusable(id) {
@@ -1006,15 +995,11 @@ impl Ui<'_> {
         if resp.hovered {
             self.request_cursor(Cursor::Pointer);
         }
-        resp
-    }
-
-    /// The drawing half of an icon button; see [`Self::icon_button_hit`].
-    pub fn icon_button_drawn(&mut self, resp: &Response, rows: &[&str], tone: Tone) {
-        let ramp = self.theme.ramp(tone);
-        let anim = self.animate(resp.id, resp);
-        let body = self.draw_control_face(resp.rect, ramp, &anim);
+        let anim = self.animate(id, &resp);
+        let body = self.draw_control_face(rect, ramp, &anim);
         icon::draw_centered(self.canvas, body, rows, ramp.ink);
+        resp.rect = body;
+        resp
     }
 
     // ---------------------------------------------------------------- toggles

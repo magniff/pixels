@@ -271,6 +271,69 @@ impl Harness {
     }
 }
 
+// -------------------------------------------------------------------- layers
+
+/// One frame of a page-wide widget with a small floating one over it, with the
+/// pointer inside both. Returns who got the click.
+fn layered(h: &mut Harness, press: bool, release: bool) -> (bool, bool) {
+    h.input.mouse = Point::new(20, 20);
+    h.input.mouse_pressed = press;
+    h.input.mouse_down = press || !release;
+    h.input.mouse_released = release;
+    h.frame(|ui| {
+        // Drawn first, covering everything: the page underneath.
+        let page_id = ui.id("page");
+        let page = ui.interact(page_id, Rect::new(0, 0, 200, 100));
+        // Drawn after it and floating over it, as a popover would be.
+        let float = Rect::new(10, 10, 40, 20);
+        let over = ui.layer(float, |ui| {
+            let id = ui.id("float");
+            ui.interact(id, float)
+        });
+        (page.clicked, over.clicked)
+    })
+}
+
+#[test]
+fn a_floating_layer_takes_the_click_from_what_is_under_it() {
+    let mut h = Harness::new();
+    // The first frame is the layer announcing itself; nothing is pressed yet.
+    layered(&mut h, false, false);
+    let (page, _) = layered(&mut h, true, false);
+    assert!(!page, "the page must not take a press inside the layer");
+    let (page, float) = layered(&mut h, false, true);
+    assert!(float, "the layer gets the click");
+    assert!(!page, "and the page never does");
+}
+
+#[test]
+fn a_layer_only_covers_its_own_rectangle() {
+    let mut h = Harness::new();
+    // Same two widgets, pointer outside the floating one.
+    let mut run = |press: bool, release: bool| {
+        h.input.mouse = Point::new(120, 80);
+        h.input.mouse_pressed = press;
+        h.input.mouse_down = press || !release;
+        h.input.mouse_released = release;
+        h.frame(|ui| {
+            let page_id = ui.id("page");
+            let page = ui.interact(page_id, Rect::new(0, 0, 200, 100));
+            let float = Rect::new(10, 10, 40, 20);
+            ui.layer(float, |ui| {
+                let id = ui.id("float");
+                ui.interact(id, float)
+            });
+            page.clicked
+        })
+    };
+    run(false, false);
+    run(true, false);
+    assert!(
+        run(false, true),
+        "a click beside the layer belongs to the page"
+    );
+}
+
 #[test]
 fn identical_labels_in_one_container_get_distinct_ids() {
     let mut h = Harness::new();
