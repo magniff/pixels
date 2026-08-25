@@ -53,7 +53,7 @@ const SEGMENT_GAP: i32 = 4;
 fn draw_segment(ui: &mut Ui, cell: Rect, seg: &Segment, ink: Color) {
     let total = seg.width();
     let mut x = cell.x + (cell.w - total) / 2;
-    let y = cell.y + (cell.h - font::GLYPH_H) / 2;
+    let y = cell.y + (cell.h - font::glyph_h()) / 2;
     if let Some(rows) = seg.icon {
         let (w, h) = icon::size(rows);
         icon::draw(ui.canvas, x, cell.y + (cell.h - h) / 2, rows, ink);
@@ -239,7 +239,7 @@ impl Ui<'_> {
                 .hline(strip.x, strip.bottom(), strip.w, th.panel_border);
 
             let text = strip.translate(m.text_pad, 0);
-            let y = text.y + (text.h - font::GLYPH_H) / 2;
+            let y = text.y + (text.h - font::glyph_h()) / 2;
             font::draw_text_styled(self.canvas, text.x, y, title, th.panel_title_ink, true);
         }
         inner.inset(m.pad)
@@ -362,7 +362,7 @@ impl Ui<'_> {
         // Clicking places the caret at the nearest character boundary.
         if resp.held {
             let local = self.input.mouse.x - inner.x + st.scroll;
-            let col = ((local + font::ADVANCE / 2) / font::ADVANCE).max(0) as usize;
+            let col = ((local + font::advance() / 2) / font::advance()).max(0) as usize;
             st.caret = col.min(chars.len());
         }
 
@@ -400,9 +400,9 @@ impl Ui<'_> {
         }
 
         // Keep the caret in view when the text is longer than the field.
-        let caret_x = st.caret as i32 * font::ADVANCE;
-        if caret_x - st.scroll > inner.w - font::ADVANCE {
-            st.scroll = caret_x - inner.w + font::ADVANCE;
+        let caret_x = st.caret as i32 * font::advance();
+        if caret_x - st.scroll > inner.w - font::advance() {
+            st.scroll = caret_x - inner.w + font::advance();
         }
         if caret_x - st.scroll < 0 {
             st.scroll = caret_x;
@@ -419,7 +419,7 @@ impl Ui<'_> {
         }
 
         self.clipped(inner, |ui| {
-            let y = rect.y + (rect.h - font::GLYPH_H) / 2;
+            let y = rect.y + (rect.h - font::glyph_h()) / 2;
             if text.is_empty() && !resp.focused && !hint.is_empty() {
                 font::draw_text(ui.canvas, inner.x, y, hint, th.ink_light.shade(-0.35));
             }
@@ -436,7 +436,7 @@ impl Ui<'_> {
                 if since_key % 1.0 < 0.6 || !ui.input.keys.is_empty() {
                     let cx = inner.x + caret_x - st.scroll;
                     ui.canvas
-                        .fill_rect(Rect::new(cx, y - 1, 1, font::GLYPH_H + 2), th.accent.face);
+                        .fill_rect(Rect::new(cx, y - 1, 1, font::glyph_h() + 2), th.accent.face);
                 }
             }
         });
@@ -464,7 +464,7 @@ impl Ui<'_> {
         self.canvas
             .hline(rect.x, rect.bottom() - 1, rect.w, th.panel_border);
 
-        let y = rect.y + (rect.h - 1 - font::GLYPH_H) / 2;
+        let y = rect.y + (rect.h - 1 - font::glyph_h()) / 2;
 
         // A small mark, so the strip reads as an application's rather than as
         // one more panel heading.
@@ -761,7 +761,7 @@ impl Ui<'_> {
             && self.canvas.clip_contains(self.input.mouse);
         if over && self.input.wheel != 0.0 {
             // Three text lines per notch, the usual convention.
-            st.target -= self.input.wheel * 3.0 * font::LINE_H as f32;
+            st.target -= self.input.wheel * 3.0 * font::line_h() as f32;
         }
 
         // The bar sits in a gutter beside the view rather than over it, so
@@ -902,14 +902,14 @@ impl Ui<'_> {
     /// A section heading with a rule under it.
     pub fn heading(&mut self, text: &str) -> Rect {
         let th = *self.theme;
-        let rect = self.alloc(font::GLYPH_H + 5);
+        let rect = self.alloc(font::glyph_h() + 5);
         self.draw_text_in(
-            Rect::new(rect.x, rect.y, rect.w, font::GLYPH_H),
+            Rect::new(rect.x, rect.y, rect.w, font::glyph_h()),
             text,
             th.ink,
             Align::Left,
         );
-        let y = rect.y + font::GLYPH_H + 2;
+        let y = rect.y + font::glyph_h() + 2;
         self.canvas
             .hline(rect.x, y, rect.w, th.ink.lerp(th.panel, 0.55));
         rect
@@ -918,7 +918,7 @@ impl Ui<'_> {
     /// Label on the left, value on the right, on one row.
     pub fn value_row(&mut self, label: &str, value: &str) -> Rect {
         let th = *self.theme;
-        let rect = self.alloc(font::GLYPH_H + 3);
+        let rect = self.alloc(font::glyph_h() + 3);
         self.draw_text_in(rect, label, th.ink_soft, Align::Left);
         self.draw_text_in(rect, value, th.ink, Align::Right);
         rect
@@ -1038,7 +1038,7 @@ impl Ui<'_> {
             .stroke_chamfer(rect, th.accent.lo.shade(-0.15), 1);
 
         let ink = if open { th.neutral.hi } else { th.ink };
-        let y = rect.y + (rect.h - font::GLYPH_H) / 2;
+        let y = rect.y + (rect.h - font::glyph_h()) / 2;
         font::draw_text_styled(self.canvas, rect.x + 5, y, label, ink, true);
 
         let caret = Rect::new(rect.right() - 10, rect.y + (rect.h - 3) / 2, 5, 3);
@@ -1059,7 +1059,7 @@ impl Ui<'_> {
     pub fn menu_items(&mut self, at: Point, items: &[Segment]) -> MenuPick {
         let th = *self.theme;
         let m = th.metrics;
-        let row = font::LINE_H + 4;
+        let row = font::line_h() + 4;
         let w = items.iter().map(Segment::width).max().unwrap_or(40) + 30;
         let h = items.len() as i32 * row + 4;
         let screen = self.canvas.bounds();
@@ -1086,7 +1086,7 @@ impl Ui<'_> {
                 } else {
                     th_.ink
                 };
-                let y = cell.y + (cell.h - font::GLYPH_H) / 2;
+                let y = cell.y + (cell.h - font::glyph_h()) / 2;
                 // The icons share a column, so the labels line up whether or
                 // not every entry has one.
                 let mut x = cell.x + 6;

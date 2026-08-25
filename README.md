@@ -69,9 +69,20 @@ its authors' own documentation: Warm, Midnight, Solarized Dark and Light,
 Gruvbox Dark and Light, Nord, Dracula, Catppuccin Latte. `j` and `k` walk the
 list and wear each one as they go.
 
+**Fonts** — five bitmap faces, all drawn for low resolution: the toolkit's own
+hand-drawn 5x7, [Creep2](https://github.com/raymond-w-ko/creep2) at 5x11,
+[Tamzen](https://github.com/sunaku/tamzen-font) at 6x12,
+[Cozette](https://github.com/the-moonwitch/Cozette) at 7x13, and
+[Gohufont](https://github.com/hchargois/gohufont) at 8x14. They are baked
+from their BDFs by `tools/bdf2rs.py`, so there is still no font engine — glyphs
+are bits, laid out at authoring time and blitted at runtime. Every band, row,
+gutter and control is sized from the line height, so changing the face changes
+the shape of the whole app rather than overflowing it.
+
 | choosing | worn |
 |---|---|
-| ![the schemes](screenshots/appearance.png) | ![nord](screenshots/scheme-nord.png) |
+| ![the schemes and faces](screenshots/appearance.png) | ![nord](screenshots/scheme-nord.png) |
+| ![Cozette](screenshots/font-cozette.png) | ![Gohufont 14](screenshots/font-gohu.png) |
 
 ## Built on pixui
 
@@ -82,7 +93,7 @@ rather than the point of the repo, and `pixui/README.md` covers it properly.
 
 ```sh
 cargo run --release -- --shots      # regenerate screenshots/
-cargo test --workspace              # 287 tests
+cargo test --workspace              # 290 tests
 PIXUI_PROFILE=1 cargo run --release # live frame breakdown
 ```
 

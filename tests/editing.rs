@@ -2525,14 +2525,24 @@ use notes::settings::{Settings, CATALOGUE};
 fn settings_survive_a_round_trip_through_a_file() {
     let config = Settings {
         scheme: "NORD".into(),
+        font: "COZETTE".into(),
         assist: false,
         model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
         // A prompt has newlines in it, and the format is one line per setting.
         prompt: "first line\nsecond line\nand a backslash \\ too".into(),
     };
     let text = config.to_text();
-    assert_eq!(text.lines().count(), 4, "one line per setting");
+    assert_eq!(text.lines().count(), 5, "one line per setting");
     assert_eq!(Settings::parse(&text), config);
+}
+
+#[test]
+fn the_default_face_is_one_the_toolkit_has() {
+    let name = Settings::default().font;
+    assert!(
+        pixui::font::face_named(&name).is_some(),
+        "the app defaults to {name}, which the toolkit does not have"
+    );
 }
 
 #[test]

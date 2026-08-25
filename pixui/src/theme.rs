@@ -53,14 +53,18 @@ pub struct Metrics {
 
 impl Default for Metrics {
     fn default() -> Self {
+        // Sized from the face rather than fixed: a control is a line of text
+        // with room around it, and a taller face needs a taller control to sit
+        // in. With the 5x7 face these come out at the numbers they always were.
+        let line = crate::font::line_h();
         Self {
-            control_h: 15,
+            control_h: line + 6,
             pad: 5,
             gap: 4,
             chamfer: 2,
             press_depth: 2,
             text_pad: 5,
-            title_h: 11,
+            title_h: line + 2,
         }
     }
 }

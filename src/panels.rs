@@ -47,6 +47,8 @@ pub enum Action {
     Prompt,
     /// Wear this colour scheme.
     Scheme(String),
+    /// Read in this face.
+    Font(String),
 }
 
 /// The system prompt, edited the way everything else in this app is edited.
@@ -91,8 +93,8 @@ impl PromptEditor {
     /// Draw it, take its keys, and say whether the text changed.
     fn show(&mut self, ui: &mut Ui, rect: Rect) -> bool {
         let th = *ui.theme;
-        let line_h = font::LINE_H;
-        let advance = font::ADVANCE;
+        let line_h = font::line_h();
+        let advance = font::advance();
 
         ui.canvas.box_chamfer(rect, th.well, th.well_border, 1);
         let track = Rect::new(
@@ -196,7 +198,7 @@ impl PromptEditor {
                             .fill_rect(Rect::new(x - 1, y - 1, 2, line_h), th.positive.face);
                     } else {
                         ui.canvas.fill_rect(
-                            Rect::new(x - 1, y - 1, font::GLYPH_W + 2, line_h),
+                            Rect::new(x - 1, y - 1, font::glyph_w() + 2, line_h),
                             th.accent.face,
                         );
                         let under = text.chars().nth(caret.col).unwrap_or(' ');
@@ -362,6 +364,8 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
             // Every scheme the toolkit ships, each with a strip of its own
             // colours: a name tells you nothing about a palette, and five
             // swatches tell you most of it without having to put it on.
+            let head = ui.alloc(9);
+            ui.draw_text_in(head, "SCHEME", th.accent.face, Align::Left);
             for (name, build) in pixui::SCHEMES {
                 let row = ui.alloc(13);
                 let current = config.scheme.eq_ignore_ascii_case(name);
@@ -405,6 +409,33 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
                 } else if ui.button_at(button, "WEAR", Tone::Accent).clicked {
                     action = Action::Scheme(name.to_string());
                 }
+            }
+
+            // ---- and the face ------------------------------------------
+            ui.space(3);
+            let head = ui.alloc(9);
+            ui.draw_text_in(head, "FONT", th.accent.face, Align::Left);
+            for (i, face) in pixui::font::FACES.iter().enumerate() {
+                let row = ui.alloc(pixui::font::line_h() + 4);
+                let current = config.font.eq_ignore_ascii_case(face.name);
+                if current {
+                    ui.canvas.fill_rect(row, th.accent.lo);
+                }
+                let ink = if current { th.accent.ink } else { th.ink };
+                let (label, rest) = row.split_left(row.w - 124);
+                ui.draw_text_in(label.translate(4, 0), face.name, ink, Align::Left);
+                // What it costs in room, which is the thing you are choosing
+                // between as much as the shapes are.
+                let size = format!("{}x{}", face.glyph_w, face.glyph_h);
+                ui.draw_text_in(rest, &size, th.ink_soft, Align::Left);
+
+                let button = Rect::new(rest.right() - 52, rest.y, 52, 13);
+                if current {
+                    ui.draw_text_in(button, "IN USE", th.positive.face, Align::Center);
+                } else if ui.button_at(button, "READ IN", Tone::Accent).clicked {
+                    action = Action::Font(face.name.to_string());
+                }
+                let _ = i;
             }
         }
         Page::Assistant => {

@@ -95,16 +95,16 @@ fn alloc_rest_consumes_exactly_what_is_left() {
 #[test]
 fn text_width_measures_the_widest_line() {
     assert_eq!(pixui::font::text_width(""), 0);
-    assert_eq!(pixui::font::text_width("A"), pixui::font::GLYPH_W);
+    assert_eq!(pixui::font::text_width("A"), pixui::font::glyph_w());
     // Five glyphs: four full advances plus one glyph, with no trailing tracking.
     assert_eq!(
         pixui::font::text_width("HELLO"),
-        4 * pixui::font::ADVANCE + pixui::font::GLYPH_W
+        4 * pixui::font::advance() + pixui::font::glyph_w()
     );
     // The advance is a whole cell per glyph, including after the last one.
     assert_eq!(
         pixui::font::advance_width("HELLO"),
-        5 * pixui::font::ADVANCE
+        5 * pixui::font::advance()
     );
     assert!(
         pixui::font::advance_width("HELLO") > pixui::font::text_width("HELLO"),
@@ -1563,4 +1563,52 @@ fn a_caller_owned_scroll_area_survives_not_being_drawn() {
 
     h.frame(|ui| ui.scroll_area_with(area, "v", &mut state, long));
     assert_eq!(state.target, parked, "and it came back where it was left");
+}
+
+// --------------------------------------------------------------------- fonts
+
+#[test]
+fn every_face_has_a_glyph_for_every_printable_ascii() {
+    for face in pixui::font::FACES {
+        let want = 95 * face.glyph_h as usize;
+        assert_eq!(
+            face.rows.len(),
+            want,
+            "{}: {} rows for {} glyphs of {} rows each",
+            face.name,
+            face.rows.len(),
+            95,
+            face.glyph_h
+        );
+        // A face whose ink is wider than its cell would blit outside itself.
+        let widest = face.rows.iter().copied().max().unwrap_or(0);
+        assert!(
+            widest < 1 << face.glyph_w,
+            "{} has ink outside its {}px cell",
+            face.name,
+            face.glyph_w
+        );
+        // And one that draws nothing is a font that was not baked.
+        assert!(face.rows.iter().any(|r| *r != 0), "{} is blank", face.name);
+    }
+}
+
+#[test]
+fn a_face_can_be_found_by_name_and_put_back() {
+    let before = pixui::font::face().name;
+    for (i, face) in pixui::font::FACES.iter().enumerate() {
+        assert_eq!(pixui::font::face_named(face.name), Some(i));
+        pixui::font::use_face(i);
+        assert_eq!(pixui::font::face().name, face.name);
+        // The metrics follow the face, which is the whole point of it being a
+        // choice: a layout reading them gets this face's numbers.
+        assert_eq!(pixui::font::line_h(), face.line_h);
+        assert_eq!(pixui::font::advance(), face.advance);
+    }
+    assert_eq!(pixui::font::face_named("no such face"), None);
+    // Out of range keeps whatever was in use rather than panicking.
+    let now = pixui::font::face().name;
+    pixui::font::use_face(999);
+    assert_eq!(pixui::font::face().name, now);
+    pixui::font::use_face(pixui::font::face_named(before).unwrap());
 }

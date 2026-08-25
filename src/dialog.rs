@@ -165,7 +165,10 @@ impl FileDialog {
         // Dim the whole screen so the dialog reads as a separate layer.
         ui.canvas.fill_rect_blend(screen, palette::VOID, 0.55);
 
-        let rect = screen.centered(300, 210);
+        // Wide enough for a path and tall enough for a dozen entries in
+        // whichever face is in use.
+        let line = pixui::font::line_h();
+        let rect = screen.centered(300, 12 * line + 66);
         let title = match self.kind {
             DialogKind::Open => "OPEN NOTE",
             DialogKind::Save => "SAVE NOTE AS",
@@ -208,10 +211,11 @@ impl FileDialog {
 
         // Reserve the fixed-height footer, then let the list have the rest —
         // otherwise the dialog grows a dead band above the buttons.
+        let control = ui.theme.metrics.control_h;
         let footer_h = if self.kind == DialogKind::Save {
-            15 + 4 + 15
+            control * 2 + 4
         } else {
-            15
+            control
         };
         let (top, footer) = inner.split_bottom(footer_h + 4);
 
@@ -237,7 +241,7 @@ impl FileDialog {
             let mut clicked: Option<usize> = None;
             ui.scroll_area(list.inset(2), "files", |ui| {
                 for (i, entry) in self.entries.iter().enumerate() {
-                    let row = ui.alloc(10);
+                    let row = ui.alloc(line + 1);
                     let selected = i == self.selected;
                     let id = ui.id(&format!("row{i}"));
                     let resp = ui.interact(id, row);
@@ -280,7 +284,7 @@ impl FileDialog {
         ui.column(footer, 4, |ui| {
             // ---- filename ------------------------------------------------
             if self.kind == DialogKind::Save {
-                let row = ui.alloc(15);
+                let row = ui.alloc(control);
                 let (label, field) = row.split_left(56);
                 ui.draw_text_in(label, "NAME", ui.theme.ink, Align::Left);
                 let mut name = std::mem::take(&mut self.filename);
@@ -289,7 +293,7 @@ impl FileDialog {
             }
 
             // ---- buttons -------------------------------------------------
-            let row = ui.alloc(15);
+            let row = ui.alloc(control);
             ui.row(row, 5, |ui| {
                 let w = (row.w - 10) / 3;
                 let cell = ui.alloc(w);

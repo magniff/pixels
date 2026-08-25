@@ -41,7 +41,12 @@ use text::Buffer;
 use vim::{Mode, Vim, VimEvent};
 
 /// Room for a three-digit line number plus a little breathing space.
-const GUTTER: i32 = 26;
+///
+/// Measured in the face being read in, or a wider one writes its numbers into
+/// the first column of the text.
+pub fn gutter() -> i32 {
+    3 * pixui::font::advance() + 5
+}
 
 /// How wide the note list should be for a given canvas.
 ///
@@ -459,6 +464,10 @@ impl Notes {
     /// than on every keystroke in the prompt.
     fn apply_settings(&mut self, ui: &mut Ui, action: panels::Action) {
         match action {
+            panels::Action::Font(name) => {
+                self.settings.font = name;
+                ui.request_theme(theme_for(&self.settings));
+            }
             panels::Action::Scheme(name) => {
                 self.settings.scheme = name;
                 // Worn immediately: a colour scheme you have to close a panel
@@ -806,6 +815,11 @@ pub fn theme() -> Theme {
 /// The scanline is turned off whichever scheme it is: it belongs to the
 /// toolkit's demo, and a note editor is a thing to read from for an hour.
 pub fn theme_for(config: &settings::Settings) -> Theme {
+    // The face first: a theme's metrics are sized from the line height, so the
+    // font has to be in place before the theme is built from it.
+    if let Some(i) = pixui::font::face_named(&config.font) {
+        pixui::font::use_face(i);
+    }
     let mut t = pixui::scheme_named(&config.scheme).unwrap_or_else(Theme::warm);
     t.scanline = 0.0;
     t
@@ -829,8 +843,11 @@ pub fn assistant(config: &settings::Settings) -> Box<dyn llm::Backend> {
 
 pub fn frame(ui: &mut Ui, app: &mut Notes) {
     let screen = ui.canvas.bounds();
-    let (titlebar, rest) = screen.split_top(13);
-    let (body, statusbar) = rest.split_bottom(12);
+    // Every band is a line of text with room around it, so they follow the
+    // face rather than the numbers that happened to suit a five-by-seven one.
+    let line = pixui::font::line_h();
+    let (titlebar, rest) = screen.split_top(line + 4);
+    let (body, statusbar) = rest.split_bottom(line + 3);
 
     // An answer, if the worker has one. Collected before anything draws, so a
     // suggestion appears on the frame it arrives rather than the one after.
@@ -913,8 +930,8 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
         // The two views of the same note: its source, and what it means.
         let pane = main.inset_xy(0, 5);
-        let (tabs, content) = pane.split_top(20);
-        let strip = Rect::new(tabs.x, tabs.y, 190, 16);
+        let (tabs, content) = pane.split_top(line + 11);
+        let strip = Rect::new(tabs.x, tabs.y, 190, line + 7);
         let views = [
             pixui::Segment::with_icon(pixui::icon::CODE, "SOURCE"),
             pixui::Segment::with_icon(pixui::icon::PAGE, "PREVIEW"),
@@ -1098,7 +1115,7 @@ fn handle_notes_keys(ui: &mut Ui, app: &mut Notes) {
 /// the command line, and walking the vault.
 fn handle_preview_keys(ui: &mut Ui, app: &mut Notes) {
     ui.capture_keyboard();
-    let line = pixui::font::LINE_H as f32;
+    let line = pixui::font::line_h() as f32;
     // A page is what is actually on screen, measured by the scroll area on the
     // frame before — the same number it pages by when its own track is clicked.
     let page = app.preview_scroll.viewport as f32;
@@ -1363,7 +1380,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
 
     // Fit the preview text to whatever width the sidebar ended up, allowing for
     // the scrollbar gutter and the row's own padding.
-    let cols = ((list.w - 20) / pixui::font::ADVANCE).max(8) as usize;
+    let cols = ((list.w - 20) / pixui::font::advance()).max(8) as usize;
 
     let mut select = None;
     let mut begin_rename = None;
@@ -1384,7 +1401,10 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             let renaming = matches!(app.renaming, Some((idx, _)) if idx == i);
 
             let selected = i == app.current;
-            let h = 13 + preview.len() as i32 * 8;
+            // A title, then a line of preview each: sized from the face, or a
+            // taller one writes the second row over the first.
+            let line = pixui::font::line_h();
+            let h = line + 4 + preview.len() as i32 * line;
             let row = ui.alloc(h);
             let id = ui.id(&format!("note{i}"));
             let resp = ui.interact(id, row);
@@ -1432,7 +1452,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                 }
             }
 
-            let title_at = Rect::new(row.x + 4, row.y + 1, row.w - 8, 9);
+            let title_at = Rect::new(row.x + 4, row.y + 1, row.w - 8, line);
 
             if renaming {
                 // The title is replaced in place by a field, so the row keeps
@@ -1468,9 +1488,9 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                     ink,
                     true,
                 );
-                for (n, line) in preview.iter().enumerate() {
-                    let y = row.y + 11 + n as i32 * 8;
-                    pixui::font::draw_text(ui.canvas, title_at.x, y, line, dim);
+                for (n, text) in preview.iter().enumerate() {
+                    let y = row.y + line + 2 + n as i32 * line;
+                    pixui::font::draw_text(ui.canvas, title_at.x, y, text, dim);
                 }
                 if dirty {
                     ui.canvas
@@ -1584,7 +1604,7 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     if let Some(y) = drawn.reveal {
         // A couple of rows of lead-in, so the hit lands inside the page rather
         // than jammed against its top edge.
-        scroll.target = (y - pixui::font::LINE_H * 2).max(0) as f32;
+        scroll.target = (y - pixui::font::line_h() * 2).max(0) as f32;
     }
     app.preview_scroll = scroll;
     if let Some(href) = drawn.clicked {
@@ -1608,7 +1628,7 @@ fn position_at(
     origin: pixui::Point,
     p: pixui::Point,
 ) -> text::Cursor {
-    let target_row = ((p.y - origin.y) / pixui::font::LINE_H).max(0) as usize;
+    let target_row = ((p.y - origin.y) / pixui::font::line_h()).max(0) as usize;
     let mut row = 0usize;
     let mut line = scroll;
     while line < buf.line_count() {
@@ -1618,7 +1638,7 @@ fn position_at(
             // Floor rather than round: clicking a character should land *on*
             // it, since the caret in normal mode is a block over a character
             // rather than a bar between two.
-            let rel = ((p.x - origin.x) / pixui::font::ADVANCE).max(0) as usize;
+            let rel = ((p.x - origin.x) / pixui::font::advance()).max(0) as usize;
             return text::Cursor::new(line, (from + rel).min(to));
         }
         row += ranges.len();
@@ -1639,10 +1659,10 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // area reserves, so the two views of a note are the same shape.
     let framed = area.inset(3);
     let inner = Rect::new(framed.x, framed.y, framed.w - Ui::SCROLL_GUTTER, framed.h);
-    let line_h = pixui::font::LINE_H;
-    let advance = pixui::font::ADVANCE;
+    let line_h = pixui::font::line_h();
+    let advance = pixui::font::advance();
     let visible = (inner.h / line_h).max(1) as usize;
-    let cols = ((inner.w - GUTTER) / advance).max(8) as usize;
+    let cols = ((inner.w - gutter()) / advance).max(8) as usize;
 
     let i = app.current.min(app.notes.len() - 1);
     let total = app.notes[i].buffer.line_count();
@@ -1650,7 +1670,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // ---- pointer --------------------------------------------------------
     // Done before the caret-follow below, so a click sets the caret and the
     // scrolling then keeps it visible, rather than the two fighting.
-    let origin = pixui::Point::new(inner.x + GUTTER, inner.y);
+    let origin = pixui::Point::new(inner.x + gutter(), inner.y);
     let editor_id = ui.id("editor");
     let resp = ui.interact(editor_id, inner);
     if resp.hovered {
@@ -1770,7 +1790,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // with whatever it decided afterwards.
     let model = app.helper.name().to_string();
     let mut open = app.assist.take();
-    let block_w = inner.w - GUTTER;
+    let block_w = inner.w - gutter();
     let block_h = open.as_ref().map_or(0, |a| a.height(block_w));
     let block_rows = ((block_h + line_h - 1) / line_h) as usize;
     let anchor = open.as_ref().map(|a| a.anchor());
@@ -1795,7 +1815,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                     break;
                 }
                 let y = inner.y + row as i32 * line_h;
-                let text_x = inner.x + GUTTER;
+                let text_x = inner.x + gutter();
 
                 // ---- current-line band -------------------------------
                 if line_no == cursor.line {
@@ -1923,7 +1943,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                         // the tracking on its right and none on its left, and
                         // reads as shunted sideways.
                         ui.canvas.fill_rect(
-                            Rect::new(cx - 1, y - 1, pixui::font::GLYPH_W + 2, line_h),
+                            Rect::new(cx - 1, y - 1, pixui::font::glyph_w() + 2, line_h),
                             th.accent.face,
                         );
                         let under = text.chars().nth(cursor.col).unwrap_or(' ');
@@ -1939,7 +1959,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
             if Some(line_no) == anchor && !opened {
                 if let Some(a) = open.as_mut() {
                     let y = inner.y + row as i32 * line_h;
-                    let at = Rect::new(inner.x + GUTTER, y, block_w, block_h);
+                    let at = Rect::new(inner.x + gutter(), y, block_w, block_h);
                     outcome = ui.layer(at, |ui| a.show(ui, at, &model));
                     row += block_rows;
                     opened = true;
@@ -1951,7 +1971,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
         // The line it belongs to is above the fold, so it goes at the top: a
         // conversation you cannot reach is worse than one out of place.
         if let (Some(a), false) = (open.as_mut(), opened) {
-            let at = Rect::new(inner.x + GUTTER, inner.y, block_w, block_h);
+            let at = Rect::new(inner.x + gutter(), inner.y, block_w, block_h);
             outcome = ui.layer(at, |ui| a.show(ui, at, &model));
         }
     });

@@ -90,6 +90,8 @@ pub fn installed() -> Vec<PathBuf> {
 pub struct Settings {
     /// The colour scheme, by the toolkit's name for it.
     pub scheme: String,
+    /// The face, likewise.
+    pub font: String,
     /// Whether the editing assistant is offered at all. With this off there is
     /// no mark beside a selection and nothing to ask — the app is a text editor
     /// and nothing else, which is a perfectly good thing for it to be.
@@ -106,6 +108,7 @@ impl Default for Settings {
             // Gruvbox dark: warm, low contrast, and easy to read from for an
             // hour, which is what a note editor is for.
             scheme: "GRUVBOX DARK".to_string(),
+            font: "PIXUI 5X7".to_string(),
             // On, because a feature nobody can see is a feature nobody finds.
             assist: true,
             model: None,
@@ -151,6 +154,7 @@ impl Settings {
             let value = value.trim();
             match key.trim() {
                 "scheme" if !value.is_empty() => out.scheme = value.to_string(),
+                "font" if !value.is_empty() => out.font = value.to_string(),
                 "assist" => out.assist = value != "off",
                 "model" if !value.is_empty() => out.model = Some(value.to_string()),
                 "prompt" if !value.is_empty() => out.prompt = unescape(value),
@@ -163,6 +167,7 @@ impl Settings {
     pub fn to_text(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("scheme = {}\n", self.scheme));
+        out.push_str(&format!("font = {}\n", self.font));
         out.push_str(&format!(
             "assist = {}\n",
             if self.assist { "on" } else { "off" }

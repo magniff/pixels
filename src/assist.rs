@@ -97,12 +97,12 @@ impl Assist {
     pub fn height(&self, width: i32) -> i32 {
         let body = match &self.phase {
             Phase::Reviewing { pieces, .. } => {
-                rows(pieces, cols(width)).len().min(DIFF_ROWS + 1) as i32 * font::LINE_H
+                rows(pieces, cols(width)).len().min(DIFF_ROWS + 1) as i32 * font::line_h()
             }
-            _ => font::LINE_H,
+            _ => font::line_h(),
         };
         // Top rule, header, body, controls, and a pixel of air at each seam.
-        3 + font::LINE_H + 2 + body + 3 + CONTROLS + 3
+        3 + font::line_h() + 2 + body + 3 + CONTROLS + 3
     }
 
     /// Take an answer from the worker.
@@ -174,7 +174,7 @@ impl Assist {
         let keep = enter && held;
 
         // ---- header -------------------------------------------------------
-        let head = Rect::new(rect.x + 3, rect.y + 3, rect.w - 6, font::LINE_H);
+        let head = Rect::new(rect.x + 3, rect.y + 3, rect.w - 6, font::line_h());
         let (badge, tint) = match &self.phase {
             Phase::Thinking => ("THINKING", th.info.hi),
             Phase::Reviewing { .. } => ("SUGGESTED", th.positive.face),
@@ -212,7 +212,7 @@ impl Assist {
                 // count of what is missing: the whole point of the diff is that
                 // you can read all of it before agreeing to it.
                 let all = rows(pieces, cols(rect.w - 6 - Ui::SCROLL_GUTTER));
-                let visible = (body.h / font::LINE_H).max(1) as usize;
+                let visible = (body.h / font::line_h()).max(1) as usize;
                 let over = all.len().saturating_sub(visible);
                 self.scroll = self.scroll.min(over);
 
@@ -229,27 +229,27 @@ impl Assist {
                 for (i, row) in all.iter().enumerate().skip(self.scroll).take(visible) {
                     let at = Rect::new(
                         body.x,
-                        body.y + (i - self.scroll) as i32 * font::LINE_H,
+                        body.y + (i - self.scroll) as i32 * font::line_h(),
                         body.w - Ui::SCROLL_GUTTER,
-                        font::LINE_H,
+                        font::line_h(),
                     );
                     draw_row(ui, at, row);
                 }
 
                 if over > 0 {
                     let mut st = self.bar;
-                    st.content = all.len() as i32 * font::LINE_H;
-                    st.viewport = visible as i32 * font::LINE_H;
-                    st.target = self.scroll as f32 * font::LINE_H as f32;
+                    st.content = all.len() as i32 * font::line_h();
+                    st.viewport = visible as i32 * font::line_h();
+                    st.target = self.scroll as f32 * font::line_h() as f32;
                     st.shown = st.target;
                     let track = Rect::new(
                         body.right() - Ui::BAR_W,
                         body.y,
                         Ui::BAR_W,
-                        visible as i32 * font::LINE_H,
+                        visible as i32 * font::line_h(),
                     );
                     ui.scroll_bar(track, "assist-diff", &mut st);
-                    self.scroll = (st.target / font::LINE_H as f32).round().max(0.0) as usize;
+                    self.scroll = (st.target / font::line_h() as f32).round().max(0.0) as usize;
                     self.bar = st;
                 }
             }
@@ -350,7 +350,7 @@ fn one_line(text: &str) -> String {
 
 /// How many characters fit in a block this wide.
 fn cols(width: i32) -> usize {
-    ((width / font::ADVANCE).max(8)) as usize
+    ((width / font::advance()).max(8)) as usize
 }
 
 /// Break the diff into rows of words that fit the width.
@@ -403,14 +403,14 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &[(Change, String)]) {
                 th.danger.lo
             };
             ui.canvas
-                .fill_rect(Rect::new(x - 1, rect.y - 1, w + 1, font::LINE_H), tint);
+                .fill_rect(Rect::new(x - 1, rect.y - 1, w + 1, font::line_h()), tint);
         }
         font::draw_text(ui.canvas, x, rect.y, text, color);
         if *change == Change::Removed {
             ui.canvas
-                .hline(x, rect.y + font::GLYPH_H / 2, w - 1, th.danger.hi);
+                .hline(x, rect.y + font::glyph_h() / 2, w - 1, th.danger.hi);
         }
-        x += w + font::ADVANCE;
+        x += w + font::advance();
     }
 }
 

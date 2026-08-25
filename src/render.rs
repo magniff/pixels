@@ -16,8 +16,14 @@ use pixui::{font, icon, Color, Cursor, Rect, Theme, Ui};
 use crate::markdown::{slice_spans, wrap_ranges};
 use crate::markdown::{Block, CellAlign, Item, Located, Marker, Span, Tok};
 
-const LINE_H: i32 = font::LINE_H;
-const ADVANCE: i32 = font::ADVANCE;
+/// The current face's metrics, read rather than fixed: the font is a setting
+/// now, and a layout compiled against one face would lay another one out wrong.
+fn line_h() -> i32 {
+    font::line_h()
+}
+fn advance() -> i32 {
+    font::advance()
+}
 
 /// Space under each kind of block, so the document breathes without a blank
 /// line having to be typed for it.
@@ -116,7 +122,7 @@ struct Ctx {
 impl Ctx {
     /// How many characters fit in the current width, less an indent.
     fn cols(&self, indent: i32) -> usize {
-        (((self.width.get() - indent) / ADVANCE).max(4)) as usize
+        (((self.width.get() - indent) / advance()).max(4)) as usize
     }
 
     /// Run `f` with the width reduced by `by`, then put it back.
@@ -151,10 +157,10 @@ fn highlight_hits(ui: &mut Ui, ctx: &Ctx, x: i32, y: i32, text: &str) {
     };
     for (a, b) in crate::vim::matches_in(text, pattern) {
         let cell = Rect::new(
-            x + a as i32 * ADVANCE - 1,
+            x + a as i32 * advance() - 1,
             y - 1,
-            (b - a) as i32 * ADVANCE,
-            LINE_H,
+            (b - a) as i32 * advance(),
+            line_h(),
         );
         ui.canvas
             .fill_rect(cell, ctx.th.well.lerp(ctx.th.highlight, 0.30));
@@ -204,11 +210,11 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
     }
     let mut col = 0i32;
     for span in spans {
-        let sx = x + col * ADVANCE;
+        let sx = x + col * advance();
         let len = span.text.chars().count() as i32;
         let plain = span.tok == Tok::Text && ctx.quoted.get();
         let mut color = token_color(&ctx.th, if plain { Tok::Quote } else { span.tok });
-        let cell = Rect::new(sx - 1, y - 1, len * ADVANCE, LINE_H);
+        let cell = Rect::new(sx - 1, y - 1, len * advance(), line_h());
 
         match span.tok {
             // A code span gets a slab behind it, which is what makes it read as
@@ -220,13 +226,13 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
             // notation and the only way it survives being rendered.
             Tok::Strike => {
                 ui.canvas
-                    .hline(sx, y + font::GLYPH_H / 2, len * ADVANCE - 2, color);
+                    .hline(sx, y + font::glyph_h() / 2, len * advance() - 2, color);
             }
             // There is no way to draw the image, so say so plainly and let the
             // alt text stand where the picture would.
             Tok::Image => {
                 ui.canvas.box_chamfer(
-                    Rect::new(sx - 2, y - 2, len * ADVANCE + 2, LINE_H + 2),
+                    Rect::new(sx - 2, y - 2, len * advance() + 2, line_h() + 2),
                     ctx.th.well.shade(0.08),
                     ctx.th.info.face,
                     1,
@@ -250,7 +256,7 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
                     }
                 }
                 ui.canvas
-                    .hline(sx, y + font::GLYPH_H, len * ADVANCE - 2, color);
+                    .hline(sx, y + font::glyph_h(), len * advance() - 2, color);
             }
             _ => {}
         }
@@ -267,15 +273,17 @@ fn measure(block: &Block, ctx: &Ctx) -> i32 {
             let h = heading_style(&ctx.th, *level);
             let lines = wrap(spans, ctx.cols(0)).len().max(1) as i32;
             let rule = if h.rule == Rule::None { 0 } else { RULE_H };
-            h.top + lines * LINE_H + rule + 2
+            h.top + lines * line_h() + rule + 2
         }
-        Block::Paragraph(spans) => wrap(spans, ctx.cols(0)).len().max(1) as i32 * LINE_H + PARA_GAP,
+        Block::Paragraph(spans) => {
+            wrap(spans, ctx.cols(0)).len().max(1) as i32 * line_h() + PARA_GAP
+        }
         Block::List(items) => {
             items
                 .iter()
                 .map(|it| {
                     let indent = list_indent(items, it);
-                    wrap(&it.spans, ctx.cols(indent)).len().max(1) as i32 * LINE_H
+                    wrap(&it.spans, ctx.cols(indent)).len().max(1) as i32 * line_h()
                 })
                 .sum::<i32>()
                 + PARA_GAP
@@ -287,9 +295,9 @@ fn measure(block: &Block, ctx: &Ctx) -> i32 {
             }) + 4
                 + PARA_GAP
         }
-        Block::Code { lines, .. } => lines.len().max(1) as i32 * LINE_H + 8 + PARA_GAP,
+        Block::Code { lines, .. } => lines.len().max(1) as i32 * line_h() + 8 + PARA_GAP,
         Block::Table { header, rows, .. } => {
-            (rows.len() as i32 + 1) * (LINE_H + 2)
+            (rows.len() as i32 + 1) * (line_h() + 2)
                 + 4
                 + PARA_GAP
                 + if header.is_empty() { 0 } else { 2 }
@@ -306,14 +314,14 @@ fn list_indent(items: &[Item], item: &Item) -> i32 {
     let widest = items
         .iter()
         .map(|it| match it.marker {
-            Marker::Number(n) => (n.to_string().chars().count() as i32 + 1) * ADVANCE,
+            Marker::Number(n) => (n.to_string().chars().count() as i32 + 1) * advance(),
             // A checkbox is wider than a bullet and needs the room to say so.
             Marker::Task(_) => 11,
-            Marker::Bullet => ADVANCE + 2,
+            Marker::Bullet => advance() + 2,
         })
         .max()
-        .unwrap_or(ADVANCE);
-    item.depth as i32 * (ADVANCE * 2) + widest + 4
+        .unwrap_or(advance());
+    item.depth as i32 * (advance() * 2) + widest + 4
 }
 
 // ------------------------------------------------------------------- drawing
@@ -334,7 +342,7 @@ pub fn draw_document(ui: &mut Ui, blocks: &[Located], req: Request) -> Drawn {
     let ctx = Ctx {
         th: *ui.theme,
         gutter: std::cell::Cell::new(0),
-        width: std::cell::Cell::new(req.width - crate::GUTTER),
+        width: std::cell::Cell::new(req.width - crate::gutter()),
         quoted: std::cell::Cell::new(false),
         search: req.search,
         reveal: req.reveal,
@@ -354,7 +362,7 @@ pub fn draw_document(ui: &mut Ui, blocks: &[Located], req: Request) -> Drawn {
         let row = ui.alloc(h);
         let top = *top.get_or_insert(row.y);
         ctx.gutter.set(row.x);
-        let body = Rect::new(row.x + crate::GUTTER, row.y, row.w - crate::GUTTER, h);
+        let body = Rect::new(row.x + crate::gutter(), row.y, row.w - crate::gutter(), h);
         // The block holding a line is the last one that starts at or above it.
         if ctx.reveal.is_some_and(|want| *line <= want) {
             ctx.reveal_y.set(Some(row.y - top));
@@ -395,20 +403,20 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx, line: usize) {
             number(ui, ctx, y, line);
             let mut widest = 0i32;
             for (i, row) in wrap(spans, ctx.cols(0)).iter().enumerate() {
-                let ly = y + i as i32 * LINE_H;
+                let ly = y + i as i32 * line_h();
                 if ctx.search.is_some() {
                     let text: String = row.iter().map(|s| s.text.as_str()).collect();
                     highlight_hits(ui, ctx, rect.x, ly, &text);
                 }
                 let mut col = 0i32;
                 for span in row {
-                    let sx = rect.x + col * ADVANCE;
+                    let sx = rect.x + col * advance();
                     // A heading is one weight and one colour, whatever emphasis
                     // the source put inside it.
                     font::draw_text_styled(ui.canvas, sx, ly, &span.text, style.color, style.bold);
                     col += span.text.chars().count() as i32;
                 }
-                widest = widest.max(col * ADVANCE);
+                widest = widest.max(col * advance());
             }
             let rule_w = match style.rule {
                 Rule::None => 0,
@@ -429,7 +437,7 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx, line: usize) {
             // and no row below the first is a line anybody typed.
             number(ui, ctx, rect.y, line);
             for (i, row) in wrap(spans, ctx.cols(0)).iter().enumerate() {
-                draw_line(ui, rect.x, rect.y + i as i32 * LINE_H, row, ctx);
+                draw_line(ui, rect.x, rect.y + i as i32 * line_h(), row, ctx);
             }
         }
 
@@ -438,7 +446,7 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx, line: usize) {
             for item in items {
                 number(ui, ctx, y, item.line);
                 let indent = list_indent(items, item);
-                let mx = rect.x + item.depth as i32 * (ADVANCE * 2);
+                let mx = rect.x + item.depth as i32 * (advance() * 2);
                 match item.marker {
                     Marker::Bullet => {
                         if item.depth == 0 {
@@ -465,9 +473,9 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx, line: usize) {
                     }
                 }
                 for (i, row) in wrap(&item.spans, ctx.cols(indent)).iter().enumerate() {
-                    draw_line(ui, rect.x + indent, y + i as i32 * LINE_H, row, ctx);
+                    draw_line(ui, rect.x + indent, y + i as i32 * line_h(), row, ctx);
                 }
-                y += wrap(&item.spans, ctx.cols(indent)).len().max(1) as i32 * LINE_H;
+                y += wrap(&item.spans, ctx.cols(indent)).len().max(1) as i32 * line_h();
             }
         }
 
@@ -498,21 +506,21 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx, line: usize) {
             // Every row of a code block is a line of the source, in order and
             // never re-wrapped, so every one of them can be numbered.
             for i in 0..highlighted.len() {
-                number(ui, ctx, slab.y + 4 + i as i32 * LINE_H, first + i);
+                number(ui, ctx, slab.y + 4 + i as i32 * line_h(), first + i);
             }
             ui.clipped(slab.inset(3), |ui| {
                 for (i, spans) in highlighted.iter().enumerate() {
                     // Code is not wrapped: a break inserted into code is a lie
                     // about what the code says. Runs are placed by character
                     // offset for the same reason prose is.
-                    let y = slab.y + 4 + i as i32 * LINE_H;
+                    let y = slab.y + 4 + i as i32 * line_h();
                     if ctx.search.is_some() {
                         let text: String = spans.iter().map(|s| s.text.as_str()).collect();
                         highlight_hits(ui, ctx, slab.x + 4, y, &text);
                     }
                     let mut col = 0i32;
                     for span in spans {
-                        let sx = slab.x + 4 + col * ADVANCE;
+                        let sx = slab.x + 4 + col * advance();
                         font::draw_text(ui.canvas, sx, y, &span.text, token_color(&th, span.tok));
                         col += span.text.chars().count() as i32;
                     }
@@ -557,7 +565,7 @@ pub fn column_widths(header: &[Vec<Span>], rows: &[Vec<Vec<Span>>], total: i32) 
 
     // Size to the content first. A three-word table stretched across the pane
     // reads as a layout accident, not as a table.
-    let natural: Vec<i32> = chars.iter().map(|c| *c as i32 * ADVANCE + 10).collect();
+    let natural: Vec<i32> = chars.iter().map(|c| *c as i32 * advance() + 10).collect();
     let wanted: i32 = natural.iter().sum();
     if wanted <= total {
         return natural;
@@ -566,7 +574,7 @@ pub fn column_widths(header: &[Vec<Span>], rows: &[Vec<Vec<Span>>], total: i32) 
     // proportion. The floor is itself bounded by the share each column could
     // possibly have, or two narrow columns in a narrow table would each claim a
     // minimum and together overflow the very width they are being fitted into.
-    let floor = (total / count as i32).clamp(1, ADVANCE * 2);
+    let floor = (total / count as i32).clamp(1, advance() * 2);
     natural
         .iter()
         .map(|w| (((*w as i64 * total as i64) / wanted as i64) as i32).max(floor))
@@ -587,7 +595,7 @@ fn draw_table(
     if widths.is_empty() {
         return;
     }
-    let row_h = LINE_H + 2;
+    let row_h = line_h() + 2;
     let body = Rect::new(
         rect.x,
         rect.y,
