@@ -8,7 +8,7 @@
 use crate::anim::{smooth, WidgetAnim};
 use crate::color::Color;
 use crate::font;
-use crate::geom::Rect;
+use crate::geom::{Point, Rect};
 use crate::icon;
 use crate::input::{Cursor, Key};
 use crate::layout::Align;
@@ -1002,6 +1002,232 @@ impl Ui<'_> {
         resp
     }
 
+    // ------------------------------------------------------------------ menus
+
+    /// A menu's name in a bar: a word that lights up when its menu is down.
+    pub fn menu_title(&mut self, rect: Rect, label: &str, open: bool) -> Response {
+        let th = *self.theme;
+        let id = self.id(label);
+        let resp = self.interact(id, rect);
+        if resp.hovered {
+            self.request_cursor(Cursor::Pointer);
+        }
+        if open || resp.hovered {
+            let tint = if open { th.accent.lo } else { th.accent.hi };
+            self.canvas.fill_rect(rect, tint);
+        }
+        let ink = if open { th.neutral.hi } else { th.ink };
+        let y = rect.y + (rect.h - font::GLYPH_H) / 2;
+        font::draw_text_styled(self.canvas, rect.x + 5, y, label, ink, true);
+        resp
+    }
+
+    /// The list of entries hanging under an open menu.
+    ///
+    /// Drawn in a layer, so it takes the pointer ahead of whatever it is
+    /// covering, and sized from its widest entry. The caller decides what an
+    /// entry means and when the menu closes; this only reports what was
+    /// pointed at.
+    pub fn menu_items(&mut self, at: Point, items: &[&str]) -> MenuPick {
+        let th = *self.theme;
+        let m = th.metrics;
+        let row = font::LINE_H + 4;
+        let w = items
+            .iter()
+            .map(|i| font::advance_width(i))
+            .max()
+            .unwrap_or(40)
+            + 24;
+        let h = items.len() as i32 * row + 4;
+        let screen = self.canvas.bounds();
+        let rect = Rect::new(at.x.min(screen.right() - w - 2), at.y, w, h);
+
+        self.layer(rect, |ui| {
+            let th_ = th;
+            ui.canvas
+                .fill_chamfer(rect.translate(0, m.press_depth), th_.shadow, m.chamfer);
+            ui.canvas
+                .box_chamfer(rect, th_.panel, th_.panel_border, m.chamfer);
+
+            let mut pick = MenuPick::default();
+            for (i, label) in items.iter().enumerate() {
+                let cell = Rect::new(rect.x + 2, rect.y + 2 + i as i32 * row, rect.w - 4, row);
+                let id = ui.id(label);
+                let resp = ui.interact(id, cell);
+                if resp.hovered {
+                    ui.request_cursor(Cursor::Pointer);
+                    ui.canvas.fill_chamfer(cell, th_.accent.face, 1);
+                }
+                let ink = if resp.hovered {
+                    th_.accent.ink
+                } else {
+                    th_.ink
+                };
+                let y = cell.y + (cell.h - font::GLYPH_H) / 2;
+                font::draw_text(ui.canvas, cell.x + 6, y, label, ink);
+                if resp.clicked {
+                    pick.chosen = Some(i);
+                }
+            }
+            // A press anywhere else puts the menu away, which is what every
+            // menu everywhere does and what the hand expects.
+            if ui.input.mouse_pressed && !rect.contains(ui.input.mouse) {
+                pick.dismissed = true;
+            }
+            pick
+        })
+    }
+
+    // -------------------------------------------------------------- text area
+
+    /// A wrapped, editable block of text.
+    ///
+    /// The single-line field's bigger sibling, for the things too long to sit
+    /// on one line — a prompt, a description, a note about a setting. Wrapping
+    /// is by word, and the caret is placed by the same arithmetic that draws
+    /// the text, so a click lands where it looks like it lands.
+    pub fn text_area_at(&mut self, rect: Rect, name: &str, text: &mut String) -> Response {
+        let th = *self.theme;
+        let id = self.id(name);
+        let mut resp = self.interact(id, rect);
+        self.focusable(id);
+        if resp.focused {
+            self.set_text_focus(id);
+        }
+        if resp.hovered {
+            self.request_cursor(Cursor::Text);
+        }
+
+        let mut st = self.text_state(id);
+        let mut chars: Vec<char> = text.chars().collect();
+        st.caret = st.caret.min(chars.len());
+
+        let inner = rect.inset(3);
+        let cols = ((inner.w / font::ADVANCE).max(4)) as usize;
+        let rows = wrap_rows(&chars, cols);
+
+        // ---- the caret's row and column ---------------------------------
+        let locate = |caret: usize, rows: &[(usize, usize)]| -> (usize, usize) {
+            for (i, (from, to)) in rows.iter().enumerate() {
+                if caret <= *to {
+                    return (i, caret.saturating_sub(*from));
+                }
+            }
+            let last = rows.len().saturating_sub(1);
+            (last, rows.get(last).map_or(0, |(f, t)| t - f))
+        };
+
+        if resp.held {
+            let r = ((self.input.mouse.y - inner.y) / font::LINE_H).max(0) as usize
+                + st.scroll.max(0) as usize;
+            let r = r.min(rows.len().saturating_sub(1));
+            let c = ((self.input.mouse.x - inner.x + font::ADVANCE / 2) / font::ADVANCE).max(0);
+            let (from, to) = rows.get(r).copied().unwrap_or((0, 0));
+            st.caret = (from + c as usize).min(to);
+        }
+
+        if resp.focused && !self.is_input_blocked() {
+            let mods = self.input.mods;
+            for key in &self.input.keys {
+                match key {
+                    Key::Char(c) if !mods.cmd && !mods.ctrl => {
+                        chars.insert(st.caret.min(chars.len()), *c);
+                        st.caret += 1;
+                    }
+                    Key::Space => {
+                        chars.insert(st.caret.min(chars.len()), ' ');
+                        st.caret += 1;
+                    }
+                    Key::Enter => {
+                        chars.insert(st.caret.min(chars.len()), '\n');
+                        st.caret += 1;
+                    }
+                    Key::Backspace if st.caret > 0 => {
+                        chars.remove(st.caret - 1);
+                        st.caret -= 1;
+                    }
+                    Key::Delete if st.caret < chars.len() => {
+                        chars.remove(st.caret);
+                    }
+                    Key::Left => st.caret = st.caret.saturating_sub(1),
+                    Key::Right => st.caret = (st.caret + 1).min(chars.len()),
+                    Key::Home | Key::End => {
+                        let (r, _) = locate(st.caret, &rows);
+                        let (from, to) = rows[r];
+                        st.caret = if *key == Key::Home { from } else { to };
+                    }
+                    Key::Up | Key::Down => {
+                        let (r, c) = locate(st.caret, &rows);
+                        let next = if *key == Key::Up {
+                            r.checked_sub(1)
+                        } else {
+                            (r + 1 < rows.len()).then_some(r + 1)
+                        };
+                        if let Some(n) = next {
+                            let (from, to) = rows[n];
+                            st.caret = (from + c).min(to);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            *text = chars.iter().collect();
+            resp.changed = true;
+        }
+
+        // ---- draw ---------------------------------------------------------
+        let chamfer = th.metrics.chamfer;
+        self.draw_well(rect, th.well);
+        let ring = th
+            .well
+            .lerp(th.focus_ring, if resp.focused { 1.0 } else { 0.0 });
+        if resp.focused {
+            self.canvas.stroke_chamfer(rect, ring, chamfer);
+        }
+        let rows = wrap_rows(&chars, cols);
+        let (cr, cc) = locate(st.caret, &rows);
+
+        // Scroll by whole rows, only as far as it takes to keep the caret in
+        // view. A block of text that jumps about while you type in it is worse
+        // than one that does not scroll at all.
+        let visible = (inner.h / font::LINE_H).max(1) as usize;
+        let mut top = st.scroll.max(0) as usize;
+        if cr < top {
+            top = cr;
+        }
+        if cr >= top + visible {
+            top = cr + 1 - visible;
+        }
+        top = top.min(rows.len().saturating_sub(visible.min(rows.len())));
+        st.scroll = top as i32;
+
+        self.clipped(inner, |ui| {
+            for (i, (from, to)) in rows.iter().enumerate().skip(top).take(visible) {
+                let y = inner.y + (i - top) as i32 * font::LINE_H;
+                let line: String = chars[*from..*to].iter().collect();
+                font::draw_text(ui.canvas, inner.x, y, &line, th.ink_light);
+            }
+            if resp.focused {
+                let x = inner.x + cc as i32 * font::ADVANCE;
+                let y = inner.y + (cr.saturating_sub(top)) as i32 * font::LINE_H;
+                ui.canvas
+                    .fill_rect(Rect::new(x - 1, y - 1, 1, font::LINE_H), th.accent.face);
+            }
+            // A hint that there is more above or below, in the margin the well
+            // already has.
+            if top > 0 {
+                ui.canvas.hline(inner.x, inner.y - 1, inner.w, th.ink_soft);
+            }
+            if top + visible < rows.len() {
+                ui.canvas
+                    .hline(inner.x, inner.bottom(), inner.w, th.ink_soft);
+            }
+        });
+
+        self.set_text_state(id, st);
+        resp
+    }
+
     // ---------------------------------------------------------------- toggles
 
     /// A checkbox with a label to its right. Returns a response whose
@@ -1383,4 +1609,52 @@ impl Ui<'_> {
 
         changed
     }
+}
+
+/// Break text into rows that fit `cols` characters, on spaces where it can and
+/// mid-word where it must, and always at a newline.
+fn wrap_rows(chars: &[char], cols: usize) -> Vec<(usize, usize)> {
+    let mut rows = Vec::new();
+    let mut start = 0usize;
+    let mut last_space: Option<usize> = None;
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] == '\n' {
+            rows.push((start, i));
+            i += 1;
+            start = i;
+            last_space = None;
+            continue;
+        }
+        if chars[i] == ' ' {
+            last_space = Some(i);
+        }
+        if i - start >= cols {
+            let brk = match last_space {
+                Some(sp) if sp > start => sp,
+                _ => i,
+            };
+            rows.push((start, brk));
+            start = if Some(brk) == last_space {
+                brk + 1
+            } else {
+                brk
+            };
+            last_space = None;
+            i = start;
+            continue;
+        }
+        i += 1;
+    }
+    rows.push((start, chars.len()));
+    rows
+}
+
+/// What an open menu reported this frame.
+#[derive(Clone, Copy, Default)]
+pub struct MenuPick {
+    /// The entry that was clicked.
+    pub chosen: Option<usize>,
+    /// A press landed outside the menu, so it should be put away.
+    pub dismissed: bool,
 }

@@ -18,10 +18,13 @@
 pub mod assist;
 pub mod dialog;
 pub mod diff;
+pub mod fetch;
 pub mod indent;
 pub mod llm;
 pub mod markdown;
+pub mod panels;
 pub mod render;
+pub mod settings;
 pub mod shots;
 pub mod showcase;
 pub mod syntax;
@@ -134,6 +137,10 @@ pub struct Notes {
     pub assist: Option<assist::Assist>,
     /// The model on its thread, whichever one this build has.
     pub helper: llm::Assistant,
+    /// What the assistant is and what it is told, kept between runs.
+    pub settings: settings::Settings,
+    /// The menu, the panels behind it, and anything being downloaded.
+    pub chrome: panels::Chrome,
     /// A source line the preview should bring into view on the next draw,
     /// which is when the document's heights are known.
     pub preview_reveal: Option<usize>,
@@ -207,6 +214,8 @@ impl Notes {
             .position(|n| n.filename() == "welcome.md")
             .unwrap_or(0);
 
+        let config = settings::Settings::load();
+
         Self {
             notes,
             current,
@@ -228,7 +237,9 @@ impl Notes {
             preview_reveal: None,
             assist: None,
             assist_wanted: false,
-            helper: llm::Assistant::spawn(assistant()),
+            helper: llm::Assistant::spawn(assistant(&config)),
+            settings: config,
+            chrome: panels::Chrome::default(),
             tab_shown: 0,
             tab_anim: 0.0,
             fade: pixui::Canvas::new(1, 1),
@@ -392,6 +403,77 @@ impl Notes {
     /// Step out of the search box into the list it is filtering, landing on
     /// the first match. Stays put when there is nothing to land on, since
     /// moving to an empty list only takes the keyboard somewhere useless.
+    /// Act on whatever the settings panel decided.
+    ///
+    /// A change of weights or of prompt means a new assistant, which means
+    /// loading the model again — so it is done when the panel closes rather
+    /// than on every keystroke in the prompt.
+    fn apply_settings(&mut self, action: panels::Action) {
+        match action {
+            panels::Action::None | panels::Action::Prompt => {}
+            panels::Action::Use(file) => {
+                self.settings.model = Some(file);
+                self.rebuild_assistant();
+            }
+            panels::Action::Fetch(i) => {
+                let weights = &settings::CATALOGUE[i];
+                self.chrome.notice.clear();
+                match fetch::Download::start(weights, &settings::models_dir()) {
+                    Ok(down) => self.chrome.download = Some(down),
+                    Err(why) => self.chrome.notice = why.to_uppercase(),
+                }
+            }
+            panels::Action::Cancel => {
+                if let Some(mut down) = self.chrome.download.take() {
+                    down.cancel();
+                    self.chrome.notice = "STOPPED - IT WILL RESUME WHERE IT LEFT OFF".into();
+                }
+            }
+            panels::Action::Close => {
+                self.chrome.panel = None;
+                let changed = self.chrome.opened_with.take() != Some(self.settings.clone());
+                if changed {
+                    self.rebuild_assistant();
+                }
+            }
+        }
+    }
+
+    /// Write the settings down and start an assistant that matches them.
+    fn rebuild_assistant(&mut self) {
+        if let Err(why) = self.settings.save() {
+            self.status = format!("COULD NOT SAVE SETTINGS: {why}").to_uppercase();
+        }
+        self.helper = llm::Assistant::spawn(assistant(&self.settings));
+        self.status = format!("ASSISTANT: {}", self.helper.name());
+    }
+
+    /// Ask a download how it is getting on, once a frame.
+    fn watch_download(&mut self) {
+        let Some(down) = self.chrome.download.as_mut() else {
+            return;
+        };
+        match down.poll() {
+            None => {}
+            Some(Ok(path)) => {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default()
+                    .to_string();
+                self.chrome.download = None;
+                self.chrome.notice.clear();
+                // Fetched to be used, so it is used.
+                self.settings.model = Some(name);
+                self.rebuild_assistant();
+            }
+            Some(Err(why)) => {
+                self.chrome.download = None;
+                self.chrome.notice = why.to_uppercase();
+            }
+        }
+    }
+
     /// Open the assistant on whatever is selected.
     ///
     /// The range is taken now and kept: by the time an answer comes back the
@@ -619,19 +701,17 @@ pub fn theme() -> Theme {
 
 // --------------------------------------------------------------------- frame
 
-/// The assistant this build has: the local model when one is compiled in and
-/// its weights are on disk, and the rehearsal stub otherwise.
+/// The assistant this build has: the chosen local model when one is compiled in
+/// and its weights are on disk, and the rehearsal stub otherwise.
 ///
 /// Chosen here rather than at the call site so that the interface never has to
 /// know which one it is talking to.
-pub fn assistant() -> Box<dyn llm::Backend> {
+pub fn assistant(config: &settings::Settings) -> Box<dyn llm::Backend> {
     #[cfg(feature = "llm")]
-    {
-        let path = llm::local::default_path();
-        if path.exists() {
-            return Box::new(llm::local::Local::new(path));
-        }
+    if let Some(path) = config.model_path() {
+        return Box::new(llm::local::Local::new(path, config.prompt.clone()));
     }
+    let _ = config;
     Box::new(llm::Rehearsal)
 }
 
@@ -656,7 +736,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     // around it, and its own layer settles who gets a click that lands on it.
     // Both, though, take the keyboard away from vim entirely, because a model
     // rewriting the note behind you while you type at it is not a feature.
-    let modal = app.dialog.is_some();
+    let modal = app.dialog.is_some() || app.chrome.panel.is_some();
     let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
 
@@ -699,8 +779,9 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         ui.input.dt,
     );
 
+    let mut menu_at = Point::new(0, 0);
     ui.input_blocked(modal, |ui| {
-        draw_titlebar(ui, titlebar, app);
+        menu_at = draw_titlebar(ui, titlebar, app);
         // The divider is a toolkit widget; the app only owns the number.
         let derived = sidebar_width(screen.w);
         let mut width = app.sidebar_w.unwrap_or(derived);
@@ -773,6 +854,41 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             None => {}
         }
     }
+
+    // ---- the menu, over whatever it covers -----------------------------
+    if app.chrome.menu_open {
+        let pick = ui.menu_items(menu_at, &["SETTINGS", "ABOUT"]);
+        match pick.chosen {
+            Some(0) => {
+                app.chrome.menu_open = false;
+                app.chrome.opened_with = Some(app.settings.clone());
+                app.chrome.panel = Some(panels::Panel::Settings);
+            }
+            Some(1) => {
+                app.chrome.menu_open = false;
+                app.chrome.panel = Some(panels::Panel::About);
+            }
+            _ if pick.dismissed => app.chrome.menu_open = false,
+            _ => {}
+        }
+    }
+
+    // ---- and the panels behind it ---------------------------------------
+    match app.chrome.panel {
+        Some(panels::Panel::About) => {
+            if panels::about(ui) {
+                app.chrome.panel = None;
+            }
+        }
+        Some(panels::Panel::Settings) => {
+            let mut config = std::mem::take(&mut app.settings);
+            let action = panels::settings(ui, &mut config, &mut app.chrome);
+            app.settings = config;
+            app.apply_settings(action);
+        }
+        None => {}
+    }
+    app.watch_download();
 
     // The pulse lasts exactly one frame: everything that wanted it has drawn.
     app.pane_grab = false;
@@ -965,14 +1081,28 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
 
 // -------------------------------------------------------------------- chrome
 
-fn draw_titlebar(ui: &mut Ui, rect: Rect, app: &Notes) {
+/// The strip along the top: the application's menu on the left, and which note
+/// is open on the right.
+///
+/// Returns where a dropdown from the menu would hang, which the caller needs
+/// after everything else has drawn — a menu that opens under the pane it covers
+/// is not a menu.
+fn draw_titlebar(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Point {
     let note = app.note();
     let badge = format!(
         "{}{}",
         note.filename(),
         if note.buffer.dirty { " *" } else { "" }
     );
-    ui.title_bar(rect, "PIXUI NOTES", Some(&badge.to_uppercase()));
+    // The strip with no title of its own: the menu stands where the name was.
+    ui.title_bar(rect, "", Some(&badge.to_uppercase()));
+
+    let w = pixui::font::advance_width("PIXELS") + 10;
+    let at = Rect::new(rect.x + 12, rect.y + 1, w, rect.h - 3);
+    if ui.menu_title(at, "PIXELS", app.chrome.menu_open).clicked {
+        app.chrome.menu_open = !app.chrome.menu_open;
+    }
+    Point::new(at.x, rect.bottom())
 }
 
 fn draw_statusbar(ui: &mut Ui, rect: Rect, app: &Notes) {

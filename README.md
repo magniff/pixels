@@ -184,9 +184,39 @@ test covers the whole pane.
 
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 275 tests
+cargo test --workspace                         # 280 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
+
+## The menu
+
+The strip along the top is a menu. **Pixels** opens onto **Settings** and
+**About**: what the app is and which commit it was built from, and everything
+the assistant needs to be told.
+
+| the menu | the settings |
+|---|---|
+| ![the Pixels menu](screenshots/menu.png) | ![settings](screenshots/settings.png) |
+
+Settings lists the weights the app knows how to fetch, with what each is good
+for and what it costs to download. **GET** fetches one — through `curl`, which
+is already how this app opens a link, and which saves a TLS stack and a
+certificate store for a job done at most twice in a program's life. It writes to
+a `.part` file and renames it only once the file is whole, so a half-fetched
+download is never mistaken for weights, and an interrupted one resumes where it
+stopped. Anything else already sitting in the models folder is listed too,
+whether the catalogue knows it or not.
+
+Underneath is the system prompt, which is what the model is told before it is
+told anything else. The default is in `settings::DEFAULT_PROMPT`, and every
+clause of it was put there by a model getting something wrong. **DEFAULT** puts
+it back.
+
+Both settle in `~/.config/pixui-notes/settings.conf` — two keys, written by
+hand, because a dependency that can parse anything is a strange price to pay for
+that. `PIXUI_CONFIG` moves the file and `PIXUI_MODELS` moves the weights folder;
+the screenshots above use both, so what they show does not depend on whose
+machine took them.
 
 ## The assistant
 
@@ -241,7 +271,8 @@ mkdir -p models && curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
 ```
 
 That is where it looks unless `PIXUI_MODEL` says otherwise; without it the build
-falls back to the stub.
+falls back to the stub. Or skip the curl line and press **GET** in Settings,
+which fetches the same file to the same place.
 
 **1.7B** (1.2 GB) proofreads, tightens and rephrases well. It is poor at style:
 "make it goofy" comes back with a comma moved, because at that size a vague

@@ -2493,3 +2493,81 @@ fn the_reference_note_is_installed_into_a_vault_that_has_notes() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ------------------------------------------------------------------ settings
+
+use notes::settings::{Settings, CATALOGUE};
+
+#[test]
+fn settings_survive_a_round_trip_through_a_file() {
+    let config = Settings {
+        model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
+        // A prompt has newlines in it, and the format is one line per setting.
+        prompt: "first line\nsecond line\nand a backslash \\ too".into(),
+    };
+    let text = config.to_text();
+    assert_eq!(text.lines().count(), 2, "one line per setting");
+    assert_eq!(Settings::parse(&text), config);
+}
+
+#[test]
+fn an_unreadable_settings_file_gives_the_defaults() {
+    let config = Settings::parse("nonsense\n\nmodel=\nunknown = 3\n");
+    assert_eq!(config, Settings::default());
+    assert!(config.prompt.contains("markdown"), "the default prompt");
+}
+
+#[test]
+fn a_newer_settings_file_does_not_lose_what_it_understands() {
+    // A key from a build that knows more must not stop the rest being read.
+    let config = Settings::parse("model = a.gguf\nfuture-thing = 12\n");
+    assert_eq!(config.model.as_deref(), Some("a.gguf"));
+}
+
+#[test]
+fn the_catalogue_points_at_files_it_names() {
+    for weights in CATALOGUE {
+        assert!(
+            weights.url.ends_with(weights.file),
+            "{} is fetched from a url that ends in a different file",
+            weights.label
+        );
+        assert!(weights.megabytes > 100, "{} has no size", weights.label);
+    }
+}
+
+#[test]
+fn a_download_puts_the_file_in_place_only_once_it_is_whole() {
+    // Driven over `file://`, so the state machine is tested without a network:
+    // curl is the same program either way, and the part being checked here is
+    // the partial-then-rename, not the transfer.
+    let dir = std::env::temp_dir().join(format!("pixui-fetch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.bin");
+    std::fs::write(&source, vec![7u8; 4096]).unwrap();
+
+    let weights = notes::settings::Weights {
+        label: "TEST",
+        file: "fetched.gguf",
+        url: Box::leak(format!("file://{}", source.display()).into_boxed_str()),
+        megabytes: 1,
+        note: "",
+    };
+    let into = dir.join("models");
+    let mut down = notes::fetch::Download::start(&weights, &into).expect("curl should start");
+    let outcome = loop {
+        if let Some(outcome) = down.poll() {
+            break outcome;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let path = outcome.expect("the copy should succeed");
+    assert_eq!(path, into.join("fetched.gguf"));
+    assert_eq!(std::fs::read(&path).unwrap().len(), 4096);
+    assert!(
+        !into.join("fetched.gguf.part").exists(),
+        "the partial file is renamed, not left behind"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

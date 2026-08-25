@@ -30,6 +30,9 @@ struct Scene {
     /// Click at `mouse` once the script has finished typing, for a control
     /// that only exists as a result of what was typed.
     click_after: bool,
+    /// Where that second click lands, when it is not where the first one did —
+    /// a menu entry is never in the same place as the menu.
+    click_at: Option<Point>,
     /// Notches of wheel, rolled at `mouse` for a few frames after the script.
     wheel: f32,
     settle: u32,
@@ -109,6 +112,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -121,6 +125,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -133,6 +138,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -145,6 +151,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -157,6 +164,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -169,6 +177,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 40,
             canvas: (768, 470),
         },
@@ -183,6 +192,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 40,
             canvas: (1050, 620),
         },
@@ -196,6 +206,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -209,6 +220,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -222,6 +234,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -236,6 +249,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -250,6 +264,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 2,
             canvas: (768, 470),
         },
@@ -264,6 +279,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 20,
             canvas: (768, 470),
         },
@@ -285,6 +301,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 20,
             canvas: (768, 470),
         },
@@ -298,6 +315,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 20,
             canvas: (768, 470),
         },
@@ -311,6 +329,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: true,
+            click_at: None,
             settle: 20,
             canvas: (768, 470),
         },
@@ -337,6 +356,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -362,7 +382,50 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: true,
+            click_at: None,
             settle: 30,
+            canvas: (768, 470),
+        },
+        // The application menu, open.
+        Scene {
+            name: "menu",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            click_after: false,
+            click_at: None,
+            settle: 10,
+            canvas: (768, 470),
+        },
+        // What the app is, and which build this is.
+        Scene {
+            name: "about",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            click_after: true,
+            click_at: Some(Point::new(64, 33)),
+            settle: 14,
+            canvas: (768, 470),
+        },
+        // Which weights to run, and what to tell them.
+        Scene {
+            name: "settings",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            click_after: true,
+            click_at: Some(Point::new(64, 21)),
+            settle: 14,
             canvas: (768, 470),
         },
         // Enter in the search box hands the keyboard to the results, on the
@@ -376,6 +439,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 20,
             canvas: (768, 470),
         },
@@ -389,6 +453,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 7,
             canvas: (768, 470),
         },
@@ -402,6 +467,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (900, 660),
         },
@@ -420,6 +486,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (900, 660),
         },
@@ -434,6 +501,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: -1.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (900, 660),
         },
@@ -457,6 +525,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 40,
             canvas: (900, 660),
         },
@@ -479,6 +548,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 40,
             canvas: (900, 660),
         },
@@ -498,6 +568,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -517,6 +588,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -530,6 +602,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -543,6 +616,7 @@ pub fn run() -> std::io::Result<()> {
             drag: Some((Point::new(200, 43), Point::new(340, 43))),
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 20,
             canvas: (768, 470),
         },
@@ -556,6 +630,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
@@ -569,12 +644,22 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             click_after: false,
+            click_at: None,
             settle: 30,
             canvas: (768, 470),
         },
     ];
 
     std::fs::create_dir_all("screenshots")?;
+
+    // Settings and installed weights are the user's, and a screenshot must not
+    // depend on either: point both somewhere empty so every run of this draws
+    // the same thing on every machine.
+    let scratch = std::env::temp_dir().join("pixui-shots");
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(scratch.join("models"))?;
+    std::env::set_var("PIXUI_CONFIG", scratch.join("settings.conf"));
+    std::env::set_var("PIXUI_MODELS", scratch.join("models"));
 
     for scene in &scenes {
         // A fresh vault and a fresh UI per scene keeps them independent.
@@ -658,6 +743,11 @@ pub fn run() -> std::io::Result<()> {
             // the control being clicked may not exist until it has.
             let after = script_start + scene.script.len() as u32 + 5;
             if scene.click_after {
+                if let Some(at) = scene.click_at {
+                    if f > after {
+                        input.mouse = at;
+                    }
+                }
                 if f == after + 1 {
                     input.mouse_down = true;
                     input.mouse_pressed = true;

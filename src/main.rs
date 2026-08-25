@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let request = args.get(i + 1).cloned().unwrap_or_default();
         let mut source = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut source)?;
-        let mut backend = notes::assistant();
+        let mut backend = notes::assistant(&notes::settings::Settings::load());
         eprintln!("[{}]", backend.name());
         let started = std::time::Instant::now();
         match backend.edit(&notes::llm::Ask { source, request }) {

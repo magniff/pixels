@@ -1,0 +1,196 @@
+//! What the assistant is, and where it is kept.
+//!
+//! Two things the user chooses — which weights to run and what to tell them —
+//! plus the small amount of filing that makes those choices survive a restart.
+//! Written by hand rather than through a serialisation crate: it is two fields,
+//! and a dependency that can parse anything is a strange price to pay for that.
+
+use std::path::{Path, PathBuf};
+
+/// What the model is told it is doing, before it is told what to do.
+///
+/// Everything here was learned the hard way. Telling it the job stops it
+/// answering "what is this text?" with the text; saying that handing the
+/// passage back is not an answer stops a vague instruction returning nothing;
+/// naming markdown stops it eating the markup.
+pub const DEFAULT_PROMPT: &str = "You are the editor built into a markdown \
+note-taking app. Somebody has selected a passage from their own notes and told \
+you what to do with it: proofread it, tighten it, rewrite it, change how it \
+sounds. Do exactly that, to the whole passage, and hand the passage back. Even \
+a vague instruction gets a real change - handing back the text as you found it \
+is not an answer. Keep any markdown markup, and keep the author's facts. Reply \
+with the rewritten passage and nothing else: no preamble, no explanation, no \
+quotes, no code fences.";
+
+/// Weights the app knows how to fetch.
+///
+/// Sizes are the ones the hub reports, so the progress bar has something to
+/// measure against without a round trip to ask.
+pub struct Weights {
+    pub label: &'static str,
+    pub file: &'static str,
+    pub url: &'static str,
+    pub megabytes: u64,
+    pub note: &'static str,
+}
+
+pub const CATALOGUE: &[Weights] = &[
+    Weights {
+        label: "QWEN3 1.7B",
+        file: "Qwen3-1.7B-Q4_K_M.gguf",
+        url: "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
+        megabytes: 1170,
+        note: "PROOFREADS WELL. POOR AT STYLE.",
+    },
+    Weights {
+        label: "QWEN3 4B",
+        file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        url: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        megabytes: 2400,
+        note: "REWRITES AND CHANGES TONE TOO.",
+    },
+];
+
+/// Where weights are kept. `PIXUI_MODELS` moves it; the default is beside the
+/// binary's working directory, which is where the README's curl line puts them.
+pub fn models_dir() -> PathBuf {
+    std::env::var_os("PIXUI_MODELS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("models"))
+}
+
+/// Every `.gguf` on disk, whether or not the catalogue knows about it.
+pub fn installed() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(models_dir()) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "gguf") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Settings {
+    /// The weights file to run, by name rather than by path: the folder can
+    /// move between machines and the choice should survive it.
+    pub model: Option<String>,
+    pub prompt: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            model: None,
+            prompt: DEFAULT_PROMPT.to_string(),
+        }
+    }
+}
+
+impl Settings {
+    /// The file the settings live in.
+    pub fn path() -> PathBuf {
+        if let Some(dir) = std::env::var_os("PIXUI_CONFIG") {
+            return PathBuf::from(dir);
+        }
+        let home = std::env::var_os(if cfg!(windows) { "APPDATA" } else { "HOME" })
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        if cfg!(windows) {
+            home.join("pixui-notes").join("settings.conf")
+        } else {
+            home.join(".config")
+                .join("pixui-notes")
+                .join("settings.conf")
+        }
+    }
+
+    pub fn load() -> Self {
+        std::fs::read_to_string(Self::path())
+            .ok()
+            .map(|text| Self::parse(&text))
+            .unwrap_or_default()
+    }
+
+    /// `key = value`, one per line, with newlines in a value written `\n`.
+    /// Anything unrecognised is left alone rather than dropped, so a file from
+    /// a newer build survives being read by an older one.
+    pub fn parse(text: &str) -> Self {
+        let mut out = Self::default();
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            match key.trim() {
+                "model" if !value.is_empty() => out.model = Some(value.to_string()),
+                "prompt" if !value.is_empty() => out.prompt = unescape(value),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    pub fn to_text(&self) -> String {
+        let mut out = String::new();
+        if let Some(model) = &self.model {
+            out.push_str(&format!("model = {model}\n"));
+        }
+        out.push_str(&format!("prompt = {}\n", escape(&self.prompt)));
+        out
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        let path = Self::path();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, self.to_text())
+    }
+
+    /// The weights this configuration points at, if they are on disk.
+    pub fn model_path(&self) -> Option<PathBuf> {
+        let dir = models_dir();
+        match &self.model {
+            Some(name) => Some(dir.join(name)).filter(|p| p.exists()),
+            // Nothing chosen: whatever is installed, which for most people is
+            // the one thing they downloaded.
+            None => installed().into_iter().next(),
+        }
+    }
+}
+
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\n', "\\n")
+}
+
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Whether a path names weights the catalogue describes.
+pub fn described(path: &Path) -> Option<&'static Weights> {
+    let name = path.file_name()?.to_str()?;
+    CATALOGUE.iter().find(|w| w.file == name)
+}

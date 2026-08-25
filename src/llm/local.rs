@@ -36,15 +36,18 @@ pub fn default_path() -> PathBuf {
 
 pub struct Local {
     path: PathBuf,
+    /// What the model is told it is doing, from the settings.
+    system: String,
     loaded: Option<(LlamaBackend, LlamaModel)>,
     /// Whether this model reasons out loud unless told the thinking is done.
     thinks: bool,
 }
 
 impl Local {
-    pub fn new(path: impl AsRef<Path>) -> Self {
+    pub fn new(path: impl AsRef<Path>, system: String) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
+            system,
             loaded: None,
             thinks: false,
         }
@@ -82,6 +85,9 @@ impl Local {
 
 /// The conversation, in the format Qwen3 was trained on.
 ///
+/// What the system turn *says* is a setting; see `settings::DEFAULT_PROMPT`
+/// for the default and why it is worded the way it is.
+///
 /// The empty `<think>` block is not decoration: Qwen3 reasons out loud unless
 /// told the thinking is already done, and several hundred tokens of
 /// deliberation about a comma is not what anybody asked for.
@@ -90,7 +96,7 @@ impl Local {
 /// it was told as the thing to do, and with the order the other way round it
 /// reliably answered the question "what is this text?" — by handing the text
 /// back.
-fn prompt(ask: &Ask, thinks: bool) -> String {
+fn prompt(ask: &Ask, system: &str, thinks: bool) -> String {
     // Only a model that would otherwise deliberate gets told not to.
     let opening = if thinks {
         "<think>\n\n</think>\n\n"
@@ -99,18 +105,12 @@ fn prompt(ask: &Ask, thinks: bool) -> String {
     };
     format!(
         "<|im_start|>system\n\
-         You are the editor built into a markdown note-taking app. Somebody has \
-         selected a passage from their own notes and told you what to do with \
-         it: proofread it, tighten it, rewrite it, change how it sounds. Do \
-         exactly that, to the whole passage, and hand the passage back. Even a \
-         vague instruction gets a real change — handing back the text as you \
-         found it is not an answer. Keep any markdown markup, and keep the \
-         author's facts. Reply with the rewritten passage and nothing else: no \
-         preamble, no explanation, no quotes, no code fences.<|im_end|>\n\
+         {}<|im_end|>\n\
          <|im_start|>user\n\
          Text:\n{}\n\n\
          Instruction: {}<|im_end|>\n\
          <|im_start|>assistant\n{opening}",
+        system.trim(),
         ask.source,
         ask.request.trim()
     )
@@ -169,7 +169,7 @@ impl Backend for Local {
         self.load()?;
         let thinks = self.thinks;
         let (backend, model) = self.loaded.as_ref().expect("loaded above");
-        let text = prompt(ask, thinks);
+        let text = prompt(ask, &self.system, thinks);
         let tokens = model
             .str_to_token(&text, AddBos::Never)
             .map_err(|e| format!("tokenising: {e}"))?;
