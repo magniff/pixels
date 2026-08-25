@@ -61,6 +61,7 @@ impl Local {
             let params = LlamaModelParams::default().with_n_gpu_layers(99);
             let model = LlamaModel::load_from_file(&backend, &self.path, &params)
                 .map_err(|e| format!("loading {}: {e}", self.path.display()))?;
+            leave_before_ggml_does();
             self.loaded = Some((backend, model));
         }
         Ok(self.loaded.as_ref().expect("just loaded"))
@@ -80,11 +81,14 @@ impl Local {
 fn prompt(ask: &Ask) -> String {
     format!(
         "<|im_start|>system\n\
-         You rewrite text on request. Always apply the instruction, even if the \
-         text already reads well, and return the whole passage rewritten rather \
-         than a comment on it. Keep any markdown markup. Reply with the \
-         rewritten text and nothing else: no preamble, no explanation, no \
-         quotes, no code fences.<|im_end|>\n\
+         You are the editor built into a markdown note-taking app. Somebody has \
+         selected a passage from their own notes and told you what to do with \
+         it: proofread it, tighten it, rewrite it, change how it sounds. Do \
+         exactly that, to the whole passage, and hand the passage back. Even a \
+         vague instruction gets a real change — handing back the text as you \
+         found it is not an answer. Keep any markdown markup, and keep the \
+         author's facts. Reply with the rewritten passage and nothing else: no \
+         preamble, no explanation, no quotes, no code fences.<|im_end|>\n\
          <|im_start|>user\n\
          Text:\n{}\n\n\
          Instruction: {}<|im_end|>\n\
@@ -92,6 +96,36 @@ fn prompt(ask: &Ask) -> String {
         ask.source,
         ask.request.trim()
     )
+}
+
+/// Arrange to leave without running the rest of the C++ teardown.
+///
+/// llama.cpp's Metal device asserts on the way out that every buffer it handed
+/// out has been freed. Nothing frees them: the model is loaded once and lives
+/// on its worker thread for the rest of the process, and a process does not
+/// unwind on the way to `exit` — least of all when the quit came from the macOS
+/// menu, which calls `exit` from inside AppKit and runs no Rust destructor at
+/// all. So an ordinary quit ended in an abort and a page of backtrace.
+///
+/// Registered immediately after the model loads, which is after ggml's own
+/// teardown was registered — and handlers run in reverse, so this one runs
+/// first and takes the process down before the assert can fire. Everything it
+/// skips is memory the kernel reclaims a microsecond later anyway.
+///
+/// It would be better not to need this. If llama.cpp ever tolerates being torn
+/// down with buffers outstanding, delete it and let exit take its course.
+fn leave_before_ggml_does() {
+    extern "C" {
+        fn atexit(handler: extern "C" fn()) -> i32;
+        fn _exit(code: i32) -> !;
+    }
+    extern "C" fn leave() {
+        unsafe { _exit(0) }
+    }
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        atexit(leave);
+    });
 }
 
 /// Take off what a model wraps an answer in when it cannot help itself.

@@ -241,7 +241,8 @@ mkdir -p models && curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
 ```
 
 That is where it looks unless `PIXUI_MODEL` says otherwise; without it the build
-falls back to the stub. The weights load on the first question rather than at
+falls back to the stub. Point `PIXUI_MODEL` at a bigger one — Qwen3-4B is about
+2.4 GB — and nothing needs rebuilding. The weights load on the first question rather than at
 startup, so opening a note never waits on them. On Apple silicon the whole
 model goes to the GPU and an edit takes a second or two.
 
@@ -259,6 +260,14 @@ wants a *concrete* instruction: "fix the grammar", "split into two sentences",
 almost unchanged. At this size the model has no idea what you meant, and its
 safest guess is the passage it was given. When that happens the block says so
 and puts the question back in the field to be edited.
+
+It is loaded once and stays loaded, because loading costs about six seconds and
+answering costs a fraction of one. That is also why quitting the app used to
+end in a page of backtrace: llama.cpp's Metal backend asserts, on the way out,
+that every buffer has been freed, and nothing frees them — a process on its way
+to `exit` does not unwind, and a quit from the macOS menu runs no Rust
+destructor at all. The app now arranges to leave first; see
+`leave_before_ggml_does`.
 
 It is **not** good at checking facts: it has no way to look anything up, and it will
 invent a correction with the same confidence it fixes a comma. That is the
