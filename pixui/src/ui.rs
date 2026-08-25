@@ -155,6 +155,12 @@ pub struct FrameOutput {
     pub quit: bool,
     /// Set if the frame asked for a different pixel scale.
     pub pixel_scale: Option<i32>,
+    /// Whether anything on this frame was still moving.
+    ///
+    /// When nothing is, the next frame would paint exactly the same pixels, so
+    /// the event loop stops drawing and waits for something to happen. An
+    /// application that sits still should cost nothing to sit still.
+    pub animating: bool,
 }
 
 /// The per-frame UI context handed to application code.
@@ -170,6 +176,8 @@ pub struct Ui<'a> {
     cursor: Cursor,
     next_theme: Option<Theme>,
     input_blocked: bool,
+    /// Set by anything that will look different next frame.
+    animating: bool,
     /// How deep in floating layers the drawing currently is. Zero is the page.
     layer_depth: u32,
     keyboard_captured: bool,
@@ -202,6 +210,7 @@ impl<'a> Ui<'a> {
             cursor: Cursor::Default,
             next_theme: None,
             input_blocked: false,
+            animating: false,
             layer_depth: 0,
             keyboard_captured: false,
             quit: false,
@@ -251,6 +260,7 @@ impl<'a> Ui<'a> {
         let out = FrameOutput {
             cursor: self.cursor,
             theme: self.next_theme,
+            animating: self.animating,
             quit: self.quit,
             pixel_scale: self.next_pixel_scale,
         };
@@ -423,6 +433,16 @@ impl<'a> Ui<'a> {
         r
     }
 
+    /// Ask for another frame after this one.
+    ///
+    /// Anything that changes with time rather than with input has to say so: a
+    /// caret that blinks, a spinner, a progress bar reading a file that is
+    /// still arriving. Widgets that animate through [`Self::animate`] and the
+    /// springs are covered already.
+    pub fn request_repaint(&mut self) {
+        self.animating = true;
+    }
+
     /// Whether interaction is currently suppressed.
     pub fn is_input_blocked(&self) -> bool {
         self.input_blocked
@@ -550,6 +570,11 @@ impl<'a> Ui<'a> {
             && (self.input.key_pressed(Key::Enter) || self.input.key_pressed(Key::Space))
     }
 
+    /// The stored animation for a widget, for tests and diagnostics.
+    pub fn anim_of(&self, id: Id) -> WidgetAnim {
+        self.state.anims.get(&id).copied().unwrap_or_default()
+    }
+
     pub fn is_active(&self, id: Id) -> bool {
         self.state.active == Some(id)
     }
@@ -666,6 +691,13 @@ impl<'a> Ui<'a> {
         if resp.clicked {
             a.flash = 1.0;
         }
+        // Hover and focus blends settle exponentially and never quite arrive,
+        // so they are compared against their target rather than their velocity.
+        let blending = (a.hover - f32::from(u8::from(resp.hovered))).abs() > 0.002
+            || (a.focus - f32::from(u8::from(resp.focused))).abs() > 0.002;
+        if a.moving() || blending {
+            self.animating = true;
+        }
         self.state.anims.insert(id, a);
         a
     }
@@ -676,6 +708,9 @@ impl<'a> Ui<'a> {
         let mut a = self.state.anims.get(&id).copied().unwrap_or_default();
         a.touched = self.state.frame;
         let r = f(&mut a);
+        if a.moving() {
+            self.animating = true;
+        }
         self.state.anims.insert(id, a);
         r
     }

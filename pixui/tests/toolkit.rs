@@ -262,12 +262,17 @@ impl Harness {
     }
 
     fn frame<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> R {
+        self.out(f).0
+    }
+
+    /// A frame, and what it reported on the way out.
+    fn out<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> (R, pixui::FrameOutput) {
         self.canvas.clear(Color::hex(0x000000));
         let mut ui = Ui::begin(&mut self.canvas, &self.input, &self.theme, &mut self.state);
         let r = f(&mut ui);
-        ui.finish();
+        let out = ui.finish();
         self.input.begin_frame();
-        r
+        (r, out)
     }
 }
 
@@ -376,6 +381,57 @@ fn a_scheme_can_be_found_by_name_however_it_is_typed() {
     for (name, _) in pixui::SCHEMES {
         assert!(pixui::scheme_named(name).is_some(), "{name} is unreachable");
     }
+}
+
+// ------------------------------------------------------------------- idling
+
+#[test]
+fn a_frame_with_nothing_moving_on_it_says_so() {
+    // What lets the event loop stop drawing: an application sitting still
+    // should cost nothing to sit still, and this is the frame admitting there
+    // is nothing to see.
+    let mut h = Harness::new();
+    let (_, out) = h.out(|ui| ui.label("STILL"));
+    assert!(!out.animating);
+}
+
+#[test]
+fn a_spring_in_flight_keeps_the_frames_coming() {
+    let mut h = Harness::new();
+    h.input.mouse = Point::new(20, 7);
+    h.input.mouse_pressed = true;
+    h.input.mouse_down = true;
+    let (_, out) = h.out(|ui| ui.button_at(Rect::new(0, 0, 60, 15), "GO", pixui::Tone::Accent));
+    assert!(out.animating, "a press has a spring to travel");
+
+    // And it stops on its own once the spring has settled, rather than being
+    // told to stop.
+    h.input.mouse_pressed = false;
+    h.input.mouse_down = false;
+    h.input.mouse_released = true;
+    let mut settled = false;
+    for _ in 0..300 {
+        let (_, out) = h.out(|ui| ui.button_at(Rect::new(0, 0, 60, 15), "GO", pixui::Tone::Accent));
+        h.input.mouse_released = false;
+        h.input.mouse = Point::new(500, 500);
+        if !out.animating {
+            settled = true;
+            break;
+        }
+    }
+    assert!(
+        settled,
+        "something is still asking for frames long after the press"
+    );
+}
+
+#[test]
+fn anything_can_ask_for_another_frame() {
+    // For what the toolkit cannot see: a caret blinking on the clock, a
+    // reply that has not arrived yet.
+    let mut h = Harness::new();
+    let (_, out) = h.out(|ui| ui.request_repaint());
+    assert!(out.animating);
 }
 
 // -------------------------------------------------------------------- layers

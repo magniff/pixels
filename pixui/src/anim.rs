@@ -93,3 +93,16 @@ pub struct WidgetAnim {
     /// Frame index this widget was last seen, so stale entries can be dropped.
     pub(crate) touched: u64,
 }
+
+impl WidgetAnim {
+    /// Whether anything here is still moving.
+    ///
+    /// A frame is only worth drawing if something on it changed, and this is
+    /// how a widget says it has not finished. The thresholds are half a pixel
+    /// at the sizes these drive: below that, another frame would paint the same
+    /// pixels as the last one.
+    pub fn moving(&self) -> bool {
+        const STILL: f32 = 0.002;
+        self.press.vel.abs() > STILL || self.value.vel.abs() > STILL || self.flash > STILL
+    }
+}

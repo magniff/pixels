@@ -88,12 +88,14 @@ the shape of the whole app rather than overflowing it.
 
 `pixui/` is the toolkit underneath: a software rasteriser, a 5x7 bitmap font,
 an immediate-mode widget set, floating layers, and a swappable presenter with
-CPU (softbuffer) and GPU (wgpu) backends. It is a path dependency of this app
+CPU (softbuffer) and GPU (wgpu) backends. It draws a frame when there is a
+reason to and not otherwise: a spring in flight or a blinking caret keeps a
+clock running, and a window sitting still costs nothing to sit still. It is a path dependency of this app
 rather than the point of the repo, and `pixui/README.md` covers it properly.
 
 ```sh
 cargo run --release -- --shots      # regenerate screenshots/
-cargo test --workspace              # 290 tests
+cargo test --workspace              # 293 tests
 PIXUI_PROFILE=1 cargo run --release # live frame breakdown
 ```
 

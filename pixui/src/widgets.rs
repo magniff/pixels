@@ -138,13 +138,13 @@ impl Ui<'_> {
         }
         let th = *self.theme;
         let color = th.background.lerp(th.focus_ring, anim.focus);
-        let phase = (self.input.time * 14.0) as i32;
-        // No travel on this one, unlike [`Ui::focus_flare`]: three pixels of
-        // approach is three integer steps at this scale, and stepping a ring
-        // that is already marching reads as a stutter rather than an arrival.
-        // The fade is the animation here.
+        // Still dashes, and no travel either — unlike [`Ui::focus_flare`], which
+        // is over in half a second. This ring stays for as long as the widget
+        // holds the keyboard, and dashes that march forever are a full redraw
+        // of the window sixty times a second for as long as anything is
+        // focused, which is most of the time. The fade in is the animation.
         self.canvas
-            .stroke_rect_dashed(rect.inset(-2), color, 2, 2, phase);
+            .stroke_rect_dashed(rect.inset(-2), color, 2, 2, 0);
     }
 
     /// Say that the keyboard has just arrived somewhere.
@@ -186,6 +186,9 @@ impl Ui<'_> {
         let phase = (self.input.time * 14.0) as i32;
         self.canvas
             .stroke_rect_dashed(rect.inset(-2), color, 2, 2, phase);
+        // The dashes march on the clock rather than on any state, and the
+        // flare is fading besides.
+        self.request_repaint();
     }
 
     /// A recessed well: the inverse of [`Ui::draw_control_face`], used for

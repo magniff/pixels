@@ -432,6 +432,16 @@ struct App<S, F, P> {
     start: Instant,
     last_frame: Instant,
     next_frame: Instant,
+    /// Whether the last frame said it was still moving. When it was not, the
+    /// loop stops drawing on a clock and waits for something to happen.
+    animating: bool,
+    /// Set by any event, and spent by the frame that answers it.
+    ///
+    /// The frame that handles a click is not always the frame that shows what
+    /// the click did: an application may open a panel at the end of one frame
+    /// and draw it at the start of the next. So an event is worth two frames,
+    /// and the second one is nearly free.
+    pending_input: bool,
     frame_budget: Duration,
     applied_cursor: Cursor,
     quit_requested: bool,
@@ -483,6 +493,8 @@ where
             start: now,
             last_frame: now,
             next_frame: now,
+            animating: true,
+            pending_input: false,
             frame_budget,
             applied_cursor: Cursor::Default,
             quit_requested: false,
@@ -642,6 +654,7 @@ where
         if let Some(theme) = out.theme {
             self.config.theme = theme;
         }
+        self.animating = out.animating | std::mem::take(&mut self.pending_input);
         self.quit_requested |= out.quit;
         if let Some(scale) = out.pixel_scale {
             self.set_pixel_scale(scale);
@@ -980,16 +993,33 @@ where
                 if self.quit_requested {
                     event_loop.exit();
                 }
+                return;
             }
 
             _ => {}
         }
+
+        // Anything that is not itself a redraw is something happening, and
+        // something happening is exactly when a frame is worth drawing. This
+        // is what lets the loop wait: input arrives as an event, and an event
+        // asks for the frame that answers it.
+        self.pending_input = true;
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // Springs and hover blends need a frame every tick regardless of input,
-        // so this redraws on a clock rather than only on events — but sleeps
-        // between frames instead of spinning.
+        // A spring in flight or a blinking caret needs a frame every tick
+        // regardless of input, so those keep a clock running. A frame that
+        // said nothing was moving gets no clock at all: the next frame would
+        // paint exactly the pixels already on screen, and drawing it is the
+        // whole of what an idle window costs. Something has to happen first,
+        // and when it does winit wakes us with it.
+        if !self.animating {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        }
         let now = Instant::now();
         if now >= self.next_frame {
             self.next_frame = now + self.frame_budget;

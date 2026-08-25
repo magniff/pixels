@@ -555,6 +555,27 @@ impl Notes {
         }
     }
 
+    /// Say whether anything here will look different next frame.
+    ///
+    /// The toolkit notices its own springs and blends; these are the app's own,
+    /// and a frame nobody asks for is a frame that is not drawn.
+    fn ask_for_frames(&self, ui: &mut Ui) {
+        let moving = self.tab_anim > 0.0
+            || self.pick.leave > 0.0
+            || self.pick.enter.vel.abs() > 0.002
+            || (self.notes_focus > 0.01 && self.notes_focus < 0.99)
+            // A caret that pulses is a change every frame, but only while
+            // there is a caret pulsing.
+            || (self.vim.mode == Mode::Insert && self.pane == Pane::Editor)
+            // And anything waiting on something that is not the keyboard: a
+            // model thinking, a download arriving. Neither sends an event.
+            || self.helper.busy()
+            || self.chrome.download.is_some();
+        if moving {
+            ui.request_repaint();
+        }
+    }
+
     /// Move the selection animation on by a frame.
     fn step_pick(&mut self, dt: f32) {
         if self.pick.seen != self.current {
@@ -874,6 +895,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
     app.step_pick(ui.input.dt);
+    app.ask_for_frames(ui);
 
     // A dialog, or the assistant's block, takes the keyboard for itself while
     // it is open; nothing below it sees a key.
@@ -1447,8 +1469,10 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                     // Fades in with the pane rather than snapping on, so
                     // arriving here reads as one movement and not two events.
                     let ring = th.accent.face.lerp(th.accent.ink, app.notes_focus);
-                    ui.canvas
-                        .stroke_rect_dashed(patch, ring, 2, 2, (ui.input.time * 14.0) as i32);
+                    // Still dashes: this one stays for as long as the list has
+                    // the keyboard, and marching it would keep the whole window
+                    // redrawing for all of that time.
+                    ui.canvas.stroke_rect_dashed(patch, ring, 2, 2, 0);
                 }
             }
 
