@@ -9,9 +9,11 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# The local model. Off by default: it builds llama.cpp from source and wants a
-# gigabyte of weights on disk, neither of which a note editor should need in
-# order to open a note. Without it the assistant is the rehearsal stub.
+# The local model, on by default. It builds llama.cpp from source, so a first
+# build wants `cmake` and `clang` and takes a minute; `--no-default-features`
+# skips all of that and leaves the assistant as the rehearsal stub, which is
+# what the screenshots and the tests run against anyway.
+default = ["llm"]
 llm = ["dep:llama-cpp-2"]
 
 [dependencies]

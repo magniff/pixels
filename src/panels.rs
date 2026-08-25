@@ -341,25 +341,42 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
             let locked = !config.assist;
             let from = ui.remaining().y;
             ui.input_blocked(locked, |ui| {
-                ui.label_colored("MODEL", th.accent.face);
+                // ---- the models, as a table --------------------------
+                // Columns, rules and a header: three facts about each of a
+                // handful of things is a table, and a table read as a table is
+                // read at a glance.
+                let head = ui.alloc(9);
+                let cols = columns(head.w);
+                cell(ui, head, &cols, 0, "MODEL", th.accent.face, Align::Left);
+                cell(ui, head, &cols, 1, "GOOD FOR", th.accent.face, Align::Left);
+                cell(ui, head, &cols, 2, "SIZE", th.accent.face, Align::Right);
+                ui.canvas
+                    .hline(head.x, head.bottom() - 1, head.w, th.well_border);
 
-                // ---- the catalogue ------------------------------------------------
                 for (i, weights) in CATALOGUE.iter().enumerate() {
                     let path = settings::models_dir().join(weights.file);
                     let here = path.exists();
                     let current = running.as_deref() == Some(weights.file);
-                    let row = ui.alloc(9);
-                    let (name, button) = row.split_left(row.w - 56);
+                    let row = ui.alloc(13);
+                    // A quiet band on every other row, which is what stops the
+                    // eye slipping between one row's name and another's size.
+                    if i % 2 == 1 {
+                        ui.canvas.fill_rect(row, th.panel.shade(-0.06));
+                    }
                     let ink = if current { th.positive.face } else { th.ink };
-                    ui.draw_text_in(name, weights.label, ink, Align::Left);
-                    ui.draw_text_in(
-                        name,
+                    cell(ui, row, &cols, 0, weights.label, ink, Align::Left);
+                    cell(ui, row, &cols, 1, weights.note, th.ink_soft, Align::Left);
+                    cell(
+                        ui,
+                        row,
+                        &cols,
+                        2,
                         &format!("{} MB", weights.megabytes),
                         th.ink_soft,
                         Align::Right,
                     );
 
-                    let at = Rect::new(button.x + 4, row.y - 3, 52, 13);
+                    let at = Rect::new(row.x + cols[3] + 2, row.y, row.w - cols[3] - 2, 13);
                     if current {
                         ui.draw_text_in(at, "IN USE", th.positive.face, Align::Center);
                     } else if here {
@@ -371,24 +388,37 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
                     } else if ui.button_at(at, "GET", Tone::Neutral).clicked {
                         action = Action::Fetch(i);
                     }
-                    let note = ui.alloc(8);
-                    ui.draw_text_in(note, weights.note, th.ink_soft.shade(-0.1), Align::Left);
+                    // The rules between the columns, drawn last so nothing
+                    // paints over them.
+                    for x in &cols[1..3] {
+                        ui.canvas.vline(row.x + x - 3, row.y, row.h, th.well_border);
+                    }
                 }
 
-                // ---- anything else already on disk ---------------------------------
+                // ---- anything else already on disk -------------------------
                 for name in extras(config) {
-                    let row = ui.alloc(9);
-                    let (label, button) = row.split_left(row.w - 56);
+                    let row = ui.alloc(13);
                     let current = running.as_deref() == Some(name.as_str());
                     let ink = if current { th.positive.face } else { th.ink };
-                    ui.draw_text_in(label, &name.to_uppercase(), ink, Align::Left);
-                    let at = Rect::new(button.x + 4, row.y - 3, 52, 13);
+                    cell(ui, row, &cols, 0, &name.to_uppercase(), ink, Align::Left);
+                    cell(
+                        ui,
+                        row,
+                        &cols,
+                        1,
+                        "ALREADY ON DISK",
+                        th.ink_soft,
+                        Align::Left,
+                    );
+                    let at = Rect::new(row.x + cols[3] + 2, row.y, row.w - cols[3] - 2, 13);
                     if current {
                         ui.draw_text_in(at, "IN USE", th.positive.face, Align::Center);
                     } else if ui.button_at(at, "USE", Tone::Accent).clicked {
                         action = Action::Use(name.clone());
                     }
-                    ui.space(8);
+                    for x in &cols[1..3] {
+                        ui.canvas.vline(row.x + x - 3, row.y, row.h, th.well_border);
+                    }
                 }
 
                 // ---- whatever is happening -----------------------------------------
@@ -466,6 +496,35 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
         action = Action::Close;
     }
     action
+}
+
+/// Where each column of the model table starts, and where the buttons do.
+///
+/// From the right: the button column is a fixed size because a button is, the
+/// size column fits the widest number anyone will see, and the name and what
+/// it is good for share what is left.
+fn columns(width: i32) -> [i32; 4] {
+    let button = 58;
+    let size = 66;
+    let name = 84;
+    [0, name, width - button - size, width - button]
+}
+
+/// One cell of that table, clipped to its column so a long value cannot run
+/// into the next one.
+fn cell(
+    ui: &mut Ui,
+    row: Rect,
+    cols: &[i32; 4],
+    i: usize,
+    text: &str,
+    ink: pixui::Color,
+    at: Align,
+) {
+    let from = row.x + cols[i];
+    let to = row.x + cols[i + 1];
+    let inner = Rect::from_min_max(from, row.y, to - 4, row.bottom());
+    ui.clipped(inner, |ui| ui.draw_text_in(inner, text, ink, at));
 }
 
 /// Weights on disk that the catalogue does not describe.

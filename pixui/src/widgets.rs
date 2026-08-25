@@ -1050,16 +1050,15 @@ impl Ui<'_> {
     /// covering, and sized from its widest entry. The caller decides what an
     /// entry means and when the menu closes; this only reports what was
     /// pointed at.
-    pub fn menu_items(&mut self, at: Point, items: &[&str]) -> MenuPick {
+    ///
+    /// Entries are [`Segment`]s: a menu entry and a segment of a segmented
+    /// control are the same thing — a label with an optional picture beside it
+    /// — and two structs for that would be two structs to keep in step.
+    pub fn menu_items(&mut self, at: Point, items: &[Segment]) -> MenuPick {
         let th = *self.theme;
         let m = th.metrics;
         let row = font::LINE_H + 4;
-        let w = items
-            .iter()
-            .map(|i| font::advance_width(i))
-            .max()
-            .unwrap_or(40)
-            + 24;
+        let w = items.iter().map(Segment::width).max().unwrap_or(40) + 30;
         let h = items.len() as i32 * row + 4;
         let screen = self.canvas.bounds();
         let rect = Rect::new(at.x.min(screen.right() - w - 2), at.y, w, h);
@@ -1072,9 +1071,9 @@ impl Ui<'_> {
                 .box_chamfer(rect, th_.panel, th_.panel_border, m.chamfer);
 
             let mut pick = MenuPick::default();
-            for (i, label) in items.iter().enumerate() {
+            for (i, item) in items.iter().enumerate() {
                 let cell = Rect::new(rect.x + 2, rect.y + 2 + i as i32 * row, rect.w - 4, row);
-                let id = ui.id(label);
+                let id = ui.id(item.label);
                 let resp = ui.interact(id, cell);
                 if resp.hovered {
                     ui.request_cursor(Cursor::Pointer);
@@ -1086,7 +1085,16 @@ impl Ui<'_> {
                     th_.ink
                 };
                 let y = cell.y + (cell.h - font::GLYPH_H) / 2;
-                font::draw_text(ui.canvas, cell.x + 6, y, label, ink);
+                // The icons share a column, so the labels line up whether or
+                // not every entry has one.
+                let mut x = cell.x + 6;
+                if let Some(rows) = item.icon {
+                    let (_, ih) = icon::size(rows);
+                    icon::draw(ui.canvas, x, cell.y + (cell.h - ih) / 2, rows, ink);
+                }
+                // A fixed column, wide enough for the widest icon and a gap.
+                x += 12;
+                font::draw_text(ui.canvas, x, y, item.label, ink);
                 if resp.clicked {
                     pick.chosen = Some(i);
                 }

@@ -869,7 +869,11 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     // ---- the menu, over whatever it covers -----------------------------
     if app.chrome.menu_open {
-        let pick = ui.menu_items(menu_at, &["SETTINGS", "ABOUT"]);
+        let entries = [
+            pixui::Segment::with_icon(pixui::icon::SLIDERS, "SETTINGS"),
+            pixui::Segment::with_icon(pixui::icon::INFO, "ABOUT"),
+        ];
+        let pick = ui.menu_items(menu_at, &entries);
         match pick.chosen {
             Some(0) => {
                 app.chrome.menu_open = false;

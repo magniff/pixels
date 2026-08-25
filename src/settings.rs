@@ -37,9 +37,11 @@ preamble, no explanation, no quotes, no code fences.";
 /// measure against without a round trip to ask.
 pub struct Weights {
     pub label: &'static str,
+    /// Short enough to sit in a column beside the name.
     pub file: &'static str,
     pub url: &'static str,
     pub megabytes: u64,
+    /// What it is good for, short enough to sit in a column of its own.
     pub note: &'static str,
 }
 
@@ -49,14 +51,14 @@ pub const CATALOGUE: &[Weights] = &[
         file: "Qwen3-1.7B-Q4_K_M.gguf",
         url: "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
         megabytes: 1170,
-        note: "PROOFREADS WELL. POOR AT STYLE.",
+        note: "PROOFREADS AND TIGHTENS",
     },
     Weights {
         label: "QWEN3 4B",
         file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
         megabytes: 2400,
-        note: "REWRITES AND CHANGES TONE TOO.",
+        note: "REWRITES AND CHANGES TONE",
     },
 ];
 

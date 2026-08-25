@@ -209,8 +209,9 @@ text editor and nothing else, which is a perfectly good thing for it to be.
 |---|---|
 | ![the assistant switched off](screenshots/settings-off.png) | ![the assistant page](screenshots/settings.png) |
 
-On, it lists the weights the app knows how to fetch, with what each is good
-for and what it costs to download. **GET** fetches one — through `curl`, which
+On, it lists the weights the app knows how to fetch as a table — name, what it
+is good for, size, and a button — because three facts about each of a handful of
+things is a table, and a table read as a table is read at a glance. **GET** fetches one — through `curl`, which
 is already how this app opens a link, and which saves a TLS stack and a
 certificate store for a job done at most twice in a program's life. It writes to
 a `.part` file and renames it only once the file is whole, so a half-fetched
@@ -283,18 +284,19 @@ enough that the app still has an assistant when built without one. It says
 demo pretending to be a feature.
 
 The real one is **Qwen3**, quantised to four bits and run through llama.cpp —
-on the machine in front of you, offline, no key and no account. Build it in with
-`--features llm`, which compiles llama.cpp from source and so wants `cmake` and
-`clang`, and fetch the weights:
+on the machine in front of you, offline, no key and no account. It is built in
+by default, which means a first build compiles llama.cpp from source and so
+wants `cmake` and `clang`; `--no-default-features` leaves it out, and the app
+then has the stub. Press **GET** in Settings for the weights, or fetch them by
+hand:
 
 ```sh
 mkdir -p models && curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
   https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
 ```
 
-That is where it looks unless `PIXUI_MODEL` says otherwise; without it the build
-falls back to the stub. Or skip the curl line and press **GET** in Settings,
-which fetches the same file to the same place.
+That is where it looks unless `PIXUI_MODEL` says otherwise; with nothing there
+at all the app falls back to the stub.
 
 **1.7B** (1.2 GB) proofreads, tightens and rephrases well. It is poor at style:
 "make it goofy" comes back with a comma moved, because at that size a vague
@@ -315,7 +317,7 @@ There is a way to try it without the interface at all, which is also how to see
 what it costs:
 
 ```sh
-echo "some prose with an error in it" | cargo run --features llm -- --ask "fix the grammar"
+echo "some prose with an error in it" | cargo run -- --ask "fix the grammar"
 ```
 
 A local model is good at proofreading, tightening and rephrasing — the jobs

@@ -39,6 +39,30 @@ pub const CHECK: &[&str] = &[
     ".##...",
 ];
 
+/// Two sliders, for settings.
+#[rustfmt::skip]
+pub const SLIDERS: &[&str] = &[
+    "..#....",
+    "#######",
+    "..#....",
+    ".......",
+    "....#..",
+    "#######",
+    "....#..",
+];
+
+/// A lower-case i, for information.
+#[rustfmt::skip]
+pub const INFO: &[&str] = &[
+    ".#.",
+    "...",
+    "##.",
+    ".#.",
+    ".#.",
+    ".#.",
+    "###",
+];
+
 /// A small triangle pointing down, for something that opens onto more: a menu
 /// title, a collapsed section, a dropdown.
 #[rustfmt::skip]
