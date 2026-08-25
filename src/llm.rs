@@ -24,11 +24,45 @@ pub struct Ask {
 /// What came back, or why nothing did.
 pub type Reply = Result<String, String>;
 
+/// How far along a question is, sent while it is being answered.
+///
+/// A model that takes twenty seconds and says nothing for nineteen of them is
+/// indistinguishable from a model that has hung. These are the numbers the
+/// worker already has — it is counting tokens anyway — passed up so the block
+/// can show that something is happening and roughly how fast.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Progress {
+    /// Tokens the question came to, known once it has been read.
+    pub prompt: usize,
+    /// Tokens written back so far.
+    pub written: usize,
+    /// Since the question was sent, which is what somebody waiting is counting.
+    pub elapsed: std::time::Duration,
+    /// Of that, the part spent writing the tokens counted above. The rate is
+    /// this rather than the whole wait: loading twelve gigabytes of weights is
+    /// not slow generation, and averaging the two together tells you neither.
+    pub generating: std::time::Duration,
+    /// Whether those tokens are the model thinking rather than answering.
+    pub deliberating: bool,
+}
+
+impl Progress {
+    /// Tokens a second, over the whole answer so far.
+    pub fn rate(&self) -> f32 {
+        let secs = self.generating.as_secs_f32();
+        if secs <= 0.0 || self.written == 0 {
+            return 0.0;
+        }
+        self.written as f32 / secs
+    }
+}
+
 /// Something that can rewrite a piece of text on request.
 pub trait Backend: Send + 'static {
     /// Shown in the status bar, so it is never a mystery which one answered.
     fn name(&self) -> String;
-    fn edit(&mut self, ask: &Ask) -> Reply;
+    /// Answer, calling `tick` as often as there is something new to report.
+    fn edit(&mut self, ask: &Ask, tick: &mut dyn FnMut(Progress)) -> Reply;
     /// Let go of whatever was being held for speed. Called when nothing has
     /// been asked for a while; the next question loads it again.
     fn release(&mut self) {}
@@ -48,8 +82,11 @@ const IDLE: std::time::Duration = std::time::Duration::from_secs(180);
 pub struct Assistant {
     tx: Sender<Ask>,
     rx: Receiver<Reply>,
+    ticks: Receiver<Progress>,
     name: String,
     busy: bool,
+    /// The last thing the worker said about the question in flight.
+    progress: Progress,
 }
 
 impl Assistant {
@@ -57,13 +94,19 @@ impl Assistant {
         let name = backend.name();
         let (tx, asks) = std::sync::mpsc::channel::<Ask>();
         let (replies, rx) = std::sync::mpsc::channel::<Reply>();
+        let (beat, ticks) = std::sync::mpsc::channel::<Progress>();
         std::thread::spawn(move || {
             // Ends when the application drops its end of the channel.
             let mut warm = false;
             loop {
                 match asks.recv_timeout(IDLE) {
                     Ok(ask) => {
-                        let reply = backend.edit(&ask).map(|text| to_ascii(&text));
+                        let mut tick = |p: Progress| {
+                            // A closed channel means the application has gone;
+                            // the answer itself will notice on the way out.
+                            let _ = beat.send(p);
+                        };
+                        let reply = backend.edit(&ask, &mut tick).map(|text| to_ascii(&text));
                         warm = true;
                         if replies.send(reply).is_err() {
                             break;
@@ -82,8 +125,10 @@ impl Assistant {
         Self {
             tx,
             rx,
+            ticks,
             name,
             busy: false,
+            progress: Progress::default(),
         }
     }
 
@@ -101,8 +146,18 @@ impl Assistant {
         if self.busy {
             return false;
         }
+        self.progress = Progress::default();
         self.busy = self.tx.send(ask).is_ok();
         self.busy
+    }
+
+    /// Where the question in flight has got to. Drained to the latest, because
+    /// the ones behind it are already out of date.
+    pub fn progress(&mut self) -> Progress {
+        while let Ok(p) = self.ticks.try_recv() {
+            self.progress = p;
+        }
+        self.progress
     }
 
     /// Collect an answer if one has arrived. Never blocks.
@@ -233,7 +288,13 @@ impl Backend for Rehearsal {
         "REHEARSAL".into()
     }
 
-    fn edit(&mut self, ask: &Ask) -> Reply {
+    fn edit(&mut self, ask: &Ask, tick: &mut dyn FnMut(Progress)) -> Reply {
+        // It answers instantly, so there is one report and it is the finished
+        // one — enough for the block to have something true to draw.
+        tick(Progress {
+            prompt: ask.source.split_whitespace().count(),
+            ..Progress::default()
+        });
         // Line by line, so a selection keeps its shape, and indent by indent,
         // so a list item keeps its nesting.
         let out = ask

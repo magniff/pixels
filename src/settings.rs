@@ -62,6 +62,13 @@ pub const CATALOGUE: &[Weights] = &[
         note: "REWRITES AND CHANGES TONE",
     },
     Weights {
+        label: "QWEN3 14B",
+        file: "Qwen3-14B-Q4_K_M.gguf",
+        url: "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
+        megabytes: 9002,
+        note: "THINKS BEFORE IT REWRITES",
+    },
+    Weights {
         label: "GPT-OSS 20B",
         file: "gpt-oss-20b-MXFP4.gguf",
         url: "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-MXFP4.gguf",

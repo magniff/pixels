@@ -881,6 +881,17 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
 
     // An answer, if the worker has one. Collected before anything draws, so a
     // suggestion appears on the frame it arrives rather than the one after.
+    // How the one in flight is getting on, so the block can say more than that
+    // it is busy.
+    if app.helper.busy() {
+        let p = app.helper.progress();
+        if let Some(open) = app.assist.as_mut() {
+            if open.waiting() && open.progress != p {
+                open.progress = p;
+                app.status = open.headline();
+            }
+        }
+    }
     if let Some(reply) = app.helper.poll() {
         let mut said = None;
         if let Some(open) = app.assist.as_mut() {

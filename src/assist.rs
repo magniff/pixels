@@ -16,7 +16,7 @@
 use pixui::{font, Align, Key, Rect, Tone, Ui};
 
 use crate::diff::{self, Change, Piece};
-use crate::llm::{Ask, Reply};
+use crate::llm::{Ask, Progress, Reply};
 use crate::text::Cursor;
 
 /// The most rows of diff to open up for. Past this it is a rewrite rather than
@@ -65,6 +65,9 @@ pub struct Assist {
     pub asked: String,
     /// True on the frame the block appears, so the field takes the keyboard.
     grab: bool,
+    /// What the worker last said about the question in flight. Written by the
+    /// frame loop, read here: the block does not know where the model lives.
+    pub progress: Progress,
     /// First row of the diff on screen, when it is taller than the block.
     scroll: usize,
     bar: pixui::ScrollState,
@@ -79,6 +82,7 @@ impl Assist {
             source,
             request: String::new(),
             asked: String::new(),
+            progress: Progress::default(),
             grab: true,
             scroll: 0,
             bar: pixui::ScrollState::default(),
@@ -138,7 +142,19 @@ impl Assist {
     pub fn headline(&self) -> String {
         match &self.phase {
             Phase::Asking => "ASK FOR A CHANGE, ENTER TO SEND".to_string(),
-            Phase::Thinking => "WORKING ON IT".to_string(),
+            Phase::Thinking => {
+                let p = self.progress;
+                if p.written == 0 {
+                    format!("READING {} TOKENS", p.prompt)
+                } else {
+                    format!(
+                        "{} - {} TOKENS AT {:.0}/S",
+                        if p.deliberating { "THINKING" } else { "WRITING" },
+                        p.written,
+                        p.rate()
+                    )
+                }
+            }
             Phase::Reviewing { .. } => format!("SUGGESTED - {} KEEPS IT", chord()),
             Phase::Failed(why) => why.to_uppercase(),
         }
@@ -201,8 +217,37 @@ impl Assist {
                 // Three dots that fill and empty. A spinner would be a second
                 // idiom for something the press springs already say.
                 let dots = ((ui.input.time * 3.0) as usize % 4).min(3);
-                let label = format!("WORKING ON IT{}", ".".repeat(dots));
-                ui.draw_text_in(body, &label, th.info.hi, Align::Left);
+                let p = self.progress;
+                let what = if p.written == 0 {
+                    "READING THE PASSAGE"
+                } else if p.deliberating {
+                    // Worth naming rather than hiding: a reasoning model spends
+                    // its first several seconds on thinking nobody will ever
+                    // see, and a count that climbs without the answer appearing
+                    // otherwise looks like the answer is being written badly.
+                    "THINKING IT OVER"
+                } else {
+                    "WRITING"
+                };
+                ui.draw_text_in(
+                    body,
+                    &format!("{what}{}", ".".repeat(dots)),
+                    th.info.hi,
+                    Align::Left,
+                );
+                // The numbers at the other end of the same line, so the block
+                // does not grow a row to hold them.
+                let counted = if p.written == 0 {
+                    format!("{} TOKENS IN - {:.1}S", p.prompt, p.elapsed.as_secs_f32())
+                } else {
+                    format!(
+                        "{} TOKENS - {:.0}/S - {:.1}S",
+                        p.written,
+                        p.rate(),
+                        p.elapsed.as_secs_f32()
+                    )
+                };
+                ui.draw_text_in(body, &counted, th.ink_soft, Align::Right);
             }
             Phase::Failed(why) => {
                 ui.draw_text_in(body, &why.to_uppercase(), th.danger.face, Align::Left);

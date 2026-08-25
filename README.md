@@ -110,7 +110,7 @@ move the weights, `PIXUI_CONFIG` moves the settings file, and
 `PIXUI_LLAMA_LOGS` lets llama.cpp narrate when something has gone wrong.
 
 ```sh
-cargo run --release --example edit -- "some text" "tighten this"   # one edit, timed
+echo "teh meeting was ok" | cargo run --release -- --ask "fix the typos"
 ```
 
 ## Not implemented

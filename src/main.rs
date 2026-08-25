@@ -24,7 +24,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut backend = notes::assistant(&notes::settings::Settings::load());
         eprintln!("[{}]", backend.name());
         let started = std::time::Instant::now();
-        match backend.edit(&notes::llm::Ask { source, request }) {
+        // The same numbers the block shows, on the line it is working on, so
+        // a run from the shell says what it is doing too.
+        let mut tick = |p: notes::llm::Progress| {
+            eprint!(
+                "\r[{} {} tokens, {:.0}/s, {:.1}s]   ",
+                if p.deliberating { "thinking" } else { "writing" },
+                p.written,
+                p.rate(),
+                p.elapsed.as_secs_f32()
+            );
+        };
+        let reply = backend.edit(&notes::llm::Ask { source, request }, &mut tick);
+        eprintln!();
+        match reply {
             // Folded the same way the editor folds it, so this prints what a
             // note would actually get rather than what the model said.
             Ok(text) => println!("{}", notes::llm::to_ascii(&text)),

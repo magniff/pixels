@@ -224,7 +224,8 @@ impl Backend for Local {
         self.loaded = None;
     }
 
-    fn edit(&mut self, ask: &Ask) -> Reply {
+    fn edit(&mut self, ask: &Ask, tick: &mut dyn FnMut(super::Progress)) -> Reply {
+        let started = std::time::Instant::now();
         self.load()?;
         let thinks = self.thinks;
         let ceiling = self.context;
@@ -261,6 +262,21 @@ impl Backend for Local {
                 .map_err(|e| format!("batching: {e}"))?;
         }
         ctx.decode(&mut batch).map_err(no_room)?;
+        // The question has been read; from here the numbers move.
+        let mut report = super::Progress {
+            prompt: tokens.len(),
+            written: 0,
+            elapsed: started.elapsed(),
+            // Read off what comes back rather than predicted: a model that
+            // thinks does not always use the turn, and the empty `<think>`
+            // block above is an argument for not using it.
+            deliberating: false,
+            generating: std::time::Duration::ZERO,
+        };
+        tick(report);
+        // The clock the rate is measured on starts here, once the weights are
+        // in and the question has been read.
+        let mut writing_since = std::time::Instant::now();
 
         // The sampler Qwen3 asks for outside its thinking mode. Greedy decoding
         // was the obvious choice and the wrong one: at temperature zero a small
@@ -303,6 +319,30 @@ impl Backend for Local {
                 .map_err(|e| format!("batching: {e}"))?;
             ctx.decode(&mut batch).map_err(no_room)?;
             pos += 1;
+
+            report.written += 1;
+            report.elapsed = started.elapsed();
+            report.generating = writing_since.elapsed();
+            // Where the answer has got to, read from the last few bytes of it:
+            // a model that reasons opens a channel for the thinking and another
+            // for the reply, and those two are worth counting separately. Only
+            // the tail is looked at, and a marker straddling the boundary is
+            // caught by the next token.
+            let tail = String::from_utf8_lossy(&out[out.len().saturating_sub(64)..]).to_string();
+            if !report.deliberating
+                && (tail.contains("<|channel|>analysis") || tail.contains("<think>"))
+            {
+                report.deliberating = true;
+                report.written = 0;
+                writing_since = std::time::Instant::now();
+            } else if report.deliberating
+                && (tail.contains("<|channel|>final") || tail.contains("</think>"))
+            {
+                report.deliberating = false;
+                report.written = 0;
+                writing_since = std::time::Instant::now();
+            }
+            tick(report);
         }
 
         let text = String::from_utf8_lossy(&out).to_string();

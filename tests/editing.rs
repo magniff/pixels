@@ -1326,10 +1326,13 @@ fn the_rehearsal_backend_fixes_what_it_claims_to() {
     use notes::llm::{Ask, Backend};
     let mut stub = notes::llm::Rehearsal;
     let reply = stub
-        .edit(&Ask {
-            source: "  - teh  quick  fox\n  - adn a second".into(),
-            request: "fix it".into(),
-        })
+        .edit(
+            &Ask {
+                source: "  - teh  quick  fox\n  - adn a second".into(),
+                request: "fix it".into(),
+            },
+            &mut |_| {},
+        )
         .unwrap();
     assert_eq!(
         reply, "  - the quick fox\n  - and a second",
@@ -1338,14 +1341,75 @@ fn the_rehearsal_backend_fixes_what_it_claims_to() {
 }
 
 #[test]
+fn the_status_line_says_what_the_model_is_doing() {
+    use notes::assist::{Assist, Phase};
+    use notes::llm::Progress;
+    use notes::text::Cursor;
+    let mut block = Assist::new(Cursor::new(0, 0), Cursor::new(0, 8), "the text".into());
+    block.phase = Phase::Thinking;
+
+    // Before a word has come back, what there is to report is the question.
+    block.progress = Progress {
+        prompt: 412,
+        ..Progress::default()
+    };
+    assert_eq!(block.headline(), "READING 412 TOKENS");
+
+    // A reasoning model is thinking, and says so rather than looking slow.
+    block.progress = Progress {
+        prompt: 412,
+        written: 90,
+        elapsed: std::time::Duration::from_secs(4),
+        generating: std::time::Duration::from_secs(3),
+        deliberating: true,
+    };
+    assert_eq!(block.headline(), "THINKING - 90 TOKENS AT 30/S");
+
+    block.progress.deliberating = false;
+    assert_eq!(block.headline(), "WRITING - 90 TOKENS AT 30/S");
+}
+
+#[test]
+fn a_question_in_flight_reports_where_it_has_got_to() {
+    use notes::llm::{Ask, Backend, Progress};
+    let mut stub = notes::llm::Rehearsal;
+    let mut seen: Vec<Progress> = Vec::new();
+    let _ = stub.edit(
+        &Ask {
+            source: "teh quick fox".into(),
+            request: "fix it".into(),
+        },
+        &mut |p| seen.push(p),
+    );
+    assert_eq!(seen.len(), 1, "the stub answers at once, so it reports once");
+    assert_eq!(seen[0].prompt, 3);
+    // Nothing written in no time is not an infinite rate.
+    assert_eq!(seen[0].rate(), 0.0);
+
+    // The rate is over the writing, not over the wait: three seconds of that
+    // wait were the weights being read off disk.
+    let along = Progress {
+        prompt: 400,
+        written: 60,
+        elapsed: std::time::Duration::from_secs(6),
+        generating: std::time::Duration::from_secs(3),
+        deliberating: false,
+    };
+    assert_eq!(along.rate(), 20.0);
+}
+
+#[test]
 fn the_rehearsal_backend_always_leaves_something_to_review() {
     use notes::llm::{Ask, Backend};
     let mut stub = notes::llm::Rehearsal;
     let reply = stub
-        .edit(&Ask {
-            source: "nothing to fix here".into(),
-            request: "Improve It".into(),
-        })
+        .edit(
+            &Ask {
+                source: "nothing to fix here".into(),
+                request: "Improve It".into(),
+            },
+            &mut |_| {},
+        )
         .unwrap();
     assert!(reply.ends_with("(improve it)"), "got {reply:?}");
 }
