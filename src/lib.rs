@@ -431,6 +431,7 @@ impl Notes {
             }
             panels::Action::Close => {
                 self.chrome.panel = None;
+                self.chrome.prompt = None;
                 let changed = self.chrome.opened_with.take() != Some(self.settings.clone());
                 if changed {
                     self.rebuild_assistant();
@@ -445,7 +446,11 @@ impl Notes {
             self.status = format!("COULD NOT SAVE SETTINGS: {why}").to_uppercase();
         }
         self.helper = llm::Assistant::spawn(assistant(&self.settings));
-        self.status = format!("ASSISTANT: {}", self.helper.name());
+        self.status = if self.settings.assist {
+            format!("ASSISTANT: {}", self.helper.name())
+        } else {
+            "ASSISTANT OFF".into()
+        };
     }
 
     /// Ask a download how it is getting on, once a frame.
@@ -493,7 +498,9 @@ impl Notes {
         if source.trim().is_empty() {
             return;
         }
-        self.assist = Some(assist::Assist::new(from, to, source));
+        let open = assist::Assist::new(from, to, source);
+        self.status = open.headline();
+        self.assist = Some(open);
     }
 
     /// Put a suggestion in place of the range it was asked about.
@@ -723,8 +730,13 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     // An answer, if the worker has one. Collected before anything draws, so a
     // suggestion appears on the frame it arrives rather than the one after.
     if let Some(reply) = app.helper.poll() {
+        let mut said = None;
         if let Some(open) = app.assist.as_mut() {
             open.answered(reply);
+            said = Some(open.headline());
+        }
+        if let Some(said) = said {
+            app.status = said;
         }
     }
 
@@ -862,6 +874,8 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             Some(0) => {
                 app.chrome.menu_open = false;
                 app.chrome.opened_with = Some(app.settings.clone());
+                app.chrome.prompt = None;
+                app.chrome.page = panels::Page::Index;
                 app.chrome.panel = Some(panels::Panel::Settings);
             }
             Some(1) => {
@@ -1056,7 +1070,11 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
         // mark beside it does, for hands that never left the keyboard. Where
         // the panel hangs is decided by the drawing, which is the only place
         // that knows where the selection ended up on screen.
-        if mods.ctrl && key == Key::Char('a') && app.vim.visual_kind().is_some() {
+        if mods.ctrl
+            && key == Key::Char('a')
+            && app.settings.assist
+            && app.vim.visual_kind().is_some()
+        {
             app.assist_wanted = true;
             continue;
         }
@@ -1839,7 +1857,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // A floating control over a text view: painted after the text so it is not
     // drawn over, and in a layer so the editor's own hit test — which covers
     // the whole pane — does not take the click first and move the caret with it.
-    let offer = app.assist.is_none() && app.vim.mode != Mode::Insert;
+    let offer = app.settings.assist && app.assist.is_none() && app.vim.mode != Mode::Insert;
     if let Some(at) = mark_at.filter(|p: &pixui::Point| offer && inner.contains(*p)) {
         let rect = Rect::new(at.x, at.y - 1, assist::MARK, assist::MARK);
         let pressed = ui.layer(rect, |ui| {

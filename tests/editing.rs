@@ -2501,13 +2501,29 @@ use notes::settings::{Settings, CATALOGUE};
 #[test]
 fn settings_survive_a_round_trip_through_a_file() {
     let config = Settings {
+        assist: false,
         model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
         // A prompt has newlines in it, and the format is one line per setting.
         prompt: "first line\nsecond line\nand a backslash \\ too".into(),
     };
     let text = config.to_text();
-    assert_eq!(text.lines().count(), 2, "one line per setting");
+    assert_eq!(text.lines().count(), 3, "one line per setting");
     assert_eq!(Settings::parse(&text), config);
+}
+
+#[test]
+fn the_assistant_switch_defaults_to_on_and_survives_being_turned_off() {
+    assert!(
+        Settings::default().assist,
+        "a feature nobody sees is not found"
+    );
+    let off = Settings::parse("assist = off\n");
+    assert!(!off.assist);
+    assert!(
+        !Settings::parse(&off.to_text()).assist,
+        "and a round trip keeps it off"
+    );
+    assert!(Settings::parse("assist = on\n").assist);
 }
 
 #[test]
@@ -2570,4 +2586,17 @@ fn a_download_puts_the_file_in_place_only_once_it_is_whole() {
         "the partial file is renamed, not left behind"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_prompt_is_edited_by_the_same_grammar_as_a_note() {
+    // Not "a text field that also does vim": the same Buffer and the same Vim
+    // the notes are edited with, so anything that works there works here.
+    let mut editor = notes::panels::PromptEditor::new("alpha beta gamma");
+    press(&mut editor.vim, &mut editor.buf, "dw");
+    assert_eq!(editor.text(), "beta gamma");
+    press(&mut editor.vim, &mut editor.buf, "A!\x1b");
+    assert_eq!(editor.text(), "beta gamma!");
+    press(&mut editor.vim, &mut editor.buf, "u");
+    assert_eq!(editor.text(), "beta gamma", "and undo is vim's undo");
 }

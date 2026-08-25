@@ -184,7 +184,7 @@ test covers the whole pane.
 
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 281 tests
+cargo test --workspace                         # 283 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 
@@ -199,7 +199,17 @@ the assistant needs to be told.
 |---|---|
 | ![the Pixels menu](screenshots/menu.png) | ![settings](screenshots/settings.png) |
 
-Settings lists the weights the app knows how to fetch, with what each is good
+Settings opens onto a list of what can be set, which for now is one entry: the
+assistant. Inside it, a switch — **AI ASSISTANCE** — decides whether the app has
+an assistant at all. Off, everything below it stays legible and stops answering
+the pointer, and no mark appears beside a selection in the editor: the app is a
+text editor and nothing else, which is a perfectly good thing for it to be.
+
+| off | on |
+|---|---|
+| ![the assistant switched off](screenshots/settings-off.png) | ![the assistant page](screenshots/settings.png) |
+
+On, it lists the weights the app knows how to fetch, with what each is good
 for and what it costs to download. **GET** fetches one — through `curl`, which
 is already how this app opens a link, and which saves a TLS stack and a
 certificate store for a job done at most twice in a program's life. It writes to
@@ -213,7 +223,13 @@ told anything else. The default is in `settings::DEFAULT_PROMPT`, and every
 clause of it was put there by a model getting something wrong. **DEFAULT** puts
 it back.
 
-Both settle in `~/.config/pixui-notes/settings.conf` — two keys, written by
+It is not a text field. It is a small instance of the same editor the notes use
+— the same buffer, the same vim grammar, the same scrollbar — so `dw` deletes a
+word in it and `u` undoes that, and the mode shows beside the heading. A
+settings field that cannot do what the rest of the app does is a settings field
+you have to think about.
+
+All three settle in `~/.config/pixui-notes/settings.conf` — two keys, written by
 hand, because a dependency that can parse anything is a strange price to pay for
 that. `PIXUI_CONFIG` moves the file and `PIXUI_MODELS` moves the weights folder;
 the screenshots above use both, so what they show does not depend on whose

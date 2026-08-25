@@ -124,6 +124,20 @@ impl Assist {
         }
     }
 
+    /// One line about where this has got to, for the status bar.
+    ///
+    /// The panel cannot say it itself: its own hint line only shows while the
+    /// field is unfocused, and the field is focused the whole time the block is
+    /// open. The status bar is already where this app says what just happened.
+    pub fn headline(&self) -> String {
+        match &self.phase {
+            Phase::Asking => "ASK FOR A CHANGE, ENTER TO SEND".into(),
+            Phase::Thinking => "WORKING ON IT".into(),
+            Phase::Reviewing { .. } => "SUGGESTED - CTRL-ENTER KEEPS IT".into(),
+            Phase::Failed(why) => why.to_uppercase(),
+        }
+    }
+
     /// Whether the model is working on this one.
     pub fn waiting(&self) -> bool {
         matches!(self.phase, Phase::Thinking)
@@ -146,7 +160,12 @@ impl Assist {
         if ui.input.key_pressed(Key::Escape) {
             return Outcome::Close;
         }
-        let submit = ui.input.key_pressed(Key::Enter) && !self.request.trim().is_empty();
+        // Enter asks; Enter with a modifier keeps. Both are the key the hand is
+        // already on, which is the point of having them at all.
+        let enter = ui.input.key_pressed(Key::Enter);
+        let held = ui.input.mods.ctrl || ui.input.mods.cmd;
+        let submit = enter && !held && !self.request.trim().is_empty();
+        let keep = enter && held;
 
         // ---- header -------------------------------------------------------
         let head = Rect::new(rect.x + 3, rect.y + 3, rect.w - 6, font::LINE_H);
@@ -228,7 +247,7 @@ impl Assist {
 
         match &self.phase {
             Phase::Reviewing { proposal, .. } => {
-                if ui.button_at(left, "APPLY", Tone::Positive).clicked {
+                if ui.button_at(left, "APPLY", Tone::Positive).clicked || keep {
                     outcome = Outcome::Apply(proposal.clone());
                 }
                 if ui.button_at(right, "REJECT", Tone::Danger).clicked {

@@ -76,6 +76,10 @@ pub fn installed() -> Vec<PathBuf> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
+    /// Whether the editing assistant is offered at all. With this off there is
+    /// no mark beside a selection and nothing to ask — the app is a text editor
+    /// and nothing else, which is a perfectly good thing for it to be.
+    pub assist: bool,
     /// The weights file to run, by name rather than by path: the folder can
     /// move between machines and the choice should survive it.
     pub model: Option<String>,
@@ -85,6 +89,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            // On, because a feature nobody can see is a feature nobody finds.
+            assist: true,
             model: None,
             prompt: DEFAULT_PROMPT.to_string(),
         }
@@ -127,6 +133,7 @@ impl Settings {
             };
             let value = value.trim();
             match key.trim() {
+                "assist" => out.assist = value != "off",
                 "model" if !value.is_empty() => out.model = Some(value.to_string()),
                 "prompt" if !value.is_empty() => out.prompt = unescape(value),
                 _ => {}
@@ -137,6 +144,10 @@ impl Settings {
 
     pub fn to_text(&self) -> String {
         let mut out = String::new();
+        out.push_str(&format!(
+            "assist = {}\n",
+            if self.assist { "on" } else { "off" }
+        ));
         if let Some(model) = &self.model {
             out.push_str(&format!("model = {model}\n"));
         }

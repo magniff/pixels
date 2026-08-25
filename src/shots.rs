@@ -31,6 +31,8 @@ struct Scene {
     /// apart. For the controls that only exist as a result of what came before
     /// them: a menu entry, then the panel it opened, then the button on it.
     clicks: Vec<Point>,
+    /// Keys typed after those clicks, for what the clicks opened.
+    then: Vec<Press>,
     /// Notches of wheel, rolled at `mouse` for a few frames after the script.
     wheel: f32,
     settle: u32,
@@ -83,6 +85,17 @@ fn tab(shift: bool) -> Vec<Press> {
     }]
 }
 
+/// Ctrl with a key that is not a character.
+fn ctrl_key(key: Key) -> Vec<Press> {
+    vec![Press {
+        key,
+        mods: Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+    }]
+}
+
 /// A Ctrl chord, which a bare character cannot express.
 fn ctrl(c: char) -> Vec<Press> {
     vec![Press {
@@ -110,6 +123,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 40,
             canvas: (768, 470),
         },
@@ -122,6 +136,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 40,
             canvas: (768, 470),
         },
@@ -134,6 +149,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -146,6 +162,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -158,6 +175,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 40,
             canvas: (768, 470),
         },
@@ -170,6 +188,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 40,
             canvas: (768, 470),
         },
@@ -184,6 +203,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 40,
             canvas: (1050, 620),
         },
@@ -197,6 +217,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -210,6 +231,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -223,6 +245,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -237,6 +260,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -251,6 +275,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 2,
             canvas: (768, 470),
         },
@@ -265,6 +290,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 20,
             canvas: (768, 470),
         },
@@ -286,6 +312,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 20,
             canvas: (768, 470),
         },
@@ -299,6 +326,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 20,
             canvas: (768, 470),
         },
@@ -312,6 +340,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![Point::new(745, 72)],
+            then: vec![],
             settle: 20,
             canvas: (768, 470),
         },
@@ -338,6 +367,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -363,6 +393,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![Point::new(650, 227)],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -376,6 +407,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 10,
             canvas: (768, 470),
         },
@@ -389,6 +421,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![Point::new(64, 33)],
+            then: vec![],
             settle: 14,
             canvas: (768, 470),
         },
@@ -401,8 +434,77 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
-            clicks: vec![Point::new(64, 21)],
+            clicks: vec![Point::new(64, 21), Point::new(383, 222)],
+            then: vec![],
             settle: 14,
+            canvas: (768, 470),
+        },
+        // The prompt is a small instance of the same editor the notes use: the
+        // same vim grammar, and it scrolls the same way.
+        Scene {
+            name: "settings-vim",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![Point::new(64, 21), Point::new(383, 222)],
+            then: [keys("GA"), keys(" AND A LINE OF MY OWN.")].concat(),
+            settle: 12,
+            canvas: (768, 470),
+        },
+        // The settings, as they open: a list of what can be set.
+        Scene {
+            name: "settings-index",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![Point::new(64, 21)],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        // Switched off: what is under the switch stays legible and stops
+        // answering the pointer.
+        Scene {
+            name: "settings-off",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![
+                Point::new(64, 21),
+                Point::new(383, 222),
+                Point::new(241, 172),
+            ],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        // And with it off, a selection is just a selection: no mark, nothing
+        // offering to rewrite it.
+        Scene {
+            name: "assist-off",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![
+                Point::new(64, 21),
+                Point::new(383, 222),
+                Point::new(241, 172),
+                Point::new(503, 325),
+            ],
+            then: keys("jjVj"),
+            settle: 12,
             canvas: (768, 470),
         },
         // And closing it again with the button, which is the click that has to
@@ -416,7 +518,34 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![Point::new(64, 21), Point::new(503, 308)],
+            then: vec![],
             settle: 14,
+            canvas: (768, 470),
+        },
+        // Keeping the suggestion without reaching for the mouse.
+        Scene {
+            name: "assist-kept",
+            script: [
+                keys(":e ideas.md"),
+                keys("\n"),
+                keys("Go"),
+                keys("teh quick brown fox jumped  over teh lazy dog"),
+                keys("\x1b"),
+                keys("V"),
+                ctrl('a'),
+                keys("fix the typos"),
+                keys("\n"),
+                ctrl_key(Key::Enter),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![],
+            then: vec![],
+            settle: 20,
             canvas: (768, 470),
         },
         // Enter in the search box hands the keyboard to the results, on the
@@ -430,6 +559,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 20,
             canvas: (768, 470),
         },
@@ -443,6 +573,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 7,
             canvas: (768, 470),
         },
@@ -456,6 +587,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (900, 660),
         },
@@ -474,6 +606,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (900, 660),
         },
@@ -488,6 +621,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: -1.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (900, 660),
         },
@@ -511,6 +645,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 40,
             canvas: (900, 660),
         },
@@ -533,6 +668,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 40,
             canvas: (900, 660),
         },
@@ -552,6 +688,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -571,6 +708,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -584,6 +722,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -597,6 +736,7 @@ pub fn run() -> std::io::Result<()> {
             drag: Some((Point::new(200, 43), Point::new(340, 43))),
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 20,
             canvas: (768, 470),
         },
@@ -610,6 +750,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -623,6 +764,7 @@ pub fn run() -> std::io::Result<()> {
             drag: None,
             wheel: 0.0,
             clicks: vec![],
+            then: vec![],
             settle: 30,
             canvas: (768, 470),
         },
@@ -640,8 +782,11 @@ pub fn run() -> std::io::Result<()> {
     std::env::set_var("PIXUI_MODELS", scratch.join("models"));
 
     for scene in &scenes {
-        // A fresh vault and a fresh UI per scene keeps them independent.
+        // A fresh vault, a fresh UI and fresh settings per scene keeps them
+        // independent: one scene that changes a setting must not turn up in
+        // the next one's screenshot.
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(scratch.join("settings.conf"));
         let mut app = Notes::open(dir.clone());
         let mut canvas = Canvas::new(scene.canvas.0, scene.canvas.1);
         let mut ui_state = UiState::new();
@@ -655,7 +800,9 @@ pub fn run() -> std::io::Result<()> {
         };
 
         // Frames 2 and 3 are the optional click; typing starts at 5.
-        let total = 8 + scene.script.len() as u32 + scene.settle;
+        let clicking = scene.clicks.len() as u32 * 4;
+        let total =
+            8 + scene.script.len() as u32 + clicking + scene.then.len() as u32 + scene.settle;
         for f in 0..total {
             input.time = f as f32 / 60.0;
             input.mouse = scene.mouse;
@@ -719,6 +866,15 @@ pub fn run() -> std::io::Result<()> {
             }
             // Late enough that anything the script asked for has come back:
             // the control being clicked may not exist until it has.
+            // Whatever the clicks opened, typed into. Starts once the last of
+            // them has been released.
+            let typing = script_start + scene.script.len() as u32 + 7 + clicking;
+            if f >= typing {
+                if let Some(press) = scene.then.get((f - typing) as usize) {
+                    input.keys.push(press.key);
+                    input.mods = press.mods;
+                }
+            }
             // Four frames apart, and late enough that anything the script
             // asked for has come back: the control being clicked may not exist
             // until it has.
