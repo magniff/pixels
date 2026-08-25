@@ -123,6 +123,12 @@ pub struct Notes {
     /// Where the preview was left, so switching tabs comes back to it rather
     /// than to the top.
     pub preview_scroll: pixui::ScrollState,
+    /// Whether a `g` is waiting for its second half in the preview.
+    pub preview_g: bool,
+    /// The source view's scrollbar. The scrolling itself lives in `scroll`,
+    /// counted in lines; this is only what the bar needs to remember between
+    /// frames, which is where a drag took hold of the thumb.
+    pub editor_scroll: pixui::ScrollState,
     /// The view being left behind, which lags `editor_tab` until the
     /// dissolve finishes. Equal to it when nothing is in flight.
     pub tab_shown: usize,
@@ -203,6 +209,8 @@ impl Notes {
             drag_anchor: None,
             editor_tab: 0,
             preview_scroll: pixui::ScrollState::default(),
+            editor_scroll: pixui::ScrollState::default(),
+            preview_g: false,
             tab_shown: 0,
             tab_anim: 0.0,
             fade: pixui::Canvas::new(1, 1),
@@ -575,6 +583,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             Pane::Search => handle_search_keys(ui, app),
             _ if ui.text_input_active() => {}
             Pane::Notes => handle_notes_keys(ui, app),
+            _ if app.editor_tab == 1 => handle_preview_keys(ui, app),
             _ => handle_keys(ui, app),
         }
 
@@ -733,6 +742,74 @@ fn handle_notes_keys(ui: &mut Ui, app: &mut Notes) {
             Key::Char('/') => app.focus_pane(Pane::Search),
             _ => {}
         }
+    }
+}
+
+/// The preview with the keyboard: the half of the grammar that moves a page.
+///
+/// Every other vim key is about a caret, and there is no caret here — pressing
+/// them would edit a note while showing you a rendering that says nothing
+/// about it. So the reading view takes the motions that scroll and drops the
+/// rest, keeping the two that are about the file rather than about the view:
+/// the command line, and walking the vault.
+fn handle_preview_keys(ui: &mut Ui, app: &mut Notes) {
+    ui.capture_keyboard();
+    let line = pixui::font::LINE_H as f32;
+    // A page is what is actually on screen, measured by the scroll area on the
+    // frame before — the same number it pages by when its own track is clicked.
+    let page = app.preview_scroll.viewport as f32;
+    let mods = ui.input.mods;
+    for key in ui.input.keys.clone() {
+        // Already spent on a shortcut.
+        if mods.cmd && !mods.ctrl {
+            continue;
+        }
+        // `:` still opens the command line, and once open it owns the keys:
+        // writing a note is about the note, not about which view of it happens
+        // to be showing.
+        if app.vim.mode == Mode::Command || key == Key::Char(':') {
+            let i = app.current.min(app.notes.len() - 1);
+            let event = app.vim.handle(&mut app.notes[i].buffer, key, mods);
+            if let Some(VimEvent::Command(cmd)) = event {
+                app.run_command(&cmd, ui);
+            }
+            continue;
+        }
+        if mods.ctrl && matches!(key, Key::Char('n') | Key::Char('p')) {
+            app.step_note(if key == Key::Char('n') { 1 } else { -1 });
+            continue;
+        }
+        // `gg` is the one motion here that needs a keystroke of memory, and it
+        // is forgotten by anything that is not the second `g`.
+        let doubled = std::mem::take(&mut app.preview_g);
+        let by = match key {
+            Key::Char('j') | Key::Down | Key::Enter => line,
+            Key::Char('k') | Key::Up => -line,
+            Key::Char('e') if mods.ctrl => line,
+            Key::Char('y') if mods.ctrl => -line,
+            Key::Char('d') if mods.ctrl => page / 2.0,
+            Key::Char('u') if mods.ctrl => -page / 2.0,
+            Key::Char('f') if mods.ctrl => page,
+            Key::Char('b') if mods.ctrl => -page,
+            Key::Space => page,
+            Key::Char('g') if !doubled => {
+                app.preview_g = true;
+                continue;
+            }
+            Key::Char('g') | Key::Home => {
+                app.preview_scroll.target = 0.0;
+                continue;
+            }
+            Key::Char('G') | Key::End => {
+                app.preview_scroll.target = app.preview_scroll.max_offset();
+                continue;
+            }
+            _ => continue,
+        };
+        app.preview_scroll.target += by;
+    }
+    if !app.vim.status.is_empty() {
+        app.status = std::mem::take(&mut app.vim.status).to_uppercase();
     }
 }
 
@@ -1086,12 +1163,15 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let area = Rect::new(rect.x, rect.y, rect.w - 5, rect.h);
     ui.canvas.box_chamfer(area, th.well, th.well_border, 2);
 
-    let inner = area.inset(6);
+    // The same frame inset the source view uses, so the two views put their
+    // gutter, their text and their scrollbar in exactly the same places and
+    // switching between them does not shift the page.
+    let inner = area.inset(3);
     // Parsed every frame. A note is a few kilobytes and the parse is a linear
     // scan, so caching it would buy nothing and could go stale.
-    let blocks = markdown::parse(app.note().buffer.lines());
+    let blocks = markdown::parse_located(app.note().buffer.lines());
     // The scroll area keeps a gutter for its bar; the document gets the rest.
-    let width = inner.w - 12;
+    let width = inner.w - Ui::SCROLL_GUTTER;
     // The app holds the scroll position, so it survives the tab being hidden.
     let mut scroll = app.preview_scroll;
     let mut clicked = None;
@@ -1147,14 +1227,16 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let area = Rect::new(rect.x, rect.y, rect.w - 5, rect.h);
     ui.canvas.box_chamfer(area, th.well, th.well_border, 2);
 
-    let inner = area.inset(3);
+    // The text keeps clear of the scrollbar's gutter, the same one a scroll
+    // area reserves, so the two views of a note are the same shape.
+    let framed = area.inset(3);
+    let inner = Rect::new(framed.x, framed.y, framed.w - Ui::SCROLL_GUTTER, framed.h);
     let line_h = pixui::font::LINE_H;
     let advance = pixui::font::ADVANCE;
     let visible = (inner.h / line_h).max(1) as usize;
     let cols = ((inner.w - GUTTER) / advance).max(8) as usize;
 
     let i = app.current.min(app.notes.len() - 1);
-    let cursor = app.notes[i].buffer.cursor;
     let total = app.notes[i].buffer.line_count();
 
     // ---- pointer --------------------------------------------------------
@@ -1192,6 +1274,46 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     if ui.input.mouse_released {
         app.drag_anchor = None;
     }
+
+    // ---- the view, moved by hand ----------------------------------------
+    // The wheel and the bar move the *view*; everything else here moves the
+    // caret and lets the view follow. So both are applied first, and the caret
+    // is then pulled into whatever is now on screen — which is what an editor
+    // does when you scroll away from the line you were typing on.
+    let was = app.scroll;
+    if resp.hovered && ui.input.wheel != 0.0 {
+        let step = (ui.input.wheel * 3.0).round() as i32;
+        app.scroll = (app.scroll as i32 - step).max(0) as usize;
+    }
+    {
+        // The bar is told about logical lines, not the visual rows they wrap
+        // into: the editor scrolls by whole lines, as vim does, and a bar
+        // measured in something the scrolling cannot express would stop
+        // exactly where it could not go.
+        let mut st = app.editor_scroll;
+        st.content = total as i32 * line_h;
+        st.viewport = visible as i32 * line_h;
+        st.target = app.scroll as f32 * line_h as f32;
+        st.shown = st.target;
+        let track = Rect::new(framed.right() - Ui::BAR_W, framed.y, Ui::BAR_W, framed.h);
+        ui.scroll_bar(track, "editor-bar", &mut st);
+        app.scroll = (st.target / line_h as f32).round().max(0.0) as usize;
+        app.editor_scroll = st;
+    }
+    app.scroll = app.scroll.min(total.saturating_sub(1));
+    if app.scroll != was {
+        // Carry the caret with the view rather than letting the follow below
+        // snap the view straight back to it.
+        let buf = &mut app.notes[i].buffer;
+        let line = buf
+            .cursor
+            .line
+            .clamp(app.scroll, (app.scroll + visible - 1).min(total - 1));
+        buf.cursor.line = line;
+        buf.cursor.col = buf.cursor.col.min(buf.line_len(line));
+    }
+
+    let cursor = app.notes[i].buffer.cursor;
 
     // ---- keep the caret on screen ---------------------------------------
     // Lines wrap, so "how far down is the caret" is a count of *visual* rows,
@@ -1233,7 +1355,6 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // block once the block stops changing.
     let code = syntax::code_regions(buf.lines());
 
-    let mut last_line_drawn = app.scroll;
     ui.clipped(inner, |ui| {
         let mut row = 0usize;
         let mut line_no = app.scroll;
@@ -1336,20 +1457,26 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                 if line_no == cursor.line && vi == caret_row {
                     let cx = text_x + caret_col as i32 * advance;
                     if insert {
-                        // The caret pulses rather than blinking on and off.
-                        // Dither density is the only half-brightness sixteen
-                        // colours have, so it dissolves and re-forms instead of
-                        // fading — and never drops below a quarter coverage,
-                        // which keeps it findable at every point in the cycle.
-                        let cycle = app.caret_phase * 1.9;
+                        // The caret closes toward its middle and opens back
+                        // out, rather than switching on and off: the two ends
+                        // travelling to meet each other is a blink you can
+                        // watch happen, where a bar that simply vanishes at
+                        // this size reads as a dropped frame.
+                        //
+                        // The curve holds it open for most of the cycle and
+                        // spends only the turn of the wave shut, so the caret
+                        // is at full height whenever you glance at it.
+                        let cycle = app.caret_phase * 1.6;
                         let wave = (cycle * std::f32::consts::TAU).cos() * 0.5 + 0.5;
-                        let bar = Rect::new(cx - 1, y - 1, 2, line_h);
-                        ui.canvas
-                            .dither_fill(bar, th.positive.face, 0.28 + 0.72 * wave);
-                        // The ends stay solid whatever the dither is doing, so
-                        // the caret keeps a definite top and bottom.
-                        ui.canvas.hline(bar.x, bar.y, 2, th.positive.hi);
-                        ui.canvas.hline(bar.x, bar.bottom() - 1, 2, th.positive.hi);
+                        let h = (line_h as f32 * wave.powf(0.45)).round() as i32;
+                        if h > 0 {
+                            let bar = Rect::new(cx - 1, y - 1 + (line_h - h) / 2, 2, h);
+                            ui.canvas.fill_rect(bar, th.positive.face);
+                            // Lit ends, so what reads is the two edges closing
+                            // in rather than the bar merely getting shorter.
+                            ui.canvas.hline(bar.x, bar.y, 2, th.positive.hi);
+                            ui.canvas.hline(bar.x, bar.bottom() - 1, 2, th.positive.hi);
+                        }
                     } else {
                         // A block caret with the character redrawn on top in
                         // the inverse ink, so it stays readable underneath.
@@ -1371,22 +1498,9 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
 
                 row += 1;
             }
-            last_line_drawn = line_no;
             line_no += 1;
         }
     });
-
-    // A hint of how far through the file we are, in the right margin.
-    if last_line_drawn + 1 < total || app.scroll > 0 {
-        let track = Rect::new(area.right() - 2, area.y + 2, 2, area.h - 4);
-        let span = total.saturating_sub(1).max(1);
-        let t = app.scroll as f32 / span as f32;
-        let shown = (last_line_drawn + 1 - app.scroll).max(1);
-        let thumb_h = ((shown as f32 / total as f32) * track.h as f32).max(6.0) as i32;
-        let y = track.y + ((track.h - thumb_h) as f32 * t.clamp(0.0, 1.0)) as i32;
-        ui.canvas
-            .fill_rect(Rect::new(track.x, y, 2, thumb_h), th.ink_soft);
-    }
 
     area.inset(1)
 }

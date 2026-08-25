@@ -741,31 +741,81 @@ impl Ui<'_> {
     ) -> R {
         let th = *self.theme;
         let m = th.metrics;
-        let dt = self.input.dt;
 
-        let thumb_id = self.scope(name, |ui| ui.id("thumb"));
-        let track_id = self.scope(name, |ui| ui.id("track"));
         let mut st = *state;
 
-        const BAR_W: i32 = 7;
-        let gutter = BAR_W + 2;
-        let view = Rect::new(rect.x, rect.y, (rect.w - gutter).max(1), rect.h);
-        let track = Rect::new(rect.right() - BAR_W, rect.y, BAR_W, rect.h);
-        let max = st.max_offset();
+        let view = Rect::new(
+            rect.x,
+            rect.y,
+            (rect.w - Self::SCROLL_GUTTER).max(1),
+            rect.h,
+        );
+        let track = Rect::new(rect.right() - Self::BAR_W, rect.y, Self::BAR_W, rect.h);
 
         // ---- wheel ------------------------------------------------------
-        let pointer = self.input.mouse;
         let over = !self.is_input_blocked()
-            && rect.contains(pointer)
-            && self.canvas.clip_contains(pointer);
+            && rect.contains(self.input.mouse)
+            && self.canvas.clip_contains(self.input.mouse);
         if over && self.input.wheel != 0.0 {
             // Three text lines per notch, the usual convention.
             st.target -= self.input.wheel * 3.0 * font::LINE_H as f32;
         }
 
+        // The bar sits in a gutter beside the view rather than over it, so
+        // taking the pointer and painting it here — before the content —
+        // cannot come between the content and the mouse.
+        self.scroll_bar(track, name, &mut st);
+        let offset = st.shown.round() as i32;
+
+        // ---- content -----------------------------------------------------
+        // Height comes from last frame so `alloc_rest` inside stays sensible.
+        let content_h = st.content.max(view.h);
+        let bounds = Rect::new(view.x, view.y - offset, view.w, content_h);
+        let (result, used) = self.clipped(view, |ui| ui.column_measured(bounds, m.gap, f));
+        st.content = used;
+        st.viewport = view.h;
+
+        // Edge shadows: the cheapest possible hint that content continues past
+        // the clip, and far less intrusive than a second scrollbar.
+        if offset > 0 {
+            self.canvas.hline(view.x, view.y, view.w, th.shadow);
+        }
+        if (offset as f32) < st.max_offset() {
+            self.canvas
+                .hline(view.x, view.bottom() - 1, view.w, th.shadow);
+        }
+
+        *state = st;
+        result
+    }
+
+    /// Width of a scrollbar, and of the gutter one wants reserved for it.
+    pub const BAR_W: i32 = 7;
+    pub const SCROLL_GUTTER: i32 = Self::BAR_W + 2;
+
+    /// The scrollbar on its own: drag the thumb, click the track to page, and
+    /// ease the offset toward wherever that leaves it.
+    ///
+    /// A scroll area draws one of these. So does anything that scrolls its own
+    /// content by other means and only wants the same bar to report it — an
+    /// editor that scrolls by whole lines, say, because that is what a caret
+    /// moves in. Two bars that look different for no reason are two bars the
+    /// eye has to learn separately.
+    ///
+    /// The caller owns the state, and is expected to have filled in `content`
+    /// and `viewport`; this reads them, and writes `target` and `shown`.
+    pub fn scroll_bar(&mut self, track: Rect, name: &str, st: &mut ScrollState) {
+        let th = *self.theme;
+        let dt = self.input.dt;
+        let pointer = self.input.mouse;
+        let max = st.max_offset();
+
+        let thumb_id = self.scope(name, |ui| ui.id("thumb"));
+        let track_id = self.scope(name, |ui| ui.id("track"));
+
         // ---- thumb geometry ---------------------------------------------
         let thumb_h = if st.scrollable() {
-            let ratio = view.h as f32 / st.content.max(1) as f32;
+            let ratio = st.viewport as f32 / st.content.max(1) as f32;
             ((track.h as f32 * ratio).round() as i32).clamp(10, track.h)
         } else {
             track.h
@@ -779,14 +829,11 @@ impl Ui<'_> {
         let thumb = Rect::new(
             track.x,
             track.y + (travel as f32 * t).round() as i32,
-            BAR_W,
+            track.w,
             thumb_h,
         );
 
         // ---- drag the thumb ---------------------------------------------
-        // The thumb is interacted with before the content so that it wins the
-        // pointer where they overlap: it is drawn on top, so it must be hit
-        // first.
         let thumb_resp = self.interact(thumb_id, thumb);
         if thumb_resp.held {
             if self.input.mouse_pressed {
@@ -809,7 +856,7 @@ impl Ui<'_> {
         // ---- click the track to page ------------------------------------
         let track_resp = self.interact(track_id, track);
         if track_resp.clicked && st.scrollable() {
-            let page = view.h as f32;
+            let page = st.viewport as f32;
             st.target += if pointer.y < thumb.y { -page } else { page };
         }
 
@@ -819,34 +866,12 @@ impl Ui<'_> {
         if (st.shown - st.target).abs() < 0.5 {
             st.shown = st.target;
         }
-        let offset = st.shown.round() as i32;
 
-        // ---- content -----------------------------------------------------
-        // Height comes from last frame so `alloc_rest` inside stays sensible.
-        let content_h = st.content.max(view.h);
-        let bounds = Rect::new(view.x, view.y - offset, view.w, content_h);
-        let (result, used) = self.clipped(view, |ui| ui.column_measured(bounds, m.gap, f));
-        st.content = used;
-        st.viewport = view.h;
-
-        // ---- chrome, drawn last so it sits above the content -------------
         let anim = self.animate(thumb_id, &thumb_resp);
         if st.scrollable() {
             self.draw_well(track, th.well);
             self.draw_control_face(thumb.inset_xy(0, 1), th.neutral, &anim);
         }
-        // Edge shadows: the cheapest possible hint that content continues past
-        // the clip, and far less intrusive than a second scrollbar.
-        if offset > 0 {
-            self.canvas.hline(view.x, view.y, view.w, th.shadow);
-        }
-        if (offset as f32) < max {
-            self.canvas
-                .hline(view.x, view.bottom() - 1, view.w, th.shadow);
-        }
-
-        *state = st;
-        result
     }
 
     // ------------------------------------------------------------------ text

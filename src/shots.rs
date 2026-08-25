@@ -27,6 +27,8 @@ struct Scene {
     double_click: bool,
     /// Press at the first point and drag to the second.
     drag: Option<(Point, Point)>,
+    /// Notches of wheel, rolled at `mouse` for a few frames after the script.
+    wheel: f32,
     settle: u32,
     /// Canvas size. Under `Scaling::Adaptive` this is what a resized window
     /// produces, so varying it here shows exactly what resizing does.
@@ -91,6 +93,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 40,
             canvas: (768, 470),
         },
@@ -101,6 +104,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 40,
             canvas: (768, 470),
         },
@@ -111,6 +115,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -121,6 +126,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -131,6 +137,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 40,
             canvas: (768, 470),
         },
@@ -141,6 +148,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 40,
             canvas: (768, 470),
         },
@@ -153,6 +161,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 40,
             canvas: (1050, 620),
         },
@@ -164,6 +173,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -175,6 +185,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: true,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -186,6 +197,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -198,6 +210,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -210,6 +223,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 2,
             canvas: (768, 470),
         },
@@ -222,6 +236,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 20,
             canvas: (768, 470),
         },
@@ -233,6 +248,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: true,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 7,
             canvas: (768, 470),
         },
@@ -244,6 +260,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (900, 660),
         },
@@ -260,7 +277,42 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
+            canvas: (900, 660),
+        },
+        // The wheel over the source pane, which moves the view and takes the
+        // caret with it rather than being snapped back by it.
+        Scene {
+            name: "wheel-scroll",
+            script: [keys(":e markdown-showcase.md"), keys("\n")].concat(),
+            mouse: Point::new(600, 300),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: -1.0,
+            settle: 30,
+            canvas: (900, 660),
+        },
+        // The preview taking the vim motions that move a page: `G` to the end
+        // of the document, where the gutter is numbered with the source lines
+        // the blocks down there came from.
+        Scene {
+            name: "preview-scroll",
+            script: [
+                keys(":e markdown-showcase.md"),
+                keys("\n"),
+                keys(":preview"),
+                keys("\n"),
+                keys("G"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            settle: 40,
             canvas: (900, 660),
         },
         // The rendered view of the note with a table and a code block.
@@ -277,6 +329,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -294,6 +347,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -305,6 +359,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: true,
             double_click: true,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -316,6 +371,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: Some((Point::new(200, 43), Point::new(340, 43))),
+            wheel: 0.0,
             settle: 20,
             canvas: (768, 470),
         },
@@ -327,6 +383,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -338,6 +395,7 @@ pub fn run() -> std::io::Result<()> {
             click_first: false,
             double_click: false,
             drag: None,
+            wheel: 0.0,
             settle: 30,
             canvas: (768, 470),
         },
@@ -366,6 +424,7 @@ pub fn run() -> std::io::Result<()> {
             input.time = f as f32 / 60.0;
             input.mouse = scene.mouse;
             input.keys.clear();
+            input.wheel = 0.0;
             input.mods = Mods::default();
             input.mouse_pressed = false;
             input.mouse_released = false;
@@ -421,6 +480,11 @@ pub fn run() -> std::io::Result<()> {
                     input.keys.push(press.key);
                     input.mods = press.mods;
                 }
+            }
+            // Five notches, once the script has finished typing.
+            let wheel_from = script_start + scene.script.len() as u32;
+            if scene.wheel != 0.0 && (wheel_from..wheel_from + 5).contains(&f) {
+                input.wheel = scene.wheel;
             }
 
             canvas.clear(theme.background);

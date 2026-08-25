@@ -1197,6 +1197,59 @@ fn naming_a_note_that_was_never_saved_writes_it() {
     assert!(!app.notes[i].buffer.dirty, "and it counts as saved");
 }
 
+// ------------------------------------------------------- source line numbers
+
+fn located(text: &str) -> Vec<(usize, notes::markdown::Block)> {
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    notes::markdown::parse_located(&lines)
+}
+
+#[test]
+fn every_block_knows_the_line_it_began_on() {
+    // The preview's gutter is numbered with these, so they have to point at
+    // the line a reader would find the block on in the source view.
+    let blocks = located("# Title\n\nA paragraph\nthat runs on.\n\n- one\n- two\n\n> quoted");
+    let at: Vec<usize> = blocks.iter().map(|(n, _)| *n).collect();
+    assert_eq!(at, vec![0, 2, 5, 8]);
+}
+
+#[test]
+fn a_blocks_line_is_where_it_opens_not_where_its_body_starts() {
+    // The fence is part of the block, and is the line the source view shows
+    // it starting on.
+    let blocks = located("intro\n\n```rust\nlet x = 1;\n```\n\nafter");
+    assert_eq!(
+        blocks.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+        vec![0, 2, 6]
+    );
+}
+
+#[test]
+fn link_definitions_do_not_shift_the_numbering() {
+    // They are blanked rather than removed, precisely so everything below
+    // them keeps the line it was typed on.
+    let blocks = located("[ref]: https://example.com\n\nSee [a link][ref].");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].0, 2);
+}
+
+#[test]
+fn parse_and_parse_located_agree_about_the_document() {
+    let text = notes::showcase::SHOWCASE;
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let plain = notes::markdown::parse(&lines);
+    let numbered = notes::markdown::parse_located(&lines);
+    assert_eq!(plain.len(), numbered.len());
+    // Numbers only ever move forward: a gutter that counted backwards would be
+    // a layout that had lost track of the document.
+    let mut last = 0;
+    for (n, _) in &numbered {
+        assert!(*n >= last, "block at {n} follows one at {last}");
+        last = *n;
+    }
+    assert!(numbered.last().unwrap().0 < lines.len());
+}
+
 // ----------------------------------------------------------- document parser
 
 use notes::markdown::{Block, CellAlign, Marker};

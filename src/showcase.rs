@@ -16,9 +16,10 @@ Switch between them with `cmd-1` and `cmd-2`, with the tabs above, or with
 
 ## Headings
 
-Six levels are parsed. The first two take a rule under them; the rest are
-told apart by weight and colour alone. This heading and the title above show
-both ways of writing one.
+Six levels are parsed. There is one font at one size, so the ladder is drawn
+with everything else: the first three rule themselves off, the last one gives
+up its weight, and the colour and the air above step down the whole way. This
+heading and the title above show both ways of writing one.
 
 ### Third level
 #### Fourth level

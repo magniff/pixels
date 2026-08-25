@@ -22,9 +22,63 @@ const ADVANCE: i32 = font::ADVANCE;
 /// Space under each kind of block, so the document breathes without a blank
 /// line having to be typed for it.
 const PARA_GAP: i32 = 5;
-const HEADING_TOP: i32 = 6;
 /// How far a quote's contents sit right of its bar.
 const QUOTE_INDENT: i32 = 10;
+/// Height a heading's rule takes, whatever it spans.
+const RULE_H: i32 = 3;
+
+/// What a heading draws beneath itself.
+#[derive(Clone, Copy, PartialEq)]
+enum Rule {
+    None,
+    /// As wide as the words above it, which is a smaller gesture than a rule
+    /// across the pane and reads as a smaller heading.
+    Text,
+    Full,
+}
+
+/// How one heading level is drawn.
+struct Heading {
+    color: Color,
+    bold: bool,
+    rule: Rule,
+    tint: Color,
+    /// Air above it. A level that opens a section deserves more of it than one
+    /// that labels a paragraph, and the spacing alone tells them apart before
+    /// any of the ink does.
+    top: i32,
+}
+
+/// The ladder of heading levels.
+///
+/// There is one font, at one size, so the ladder has to be made of everything
+/// else: colour, weight, the rule beneath, and the air above. Six levels need
+/// six answers that differ at a glance, and dimming alone does not survive
+/// being read at five pixels by seven — so the top three each underline
+/// themselves differently, and the bottom one gives up its weight.
+fn heading_style(th: &Theme, level: u8) -> Heading {
+    let (color, bold, rule, tint, top) = match level {
+        1 => (th.accent.hi, true, Rule::Full, th.accent.face, 7),
+        2 => (th.accent.face, true, Rule::Full, th.ink_soft, 6),
+        3 => (th.info.hi, true, Rule::Text, th.info.face, 6),
+        4 => (th.ink_light, true, Rule::None, th.ink_soft, 5),
+        5 => (
+            th.ink_light.lerp(th.ink_soft, 0.55),
+            true,
+            Rule::None,
+            th.ink_soft,
+            4,
+        ),
+        _ => (th.ink_soft, false, Rule::None, th.ink_soft, 4),
+    };
+    Heading {
+        color,
+        bold,
+        rule,
+        tint,
+        top,
+    }
+}
 
 /// Everything the layout needs that does not change between blocks.
 struct Ctx {
@@ -161,9 +215,10 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
 fn measure(block: &Block, ctx: &Ctx) -> i32 {
     match block {
         Block::Heading { level, spans } => {
+            let h = heading_style(&ctx.th, *level);
             let lines = wrap(spans, ctx.cols(0)).len().max(1) as i32;
-            let rule = if *level <= 2 { 3 } else { 0 };
-            HEADING_TOP + lines * LINE_H + rule + 2
+            let rule = if h.rule == Rule::None { 0 } else { RULE_H };
+            h.top + lines * LINE_H + rule + 2
         }
         Block::Paragraph(spans) => wrap(spans, ctx.cols(0)).len().max(1) as i32 * LINE_H + PARA_GAP,
         Block::List(items) => {
@@ -220,10 +275,16 @@ fn list_indent(items: &[Item], item: &Item) -> i32 {
 /// the document for free and clipping falls out of the layout rather than being
 /// arranged separately.
 /// Draw the document, and report a link the pointer activated in it.
-pub fn draw_document(ui: &mut Ui, blocks: &[Block], width: i32) -> Option<String> {
+///
+/// Each block arrives with the source line it was parsed from, and is numbered
+/// with it in a gutter the same width as the source view's. A rendering has no
+/// lines of its own to count — a paragraph is one block however many rows it
+/// wraps into — so the number says where the block *came from*, which is the
+/// only number about a rendered document that means anything.
+pub fn draw_document(ui: &mut Ui, blocks: &[(usize, Block)], width: i32) -> Option<String> {
     let ctx = Ctx {
         th: *ui.theme,
-        width: std::cell::Cell::new(width),
+        width: std::cell::Cell::new(width - crate::GUTTER),
         quoted: std::cell::Cell::new(false),
         clicked: RefCell::new(None),
     };
@@ -231,24 +292,47 @@ pub fn draw_document(ui: &mut Ui, blocks: &[Block], width: i32) -> Option<String
         ui.label_dim("  (EMPTY NOTE)");
         return None;
     }
-    for block in blocks {
+    for (line, block) in blocks {
         let h = measure(block, &ctx);
-        let rect = ui.alloc(h);
-        draw_block(ui, rect, block, &ctx);
+        let row = ui.alloc(h);
+        let body = Rect::new(row.x + crate::GUTTER, row.y, row.w - crate::GUTTER, h);
+        let num = format!("{:>3}", line + 1);
+        font::draw_text(
+            ui.canvas,
+            row.x + 1,
+            body.y + first_row(block, &ctx, h),
+            &num,
+            ctx.th.ink_soft.shade(-0.2),
+        );
+        draw_block(ui, body, block, &ctx);
     }
     ctx.clicked.into_inner()
+}
+
+/// How far below a block's top its first row of text sits.
+///
+/// Kept in step with `draw_block` by hand, for the one thing that has to line
+/// up with the text rather than with the space the block reserves: the number
+/// in the gutter beside it.
+fn first_row(block: &Block, ctx: &Ctx, h: i32) -> i32 {
+    match block {
+        Block::Heading { level, .. } => heading_style(&ctx.th, *level).top,
+        Block::Quote(_) => 2,
+        Block::Code { .. } => 4,
+        Block::Table { .. } => 3,
+        // A rule is all one gesture; the number sits level with it.
+        Block::Rule => h / 2 - 3,
+        _ => 0,
+    }
 }
 
 fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
     let th = ctx.th;
     match block {
         Block::Heading { level, spans } => {
-            let y = rect.y + HEADING_TOP;
-            let color = match level {
-                1 => th.accent.hi,
-                2 => th.accent.face,
-                _ => th.ink_light,
-            };
+            let style = heading_style(&th, *level);
+            let y = rect.y + style.top;
+            let mut widest = 0i32;
             for (i, line) in wrap(spans, ctx.cols(0)).iter().enumerate() {
                 let ly = y + i as i32 * LINE_H;
                 let mut col = 0i32;
@@ -256,18 +340,21 @@ fn draw_block(ui: &mut Ui, rect: Rect, block: &Block, ctx: &Ctx) {
                     let sx = rect.x + col * ADVANCE;
                     // A heading is one weight and one colour, whatever emphasis
                     // the source put inside it.
-                    font::draw_text_styled(ui.canvas, sx, ly, &span.text, color, true);
+                    font::draw_text_styled(ui.canvas, sx, ly, &span.text, style.color, style.bold);
                     col += span.text.chars().count() as i32;
                 }
+                widest = widest.max(col * ADVANCE);
             }
-            if *level <= 2 {
-                let ry = rect.bottom() - 3;
-                let tint = if *level == 1 {
-                    th.accent.face
-                } else {
-                    th.ink_soft
-                };
-                ui.canvas.hline(rect.x, ry, rect.w, tint);
+            let rule_w = match style.rule {
+                Rule::None => 0,
+                // Less the tracking that trails the last glyph, so the rule
+                // ends under the final letter rather than past it.
+                Rule::Text => (widest - 2).clamp(1, rect.w),
+                Rule::Full => rect.w,
+            };
+            if rule_w > 0 {
+                ui.canvas
+                    .hline(rect.x, rect.bottom() - RULE_H, rule_w, style.tint);
             }
         }
 

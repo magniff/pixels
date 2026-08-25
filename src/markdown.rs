@@ -972,13 +972,24 @@ fn indent_of(line: &str) -> usize {
 
 /// Parse lines into blocks.
 pub fn parse(lines: &[String]) -> Vec<Block> {
+    parse_located(lines).into_iter().map(|(_, b)| b).collect()
+}
+
+/// Parse lines into blocks, each paired with the source line it began on.
+///
+/// The preview numbers its gutter with these, so the two views of a note are
+/// numbered in the same terms and a paragraph on screen can be found in the
+/// text it came from. Only the top level is numbered: a quote's contents are
+/// parsed out of lines that have had their markers stripped, and counting
+/// those would be counting a document that was never typed.
+pub fn parse_located(lines: &[String]) -> Vec<(usize, Block)> {
     let (refs, defs) = link_defs(lines);
     let kept: Vec<String> = lines
         .iter()
         .zip(&defs)
         .map(|(l, is_def)| if *is_def { String::new() } else { l.clone() })
         .collect();
-    parse_blocks(&kept, &refs)
+    parse_located_blocks(&kept, &refs)
 }
 
 /// Collect the document's link definitions, and say which lines were spent on
@@ -1091,10 +1102,20 @@ fn hard_break(line: &str) -> bool {
 }
 
 fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
+    parse_located_blocks(lines, refs)
+        .into_iter()
+        .map(|(_, b)| b)
+        .collect()
+}
+
+fn parse_located_blocks(lines: &[String], refs: &Refs) -> Vec<(usize, Block)> {
     let mut blocks = Vec::new();
     let mut i = 0;
 
     while i < lines.len() {
+        // Where whatever this pass produces began. Each pass emits at most one
+        // block, so this is that block's line.
+        let start = i;
         let line = &lines[i];
         let trimmed = line.trim();
 
@@ -1113,7 +1134,7 @@ fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
                 i += 1;
             }
             i += 1; // the closing fence, if there was one
-            blocks.push(Block::Code { lang, lines: body });
+            blocks.push((start, Block::Code { lang, lines: body }));
             continue;
         }
 
@@ -1136,16 +1157,19 @@ fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
                 body.push(stripped);
                 i += 1;
             }
-            blocks.push(Block::Code {
-                lang: String::new(),
-                lines: body,
-            });
+            blocks.push((
+                start,
+                Block::Code {
+                    lang: String::new(),
+                    lines: body,
+                },
+            ));
             continue;
         }
 
         // ---- rule ----------------------------------------------------
         if is_rule(line) {
-            blocks.push(Block::Rule);
+            blocks.push((start, Block::Rule));
             i += 1;
             continue;
         }
@@ -1156,10 +1180,13 @@ fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
                 // A closing run of hashes is decoration, not content.
                 let body = trimmed[hashes + 1..].trim();
                 let body = body.trim_end_matches('#').trim_end();
-                blocks.push(Block::Heading {
-                    level: hashes as u8,
-                    spans: inline_spans_with(body, refs),
-                });
+                blocks.push((
+                    start,
+                    Block::Heading {
+                        level: hashes as u8,
+                        spans: inline_spans_with(body, refs),
+                    },
+                ));
                 i += 1;
                 continue;
             }
@@ -1183,11 +1210,14 @@ fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
                     _ => break,
                 }
             }
-            blocks.push(Block::Table {
-                align,
-                header: header.iter().map(|c| inline_spans_with(c, refs)).collect(),
-                rows,
-            });
+            blocks.push((
+                start,
+                Block::Table {
+                    align,
+                    header: header.iter().map(|c| inline_spans_with(c, refs)).collect(),
+                    rows,
+                },
+            ));
             continue;
         }
 
@@ -1211,14 +1241,14 @@ fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
                     break;
                 }
             }
-            blocks.push(Block::Quote(parse_blocks(&body, refs)));
+            blocks.push((start, Block::Quote(parse_blocks(&body, refs))));
             continue;
         }
 
         // ---- list ----------------------------------------------------
         if item_marker(line).is_some() {
             let (items, next) = parse_list(lines, i, refs);
-            blocks.push(Block::List(items));
+            blocks.push((start, Block::List(items)));
             i = next;
             continue;
         }
@@ -1259,13 +1289,16 @@ fn parse_blocks(lines: &[String], refs: &Refs) -> Vec<Block> {
             i += 1;
         }
         if !text.is_empty() {
-            blocks.push(match level {
-                Some(level) => Block::Heading {
-                    level,
-                    spans: inline_spans_with(&text, refs),
+            blocks.push((
+                start,
+                match level {
+                    Some(level) => Block::Heading {
+                        level,
+                        spans: inline_spans_with(&text, refs),
+                    },
+                    None => Block::Paragraph(inline_spans_with(&text, refs)),
                 },
-                None => Block::Paragraph(inline_spans_with(&text, refs)),
-            });
+            ));
         }
     }
 

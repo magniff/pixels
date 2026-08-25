@@ -60,9 +60,27 @@ buttons do, so the one you pick rises out of the strip as the other sinks.
 
 ![mid-dissolve](screenshots/tab-fade.png)
 
-In insert mode the caret pulses instead of blinking — the density of an
-ordered dither, since a sixteen-colour palette has no half-brightness to fade
-through. Typing restarts it solid.
+In insert mode the caret closes toward its own middle and opens back out
+instead of switching on and off: at eight pixels tall, a bar that simply
+vanishes reads as a dropped frame, where two ends travelling to meet each other
+is a blink you can watch happen. Typing restarts it at full height.
+
+Both views are numbered down the same gutter, and both carry the same
+scrollbar in the same place, so flipping between them does not shift the page.
+The preview's numbers are the *source* lines its blocks were parsed from — a
+rendering has no lines of its own to count, since a paragraph is one block
+however many rows it wraps into, so the only number that means anything is
+where the block came from. The preview scrolls with the vim motions that move
+a page: `j k`, `Ctrl-d Ctrl-u`, `Ctrl-f Ctrl-b`, `Ctrl-e Ctrl-y`, `gg`, `G`,
+space, and the wheel. The keys that move a caret are not taken, because there
+is no caret there to move.
+
+Headings have six levels and the font has one size, so the ladder is built out
+of everything else: the top three rule themselves off — full width, full width,
+then only as wide as the words — the last gives up its weight, and the colour
+and the air above step down the whole way.
+
+![the foot of the showcase, reached with G](screenshots/preview-scroll.png)
 
 ![the showcase, rendered](screenshots/showcase-preview.png)
 
@@ -127,17 +145,16 @@ of the repo, and `pixui/README.md` covers it properly.
 
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 188 tests
+cargo test --workspace                         # 245 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
 
 ## Not implemented
 
 Marks, macros, named registers, regular expressions in search (patterns are
-literal), tag objects, keyboard scrolling of the preview, setext headings,
-reference links, nested block quotes, inline HTML, and any script the built-in
-ASCII font cannot draw. Images are parsed but cannot be drawn, so their alt text
-stands in for them.
+literal), tag objects, inline and block HTML, footnotes, definition lists,
+character entities, and any script the built-in ASCII font cannot draw. Images
+are parsed but cannot be drawn, so their alt text stands in for them.
 
 ## Licence
 
