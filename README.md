@@ -54,8 +54,12 @@ system's — they are built from the same widgets as everything else.
 **An assistant, on your machine** — select something, press `Cmd-Enter`, and
 ask for a change.
 
-- Qwen3 through llama.cpp, on the GPU where there is one; no key, no account,
-  nothing leaves the machine
+- Qwen3 or GPT-OSS 20B through llama.cpp, on the GPU where there is one; no
+  key, no account, nothing leaves the machine
+- Prompts are built from each model's own chat template, so a family that
+  spells its turns differently is spoken to correctly
+- A context ceiling you set, and a window sized per request underneath it; the
+  weights are put down again after a few minutes' quiet
 - The question opens *in* the text, between the lines
 - The answer arrives as a word-level diff, and the note is not touched until
   you keep it — `Cmd-Enter` again, or **APPLY**
@@ -102,7 +106,12 @@ PIXUI_PROFILE=1 cargo run --release # live frame breakdown
 The model is built in by default, which means a first build compiles llama.cpp
 and wants `cmake` and `clang`. `--no-default-features` leaves it out, and the
 assistant becomes a stub that fixes typos. `PIXUI_MODEL` and `PIXUI_MODELS`
-move the weights, `PIXUI_CONFIG` moves the settings file.
+move the weights, `PIXUI_CONFIG` moves the settings file, and
+`PIXUI_LLAMA_LOGS` lets llama.cpp narrate when something has gone wrong.
+
+```sh
+cargo run --release --example edit -- "some text" "tighten this"   # one edit, timed
+```
 
 ## Not implemented
 

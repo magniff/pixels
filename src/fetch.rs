@@ -30,6 +30,15 @@ impl Download {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let target = dir.join(what.file);
         let partial = dir.join(format!("{}.part", what.file));
+        // A short file under the final name is not weights — it is a fetch
+        // that was cut off somewhere this app was not watching, by a curl run
+        // by hand or a copy that ran out of disk. Moved aside rather than
+        // refetched from nothing: `-C -` can finish what it started.
+        if let Some(short) = short_file(&target, what.megabytes) {
+            std::fs::rename(&target, &partial)
+                .map_err(|e| format!("moving the partial file aside: {e}"))?;
+            let _ = short;
+        }
         // `-f` so a 404 is a failure rather than a file full of HTML, `-L` to
         // follow the hub's redirect to its CDN, `-C -` to pick up where an
         // interrupted attempt left off.
@@ -92,6 +101,18 @@ impl Download {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// The size on disk, when there is a file there and it is too small to be the
+/// weights the catalogue describes.
+///
+/// Deliberately generous: quantisation and the hub's own rounding move the real
+/// size around by a percent or two, and this is meant to catch a file that
+/// stopped halfway, not to audit the catalogue.
+pub fn short_file(path: &Path, megabytes: u64) -> Option<u64> {
+    let have = std::fs::metadata(path).ok()?.len();
+    let want = megabytes * 1_000_000;
+    (have < want / 100 * 95).then_some(have)
 }
 
 /// A size in the unit a person would say it in.

@@ -49,7 +49,15 @@ pub enum Action {
     Scheme(String),
     /// Read in this face.
     Font(String),
+    /// The context ceiling moved, so the assistant needs rebuilding with it.
+    Context,
 }
+
+/// The windows offered, in tokens. Powers of two because that is how everything
+/// downstream thinks about them, and stopping at 32K because past that the
+/// key/value cache for a twenty-billion-parameter model is measured in gigabytes
+/// and this is a note editor.
+const WINDOWS: &[u32] = &[4096, 8192, 16384, 32768];
 
 /// The system prompt, edited the way everything else in this app is edited.
 ///
@@ -469,7 +477,12 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
 
                 for (i, weights) in CATALOGUE.iter().enumerate() {
                     let path = settings::models_dir().join(weights.file);
-                    let here = path.exists();
+                    // Present is not the same as whole. A file that stopped
+                    // halfway loads as nothing at all, and llama.cpp says so in
+                    // its own vocabulary — better to notice here, where the
+                    // catalogue knows how big the thing was supposed to be.
+                    let short = crate::fetch::short_file(&path, weights.megabytes);
+                    let here = path.exists() && short.is_none();
                     let current = running.as_deref() == Some(weights.file);
                     let row = ui.alloc(13);
                     // A quiet band on every other row, which is what stops the
@@ -480,15 +493,14 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
                     let ink = if current { th.positive.face } else { th.ink };
                     cell(ui, row, &cols, 0, weights.label, ink, Align::Left);
                     cell(ui, row, &cols, 1, weights.note, th.ink_soft, Align::Left);
-                    cell(
-                        ui,
-                        row,
-                        &cols,
-                        2,
-                        &format!("{} MB", weights.megabytes),
-                        th.ink_soft,
-                        Align::Right,
-                    );
+                    let (size, size_ink) = match short {
+                        Some(have) => (
+                            format!("{} / {} MB", have / 1_000_000, weights.megabytes),
+                            th.danger.face,
+                        ),
+                        None => (format!("{} MB", weights.megabytes), th.ink_soft),
+                    };
+                    cell(ui, row, &cols, 2, &size, size_ink, Align::Right);
 
                     let at = Rect::new(row.x + cols[3] + 2, row.y, row.w - cols[3] - 2, 13);
                     if current {
@@ -499,8 +511,14 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
                         }
                     } else if chrome.download.is_some() {
                         ui.draw_text_in(at, "-", th.ink_soft, Align::Center);
-                    } else if ui.button_at(at, "GET", Tone::Neutral).clicked {
-                        action = Action::Fetch(i);
+                    } else {
+                        // The same button either way: fetching one of these
+                        // resumes from whatever is already on disk, so there is
+                        // nothing for a second verb to mean.
+                        let label = if short.is_some() { "RESUME" } else { "GET" };
+                        if ui.button_at(at, label, Tone::Neutral).clicked {
+                            action = Action::Fetch(i);
+                        }
                     }
                     // The rules between the columns, drawn last so nothing
                     // paints over them.
@@ -558,6 +576,29 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
                 } else if !chrome.notice.is_empty() {
                     let row = ui.alloc(8);
                     ui.draw_text_in(row, &chrome.notice, th.danger.face, Align::Left);
+                }
+
+                // ---- how much room the model is given ----------------------
+                // A ceiling rather than a size: a request opens the smallest
+                // window that fits it, and this is how far it may go. The cache
+                // is allocated in the same memory the weights are in, so the
+                // largest setting is a promise about memory, not about quality.
+                ui.space(3);
+                let row = ui.alloc(13);
+                let (label, choices) = row.split_left(row.w - WINDOWS.len() as i32 * 44);
+                ui.draw_text_in(label, "CONTEXT WINDOW", th.accent.face, Align::Left);
+                for (i, window) in WINDOWS.iter().enumerate() {
+                    let at = Rect::new(choices.x + i as i32 * 44, row.y, 42, 13);
+                    let worn = config.context == *window;
+                    let tone = if worn { Tone::Accent } else { Tone::Neutral };
+                    if ui
+                        .button_at(at, &format!("{}K", window / 1024), tone)
+                        .clicked
+                        && !worn
+                    {
+                        config.context = *window;
+                        action = Action::Context;
+                    }
                 }
 
                 ui.space(2);

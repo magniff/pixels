@@ -184,6 +184,9 @@ pub struct Notes {
     /// Set by the key that asks for the assistant, and spent by the drawing,
     /// which is where the selection's position on screen is known.
     pub assist_wanted: bool,
+    /// How far the text was lifted last frame to keep the assistant's block on
+    /// screen. Kept so a click lands on the line it looked like it was on.
+    pub assist_lift: i32,
     /// The selection moving from one note to another.
     pub pick: Pick,
     /// The assistant's panel, while one is open.
@@ -291,6 +294,7 @@ impl Notes {
             pick: Pick::at(current),
             assist: None,
             assist_wanted: false,
+            assist_lift: 0,
             helper: llm::Assistant::spawn(assistant(&config)),
             settings: config,
             chrome: panels::Chrome::default(),
@@ -476,6 +480,7 @@ impl Notes {
                 ui.request_theme(theme_for(&self.settings));
             }
             panels::Action::None | panels::Action::Prompt => {}
+            panels::Action::Context => self.rebuild_assistant(),
             panels::Action::Use(file) => {
                 self.settings.model = Some(file);
                 self.rebuild_assistant();
@@ -856,7 +861,11 @@ pub fn theme_for(config: &settings::Settings) -> Theme {
 pub fn assistant(config: &settings::Settings) -> Box<dyn llm::Backend> {
     #[cfg(feature = "llm")]
     if let Some(path) = config.model_path() {
-        return Box::new(llm::local::Local::new(path, config.prompt.clone()));
+        return Box::new(llm::local::Local::new(
+            path,
+            config.prompt.clone(),
+            config.context,
+        ));
     }
     let _ = config;
     Box::new(llm::Rehearsal)
@@ -1694,7 +1703,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // ---- pointer --------------------------------------------------------
     // Done before the caret-follow below, so a click sets the caret and the
     // scrolling then keeps it visible, rather than the two fighting.
-    let origin = pixui::Point::new(inner.x + gutter(), inner.y);
+    let origin = pixui::Point::new(inner.x + gutter(), inner.y - app.assist_lift);
     let editor_id = ui.id("editor");
     let resp = ui.interact(editor_id, inner);
     if resp.hovered {
@@ -1821,11 +1830,40 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let mut outcome = assist::Outcome::None;
     let mut opened = false;
 
+    // ---- room for it -----------------------------------------------------
+    // The block opens under the line the selection ended on, and a selection
+    // that ends at the foot of the pane leaves it nowhere to go — select a
+    // whole note and the conversation opens below the last row on screen,
+    // which is to say off it. So the text is lifted by however much the block
+    // overhangs: the block sits against the bottom edge, the line it belongs
+    // to stays directly above it, and the rows at the top scroll away, which
+    // are the ones furthest from what is being talked about.
+    //
+    // Never lifted so far that the block's own top passes the top of the pane:
+    // past that there is nothing left to give, and the block scrolls inside
+    // itself instead.
+    let lift = match anchor {
+        Some(line) if block_h > 0 => {
+            let mut rows = 0usize;
+            for l in app.scroll..=line.min(total.saturating_sub(1)) {
+                rows += markdown::wrap_ranges(buf.line(l), cols).len().max(1);
+            }
+            let block_y = inner.y + rows as i32 * line_h;
+            (block_y + block_h - inner.bottom())
+                .max(0)
+                .min(block_y - inner.y)
+        }
+        _ => 0,
+    };
+    app.assist_lift = lift;
+    // The rows the lift brings up from below.
+    let extra = (lift + line_h - 1) / line_h;
+
     ui.clipped(inner, |ui| {
         let mut row = 0usize;
         let mut line_no = app.scroll;
 
-        while row < visible && line_no < total {
+        while row < visible + extra as usize && line_no < total {
             let text = buf.line(line_no);
             let spans = match code.get(line_no).and_then(Option::as_ref) {
                 Some(highlighted) => highlighted.clone(),
@@ -1835,10 +1873,10 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
             let (caret_row, caret_col) = markdown::locate(&ranges, cursor.col);
 
             for (vi, &(from, to)) in ranges.iter().enumerate() {
-                if row >= visible {
+                if row >= visible + extra as usize {
                     break;
                 }
-                let y = inner.y + row as i32 * line_h;
+                let y = inner.y + row as i32 * line_h - lift;
                 let text_x = inner.x + gutter();
 
                 // ---- current-line band -------------------------------
@@ -1982,7 +2020,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
             // makes room for anything else it has to say.
             if Some(line_no) == anchor && !opened {
                 if let Some(a) = open.as_mut() {
-                    let y = inner.y + row as i32 * line_h;
+                    let y = inner.y + row as i32 * line_h - lift;
                     let at = Rect::new(inner.x + gutter(), y, block_w, block_h);
                     outcome = ui.layer(at, |ui| a.show(ui, at, &model));
                     row += block_rows;

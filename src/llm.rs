@@ -12,7 +12,7 @@
 #[cfg(feature = "llm")]
 pub mod local;
 
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 
 /// A request: the text to change, and what to do to it.
 #[derive(Clone, Debug)]
@@ -29,7 +29,20 @@ pub trait Backend: Send + 'static {
     /// Shown in the status bar, so it is never a mystery which one answered.
     fn name(&self) -> String;
     fn edit(&mut self, ask: &Ask) -> Reply;
+    /// Let go of whatever was being held for speed. Called when nothing has
+    /// been asked for a while; the next question loads it again.
+    fn release(&mut self) {}
 }
+
+/// How long the weights stay resident after the last question.
+///
+/// They are held so that a second thought about the same paragraph answers
+/// straight away. But a twenty-billion-parameter model is twelve gigabytes of
+/// a machine that has twenty-four, and holding those for a whole afternoon
+/// because somebody fixed a comma at eleven is not a trade anyone agreed to.
+/// Long enough to keep a conversation warm; short enough that the machine gets
+/// itself back.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// A backend on a thread, with one question outstanding at a time.
 pub struct Assistant {
@@ -46,10 +59,23 @@ impl Assistant {
         let (replies, rx) = std::sync::mpsc::channel::<Reply>();
         std::thread::spawn(move || {
             // Ends when the application drops its end of the channel.
-            while let Ok(ask) = asks.recv() {
-                let reply = backend.edit(&ask).map(|text| to_ascii(&text));
-                if replies.send(reply).is_err() {
-                    break;
+            let mut warm = false;
+            loop {
+                match asks.recv_timeout(IDLE) {
+                    Ok(ask) => {
+                        let reply = backend.edit(&ask).map(|text| to_ascii(&text));
+                        warm = true;
+                        if replies.send(reply).is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        if warm {
+                            backend.release();
+                            warm = false;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
                 }
             }
         });
@@ -104,6 +130,24 @@ impl Assistant {
 /// Everything else here is a fallback for a model that ignored that.
 pub fn clean_reply(text: &str) -> String {
     let mut out = text.trim();
+
+    // Reasoning models answer in channels: the deliberation first, the answer
+    // last, both in the same stream. Only the last one was asked for. The
+    // thinking is dropped rather than shown — an editor that pauses to explain
+    // itself for four hundred words before touching your sentence is a worse
+    // editor, however interesting the four hundred words are.
+    if let Some(start) = out.rfind("<|channel|>final<|message|>") {
+        out = &out[start + "<|channel|>final<|message|>".len()..];
+    }
+    for tail in ["<|return|>", "<|end|>", "<|call|>"] {
+        if let Some(cut) = out.find(tail) {
+            out = &out[..cut];
+        }
+    }
+    if let Some(start) = out.rfind("</think>") {
+        out = &out[start + "</think>".len()..];
+    }
+    out = out.trim();
 
     // The delimiters, when they are there. A missing closing tag still tells
     // us where the answer began, which is the half that matters.

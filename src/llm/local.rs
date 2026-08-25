@@ -15,17 +15,13 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 
 use super::{Ask, Backend, Reply};
 
-/// Room for the prompt and the answer together. Qwen3 will take far more, but
-/// a bigger window is a bigger key/value cache for every request, and an edit
-/// that needs more than this wants to be two edits.
-const CONTEXT: u32 = 4096;
-/// Leave this much of the window for the answer.
-const RESERVE: usize = 768;
+/// Leave this much of the window for the answer, deliberation included.
+const RESERVE: usize = 2048;
 
 /// Where the weights are, unless `PIXUI_MODEL` says otherwise.
 pub fn default_path() -> PathBuf {
@@ -38,18 +34,47 @@ pub struct Local {
     path: PathBuf,
     /// What the model is told it is doing, from the settings.
     system: String,
+    /// The largest window this is allowed to open, from the settings. Bigger
+    /// is not free: the key/value cache grows with it, in the same memory the
+    /// weights are sitting in.
+    context: u32,
     loaded: Option<(LlamaBackend, LlamaModel)>,
     /// Whether this model reasons out loud unless told the thinking is done.
     thinks: bool,
 }
 
 impl Local {
-    pub fn new(path: impl AsRef<Path>, system: String) -> Self {
+    pub fn new(path: impl AsRef<Path>, system: String, context: u32) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             system,
+            context,
             loaded: None,
             thinks: false,
+        }
+    }
+
+    /// llama.cpp reports every refusal the same way — a null model and no
+    /// reason — so the obvious causes are checked here rather than passed on in
+    /// a vocabulary nobody outside llama.cpp shares.
+    fn why_it_would_not_load(&self, e: impl std::fmt::Display) -> String {
+        let name = self
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.path.display().to_string());
+        match std::fs::metadata(&self.path) {
+            Err(_) => format!("{name} is not there"),
+            // A GGUF file says so in its first four bytes. Anything else is an
+            // HTML error page a download saved, or a file cut off before it got
+            // that far.
+            Ok(meta) if !starts_with_gguf(&self.path) => {
+                format!("{name} is not a gguf file - it is {} bytes of something else", meta.len())
+            }
+            Ok(meta) => format!(
+                "could not load {name} ({} MB on disk) - if the download was interrupted it will be short: {e}",
+                meta.len() / 1_000_000
+            ),
         }
     }
 
@@ -58,15 +83,19 @@ impl Local {
             // llama.cpp narrates its whole startup to stderr. Interesting once,
             // and then it is a hundred lines between you and any message the
             // editor actually wanted to print.
-            llama_cpp_2::send_logs_to_tracing(
-                llama_cpp_2::LogOptions::default().with_logs_enabled(false),
-            );
+            // ...unless something has gone wrong and the narration is the only
+            // account of it there is, which `PIXUI_LLAMA_LOGS` asks for.
+            if std::env::var_os("PIXUI_LLAMA_LOGS").is_none() {
+                llama_cpp_2::send_logs_to_tracing(
+                    llama_cpp_2::LogOptions::default().with_logs_enabled(false),
+                );
+            }
             let backend = LlamaBackend::init().map_err(|e| format!("llama backend: {e}"))?;
             // Everything on the GPU where there is one. llama.cpp ignores this
             // on a build without one, so it needs no platform test here.
             let params = LlamaModelParams::default().with_n_gpu_layers(99);
             let model = LlamaModel::load_from_file(&backend, &self.path, &params)
-                .map_err(|e| format!("loading {}: {e}", self.path.display()))?;
+                .map_err(|e| self.why_it_would_not_load(e))?;
             // Asked of the model rather than guessed from its filename: the
             // instruct-tuned builds share a tokeniser with the thinking ones,
             // and handing one an empty `<think>` block it was never trained on
@@ -83,37 +112,73 @@ impl Local {
     }
 }
 
-/// The conversation, in the format Qwen3 was trained on.
+/// What a failed decode nearly always means here.
 ///
-/// What the system turn *says* is a setting; see `settings::DEFAULT_PROMPT`
-/// for the default and why it is worded the way it is.
+/// llama.cpp reports a graph that would not compute as `-3`, and on a Mac the
+/// reason is almost always the same one: the GPU has a working set of about
+/// two thirds of the machine's memory, and a twelve-gigabyte model shares it
+/// with everything else already drawing on screen. The number is llama.cpp's;
+/// the sentence is for whoever is sitting in front of it.
+fn no_room(e: llama_cpp_2::DecodeError) -> String {
+    match e {
+        llama_cpp_2::DecodeError::Unknown(-3) => {
+            "the gpu ran out of room - close what else is using it, or choose smaller weights"
+                .to_string()
+        }
+        llama_cpp_2::DecodeError::NoKvCacheSlot => {
+            "that selection needs a bigger context window than this is set to".to_string()
+        }
+        other => format!("decode: {other}"),
+    }
+}
+
+/// Whether the file begins the way every gguf file begins.
+fn starts_with_gguf(path: &Path) -> bool {
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .is_ok()
+        && &magic == b"GGUF"
+}
+
+/// The conversation, rendered by the model's own chat template.
 ///
-/// The empty `<think>` block is not decoration: Qwen3 reasons out loud unless
-/// told the thinking is already done, and several hundred tokens of
-/// deliberation about a comma is not what anybody asked for.
+/// Not a format written out here: every family spells its turns differently —
+/// ChatML, Harmony, Llama's headers — and a hand-written one works for exactly
+/// the model it was written for. The template ships inside the GGUF, so the
+/// model is asked how it wants to be spoken to.
 ///
-/// The instruction comes *after* the text. A small model reads the last thing
-/// it was told as the thing to do, and with the order the other way round it
-/// reliably answered the question "what is this text?" — by handing the text
-/// back.
-fn prompt(ask: &Ask, system: &str, thinks: bool) -> String {
-    // Only a model that would otherwise deliberate gets told not to.
-    let opening = if thinks {
-        "<think>\n\n</think>\n\n"
-    } else {
-        ""
-    };
-    format!(
-        "<|im_start|>system\n\
-         {}<|im_end|>\n\
-         <|im_start|>user\n\
-         Text:\n{}\n\n\
-         Instruction: {}<|im_end|>\n\
-         <|im_start|>assistant\n{opening}",
-        system.trim(),
-        ask.source,
-        ask.request.trim()
-    )
+/// The empty `<think>` block is still appended for the models that reason out
+/// loud, because a template has no way to be told the thinking is already
+/// done, and several hundred tokens of deliberation about a comma is not what
+/// anybody asked for.
+fn render(model: &LlamaModel, system: &str, user: &str, thinks: bool) -> Result<String, String> {
+    let template = model
+        .chat_template(None)
+        .map_err(|e| format!("this model has no chat template: {e}"))?;
+    let chat = [
+        LlamaChatMessage::new("system".into(), system.trim().to_string())
+            .map_err(|e| format!("system turn: {e}"))?,
+        LlamaChatMessage::new("user".into(), user.to_string())
+            .map_err(|e| format!("user turn: {e}"))?,
+    ];
+    let mut out = model
+        .apply_chat_template(&template, &chat, true)
+        .map_err(|e| format!("applying the chat template: {e}"))?;
+    // Harmony carries the reasoning budget in the rendered prompt, and a
+    // template cannot be told to ask for less. Rewriting a comma is not worth
+    // a page of deliberation the user waits through and never sees.
+    out = out.replace("Reasoning: medium", "Reasoning: low");
+    if thinks && !out.contains("</think>") {
+        out.push_str("<think>\n\n</think>\n\n");
+    }
+    Ok(out)
+}
+
+/// What to ask the model to do, which is the same whichever model it is.
+fn instruction(ask: &Ask) -> String {
+    format!("Text:\n{}\n\nInstruction: {}", ask.source, ask.request.trim())
 }
 
 /// Arrange to leave without running the rest of the C++ teardown.
@@ -154,19 +219,36 @@ impl Backend for Local {
             .unwrap_or_else(|| "LOCAL MODEL".into())
     }
 
+    /// Put the weights down. Twelve gigabytes is not a cache.
+    fn release(&mut self) {
+        self.loaded = None;
+    }
+
     fn edit(&mut self, ask: &Ask) -> Reply {
         self.load()?;
         let thinks = self.thinks;
+        let ceiling = self.context;
+        let system = self.system.clone();
         let (backend, model) = self.loaded.as_ref().expect("loaded above");
-        let text = prompt(ask, &self.system, thinks);
+        let text = render(model, &system, &instruction(ask), thinks)?;
         let tokens = model
             .str_to_token(&text, AddBos::Never)
             .map_err(|e| format!("tokenising: {e}"))?;
-        if tokens.len() + RESERVE > CONTEXT as usize {
-            return Err("that selection is too long for one edit".into());
+        if tokens.len() + RESERVE > ceiling as usize {
+            return Err(format!(
+                "that selection needs more than the {}k window this is set to",
+                ceiling / 1024
+            ));
         }
 
-        let params = LlamaContextParams::default().with_n_ctx(NonZeroU32::new(CONTEXT));
+        // The window is sized to this request rather than to the ceiling. The
+        // key/value cache is allocated with the context and paid for in memory
+        // whether or not it is used, so a one-line edit should not reserve room
+        // for a whole note.
+        let want = ((tokens.len() + RESERVE) as u32)
+            .next_power_of_two()
+            .clamp(1024, ceiling);
+        let params = LlamaContextParams::default().with_n_ctx(NonZeroU32::new(want));
         let mut ctx = model
             .new_context(backend, params)
             .map_err(|e| format!("context: {e}"))?;
@@ -178,7 +260,7 @@ impl Backend for Local {
                 .add(*token, i as i32, &[0], i == last)
                 .map_err(|e| format!("batching: {e}"))?;
         }
-        ctx.decode(&mut batch).map_err(|e| format!("decode: {e}"))?;
+        ctx.decode(&mut batch).map_err(no_room)?;
 
         // The sampler Qwen3 asks for outside its thinking mode. Greedy decoding
         // was the obvious choice and the wrong one: at temperature zero a small
@@ -198,23 +280,38 @@ impl Backend for Local {
         while pos < ceiling {
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
+            let piece = model
+                .token_to_piece_bytes(token, 32, true, None)
+                .map_err(|e| format!("detokenising: {e}"))?;
             if model.is_eog_token(token) {
-                break;
+                // Not every ending ends the turn. A reasoning model closes its
+                // deliberation with an end-of-generation token and then opens
+                // the channel the answer is actually in, so a stop here would
+                // hand back the thinking and none of the reply. The turn is
+                // over once something has been said on the final channel.
+                let said = String::from_utf8_lossy(&out);
+                if !said.contains("<|channel|>") || said.contains("<|channel|>final") {
+                    break;
+                }
+                out.extend(piece);
+            } else {
+                out.extend(piece);
             }
-            out.extend(
-                model
-                    .token_to_piece_bytes(token, 32, false, None)
-                    .map_err(|e| format!("detokenising: {e}"))?,
-            );
             batch.clear();
             batch
                 .add(token, pos, &[0], true)
                 .map_err(|e| format!("batching: {e}"))?;
-            ctx.decode(&mut batch).map_err(|e| format!("decode: {e}"))?;
+            ctx.decode(&mut batch).map_err(no_room)?;
             pos += 1;
         }
 
         let text = String::from_utf8_lossy(&out).to_string();
+        // A reasoning model that ran out of room mid-thought has said nothing
+        // on the channel the answer belongs on, and its deliberation is not a
+        // suggestion. Better to say so than to paste the thinking into a note.
+        if text.contains("<|channel|>") && !text.contains("<|channel|>final") {
+            return Err("the model thought for longer than there was room for".into());
+        }
         let text = super::clean_reply(&text);
         if text.is_empty() {
             // Nothing to say is an answer: the passage is already what the

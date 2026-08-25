@@ -348,6 +348,30 @@ pub fn run() -> std::io::Result<()> {
         // typed in first so there is something for the rehearsal backend to
         // actually fix, and the diff has both colours in it.
         Scene {
+            // A whole long note selected: the block belongs under the last
+            // line, and the last line is the foot of the pane. It has to end
+            // up somewhere you can read it.
+            name: "assist-bottom",
+            script: [
+                keys(":e markdown-showcase.md"),
+                keys("\n"),
+                keys("ggVG"),
+                cmd_key(Key::Enter),
+                keys("tighten this"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            clicks: vec![],
+            then: vec![],
+            settle: 30,
+            canvas: (768, 470),
+        },
+        Scene {
             name: "assist-diff",
             script: [
                 keys(":e ideas.md"),

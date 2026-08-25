@@ -1282,6 +1282,28 @@ fn a_reply_is_taken_out_of_whatever_it_arrived_in() {
 }
 
 #[test]
+fn a_reasoning_model_keeps_its_deliberation_to_itself() {
+    use notes::llm::clean_reply;
+    // Harmony: the thinking and the answer arrive in one stream, on separate
+    // channels, and only the last one was asked for.
+    assert_eq!(
+        clean_reply(concat!(
+            "<|channel|>analysis<|message|>The user wants it shorter. I should ",
+            "drop the clause.<|end|><|start|>assistant<|channel|>final<|message|>",
+            "<text>the passage</text><|return|>"
+        )),
+        "the passage"
+    );
+    // The other spelling of the same idea.
+    assert_eq!(
+        clean_reply("<think>\nhmm, shorter\n</think>\nthe passage"),
+        "the passage"
+    );
+    // A model that never opened a channel is left exactly as it was.
+    assert_eq!(clean_reply("the passage"), "the passage");
+}
+
+#[test]
 fn a_reply_is_folded_into_the_alphabet_the_font_has() {
     // The font is 5x7 ASCII, so anything else lands in a note as a box. The
     // punctuation a model reaches for has an obvious spelling; the rest goes.
@@ -2527,12 +2549,13 @@ fn settings_survive_a_round_trip_through_a_file() {
         scheme: "NORD".into(),
         font: "COZETTE".into(),
         assist: false,
+        context: 16384,
         model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
         // A prompt has newlines in it, and the format is one line per setting.
         prompt: "first line\nsecond line\nand a backslash \\ too".into(),
     };
     let text = config.to_text();
-    assert_eq!(text.lines().count(), 5, "one line per setting");
+    assert_eq!(text.lines().count(), 6, "one line per setting");
     assert_eq!(Settings::parse(&text), config);
 }
 
