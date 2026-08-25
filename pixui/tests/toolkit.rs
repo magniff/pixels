@@ -1301,6 +1301,44 @@ fn a_cursor_at_the_edge_does_not_write_out_of_bounds() {
 // ---------------------------------------------------------------- text input
 
 #[test]
+fn a_scroll_still_sliding_asks_for_the_frames_to_slide_in() {
+    let mut h = Harness::new();
+    let area = Rect::new(0, 0, 200, 60);
+    let mut st = pixui::ScrollState::default();
+
+    // One frame to measure the content, so there is something to scroll.
+    let tall = |ui: &mut Ui| {
+        for _ in 0..40 {
+            ui.alloc(12);
+        }
+    };
+    h.frame(|ui| ui.scroll_area_with(area, "s", &mut st, tall));
+
+    // A notch of wheel over it.
+    h.input.mouse = Point::new(100, 30);
+    h.input.wheel = -3.0;
+    let (_, out) = h.out(|ui| ui.scroll_area_with(area, "s", &mut st, tall));
+    assert!(st.target > 0.0, "the wheel moved it");
+    assert!(
+        out.animating,
+        "the view is still easing towards the target, and only a frame it asks          for will take it there"
+    );
+
+    // Frames keep being asked for until it arrives, and stop once it has.
+    h.input.wheel = 0.0;
+    let mut frames = 0;
+    loop {
+        let (_, out) = h.out(|ui| ui.scroll_area_with(area, "s", &mut st, tall));
+        frames += 1;
+        if !out.animating {
+            break;
+        }
+        assert!(frames < 200, "an ease that never settles");
+    }
+    assert_eq!(st.shown, st.target, "it arrived where it was sent");
+}
+
+#[test]
 fn a_field_that_goes_away_hands_the_keyboard_back() {
     let mut h = Harness::new();
     let rect = Rect::new(0, 0, 120, 15);

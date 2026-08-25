@@ -145,26 +145,28 @@ impl PromptEditor {
             }
         }
 
-        // ---- keep the caret on screen -------------------------------------
-        let caret = self.buf.cursor;
-        let at = rows
-            .iter()
-            .position(|&(line, from, to)| {
-                line == caret.line && caret.col >= from && caret.col <= to
-            })
-            .unwrap_or(0);
-        if at < self.scroll {
-            self.scroll = at;
-        } else if at >= self.scroll + visible {
-            self.scroll = at + 1 - visible;
-        }
+        // ---- the view, moved by hand --------------------------------------
+        // Before the caret is chased, and the caret is carried along with it —
+        // the same order the note panes use, and for the same reason. Scroll
+        // first and follow second and every notch of the wheel is undone by the
+        // follow on the very next frame: the view jumps back to the caret,
+        // which has not moved, and the whole thing sticks to the caret and
+        // shivers.
+        let last_top = rows.len().saturating_sub(visible.min(rows.len()));
+        let where_caret_is = |buf: &Buffer, rows: &[(usize, usize, usize)]| {
+            let caret = buf.cursor;
+            rows.iter()
+                .position(|&(line, from, to)| {
+                    line == caret.line && caret.col >= from && caret.col <= to
+                })
+                .unwrap_or(0)
+        };
+
+        let was = self.scroll;
         if ui.input.wheel != 0.0 && resp.hovered {
-            let step = (ui.input.wheel * 3.0).round() as i32;
-            self.scroll = (self.scroll as i32 - step).max(0) as usize;
+            let step = self.bar.wheel_rows(ui.input.wheel, 3.0);
+            self.scroll = (self.scroll as i32 - step).clamp(0, last_top as i32) as usize;
         }
-        self.scroll = self
-            .scroll
-            .min(rows.len().saturating_sub(visible.min(rows.len())));
 
         // ---- the bar, the same one both note panes carry -------------------
         let mut st = self.bar;
@@ -175,6 +177,29 @@ impl PromptEditor {
         ui.scroll_bar(track, "prompt-bar", &mut st);
         self.scroll = (st.target / line_h as f32).round().max(0.0) as usize;
         self.bar = st;
+        self.scroll = self.scroll.min(last_top);
+
+        if self.scroll != was && !rows.is_empty() {
+            // The caret goes to the nearest row still on screen, so the follow
+            // below has nothing left to chase.
+            let at = where_caret_is(&self.buf, &rows);
+            let want = at
+                .clamp(self.scroll, self.scroll + visible - 1)
+                .min(rows.len() - 1);
+            if want != at {
+                let (line, from, _) = rows[want];
+                self.buf.cursor = Cursor::new(line, from);
+            }
+        }
+
+        // ---- keep the caret on screen -------------------------------------
+        let caret = self.buf.cursor;
+        let at = where_caret_is(&self.buf, &rows);
+        if at < self.scroll {
+            self.scroll = at;
+        } else if at >= self.scroll + visible {
+            self.scroll = at + 1 - visible;
+        }
 
         // ---- draw ----------------------------------------------------------
         let selection = self.vim.selection(&self.buf);
@@ -632,7 +657,18 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
 
     // The chrome a panel spends on itself: border, title strip, the line under
     // it, and the padding inside.
-    chrome.panel_h = used + 24 + 19 + 4;
+    let want = used + 24 + 19 + 4;
+    if want != chrome.panel_h {
+        chrome.panel_h = want;
+        // The panel is drawn at the height measured on the frame before, so the
+        // frame that changes that height is a frame drawn at the wrong one. It
+        // used to be followed by a right one because there was always a next
+        // frame; now that frames are drawn only when something asks for one,
+        // the wrong frame is what stays on screen until the pointer happens to
+        // move. Which looks exactly like what it is: the panel opens, flickers,
+        // and settles a moment later.
+        ui.request_repaint();
+    }
 
     // Only where there is a prompt to restore.
     let restore = Rect::new(footer.x, footer.y + 4, 90, 15);

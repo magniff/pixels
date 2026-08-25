@@ -1780,7 +1780,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
 
     let was = app.scroll;
     if resp.hovered && ui.input.wheel != 0.0 {
-        let step = (ui.input.wheel * 3.0).round() as i32;
+        let step = app.editor_scroll.wheel_rows(ui.input.wheel, 3.0);
         app.scroll = (app.scroll as i32 - step).clamp(0, max_scroll as i32) as usize;
     }
     {

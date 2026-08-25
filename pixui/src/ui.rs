@@ -75,6 +75,8 @@ pub struct ScrollState {
     pub viewport: i32,
     /// Distance from the thumb's top edge to the pointer when a drag began.
     pub grab: i32,
+    /// The part of a wheel gesture too small to be a whole row yet.
+    frac: f32,
     pub(crate) touched: u64,
 }
 
@@ -87,6 +89,24 @@ impl ScrollState {
     /// Whether there is anything to scroll.
     pub fn scrollable(&self) -> bool {
         self.content > self.viewport
+    }
+
+    /// Whole rows this frame's wheel comes to, keeping what is left over.
+    ///
+    /// A view that scrolls by whole rows — a text editor, where half a line is
+    /// not a place the view can be — still has to answer a pointer that reports
+    /// fractions of one. A trackpad sends a few points at a time; round each
+    /// frame's fraction on its own and a gentle push rounds to nothing at all,
+    /// again and again, until one frame rounds to a whole row and the view
+    /// jumps. Which is exactly how it feels: it resists, then it lurches.
+    ///
+    /// So the remainder is kept rather than dropped, and spends itself on the
+    /// next frame. `per_notch` is how many rows one notch of a wheel means.
+    pub fn wheel_rows(&mut self, wheel: f32, per_notch: f32) -> i32 {
+        self.frac += wheel * per_notch;
+        let whole = self.frac.trunc();
+        self.frac -= whole;
+        whole as i32
     }
 }
 

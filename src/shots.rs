@@ -35,6 +35,11 @@ struct Scene {
     then: Vec<Press>,
     /// Notches of wheel, rolled at `mouse` for a few frames after the script.
     wheel: f32,
+    /// Where the pointer goes before the wheel rolls, for a view that has to be
+    /// opened by a click somewhere else first. Without it the pointer is left
+    /// wherever the last click put it, and a click is not a hover: it moves the
+    /// caret, which is the very thing some of these scenes are about.
+    hover: Option<Point>,
     settle: u32,
     /// Canvas size. Under `Scaling::Adaptive` this is what a resized window
     /// produces, so varying it here shows exactly what resizing does.
@@ -122,6 +127,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 40,
@@ -135,6 +141,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 40,
@@ -148,6 +155,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -161,6 +169,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -174,6 +183,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 40,
@@ -187,6 +197,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 40,
@@ -202,6 +213,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 40,
@@ -216,6 +228,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -230,6 +243,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -244,6 +258,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -259,6 +274,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -274,6 +290,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 2,
@@ -289,6 +306,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 20,
@@ -311,6 +329,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 20,
@@ -325,6 +344,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 20,
@@ -339,6 +359,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(745, 72)],
             then: vec![],
             settle: 20,
@@ -366,6 +387,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -390,6 +412,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -416,6 +439,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(650, 227)],
             then: vec![],
             settle: 30,
@@ -431,6 +455,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 4,
@@ -445,6 +470,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 10,
@@ -459,6 +485,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(64, 33)],
             then: vec![],
             settle: 14,
@@ -473,6 +500,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(64, 21), Point::new(383, 236)],
             then: vec![],
             settle: 14,
@@ -481,6 +509,25 @@ pub fn run() -> std::io::Result<()> {
         // The prompt is a small instance of the same editor the notes use: the
         // same vim grammar, and it scrolls the same way.
         Scene {
+            // The wheel over the system prompt. It used to chase the caret
+            // straight back to the top; the view should stay where it was put.
+            name: "settings-scroll",
+            script: vec![],
+            mouse: Point::new(30, 6),
+            click_first: true,
+            double_click: false,
+            drag: None,
+            wheel: -2.0,
+            // Hovered rather than clicked: a click in the prompt would move the
+            // caret to the row under it, and the caret staying at the top while
+            // the view is rolled away from it is the whole case.
+            hover: Some(Point::new(400, 300)),
+            clicks: vec![Point::new(64, 21), Point::new(383, 236)],
+            then: vec![],
+            settle: 20,
+            canvas: (768, 470),
+        },
+        Scene {
             name: "settings-vim",
             script: vec![],
             mouse: Point::new(30, 6),
@@ -488,6 +535,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(64, 21), Point::new(383, 236)],
             then: [keys("GA"), keys(" AND A LINE OF MY OWN.")].concat(),
             settle: 12,
@@ -502,6 +550,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(64, 21), Point::new(383, 206)],
             then: vec![],
             settle: 12,
@@ -516,6 +565,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(64, 21), Point::new(383, 206)],
             then: keys("jjj"),
             settle: 12,
@@ -531,6 +581,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 206),
@@ -549,6 +600,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 206),
@@ -567,6 +619,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 206),
@@ -585,6 +638,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 206),
@@ -604,6 +658,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 206),
@@ -622,6 +677,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 206),
@@ -641,6 +697,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(64, 21)],
             then: vec![],
             settle: 12,
@@ -656,6 +713,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 236),
@@ -675,6 +733,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![
                 Point::new(64, 21),
                 Point::new(383, 236),
@@ -695,6 +754,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![Point::new(64, 21), Point::new(558, 257)],
             then: vec![],
             settle: 14,
@@ -721,6 +781,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 20,
@@ -736,6 +797,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 20,
@@ -750,6 +812,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 7,
@@ -764,6 +827,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -783,6 +847,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -800,9 +865,32 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: -60.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
+            canvas: (900, 660),
+        },
+        Scene {
+            // Rolled far past the end of the rendered page, which should leave
+            // its last line on the last row rather than somewhere above it.
+            name: "preview-bottom",
+            script: [
+                keys(":e markdown-showcase.md"),
+                keys("\n"),
+                keys(":preview"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(600, 300),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: -60.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 40,
             canvas: (900, 660),
         },
         Scene {
@@ -813,6 +901,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: -1.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -837,6 +926,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 40,
@@ -860,6 +950,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 40,
@@ -880,6 +971,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -900,6 +992,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -914,6 +1007,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: true,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -928,6 +1022,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: Some((Point::new(200, 43), Point::new(340, 43))),
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 20,
@@ -942,6 +1037,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -956,6 +1052,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            hover: None,
             clicks: vec![],
             then: vec![],
             settle: 30,
@@ -1085,8 +1182,14 @@ pub fn run() -> std::io::Result<()> {
                     input.mouse_released = true;
                 }
             }
-            // Five notches, once the script has finished typing.
-            let wheel_from = script_start + scene.script.len() as u32;
+            // Five notches, once everything else the scene asked for has
+            // happened: a pane opened by a click is not there to be scrolled
+            // until the click has landed.
+            let wheel_from =
+                script_start + scene.script.len() as u32 + clicking + scene.then.len() as u32 + 7;
+            if let Some(at) = scene.hover.filter(|_| f >= wheel_from) {
+                input.mouse = at;
+            }
             if scene.wheel != 0.0 && (wheel_from..wheel_from + 5).contains(&f) {
                 input.wheel = scene.wheel;
             }

@@ -778,6 +778,13 @@ impl Ui<'_> {
         let content_h = st.content.max(view.h);
         let bounds = Rect::new(view.x, view.y - offset, view.w, content_h);
         let (result, used) = self.clipped(view, |ui| ui.column_measured(bounds, m.gap, f));
+        if used != st.content {
+            // The content was laid out against the height measured last frame,
+            // so a frame that changes it has drawn the bar — and anything that
+            // asked how much room was left — against the old one. Ask for
+            // another frame, or the stale one is the one left on screen.
+            self.request_repaint();
+        }
         st.content = used;
         st.viewport = view.h;
 
@@ -871,6 +878,13 @@ impl Ui<'_> {
         st.shown = smooth(st.shown, st.target, 26.0, dt);
         if (st.shown - st.target).abs() < 0.5 {
             st.shown = st.target;
+        } else {
+            // A view still sliding towards where it was sent needs the frames
+            // to slide in. Nothing else will ask for them: a wheel notch is one
+            // event and buys one frame, and an ease that takes ten frames would
+            // otherwise stop a third of the way there and sit until the pointer
+            // moved. Which reads as a scroll that will not go where it is put.
+            self.request_repaint();
         }
 
         let anim = self.animate(thumb_id, &thumb_resp);

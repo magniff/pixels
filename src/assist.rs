@@ -267,7 +267,7 @@ impl Assist {
                     self.scroll = self.scroll.saturating_sub(1);
                 }
                 if body.contains(ui.input.mouse) && ui.input.wheel != 0.0 {
-                    let step = (ui.input.wheel * 3.0).round() as i32;
+                    let step = self.bar.wheel_rows(ui.input.wheel, 3.0);
                     self.scroll = (self.scroll as i32 - step).clamp(0, over as i32) as usize;
                 }
 
