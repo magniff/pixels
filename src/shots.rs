@@ -27,6 +27,9 @@ struct Scene {
     double_click: bool,
     /// Press at the first point and drag to the second.
     drag: Option<(Point, Point)>,
+    /// Click at `mouse` once the script has finished typing, for a control
+    /// that only exists as a result of what was typed.
+    click_after: bool,
     /// Notches of wheel, rolled at `mouse` for a few frames after the script.
     wheel: f32,
     settle: u32,
@@ -105,6 +108,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -116,6 +120,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -127,6 +132,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -138,6 +144,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -149,6 +156,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -160,6 +168,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 40,
             canvas: (768, 470),
         },
@@ -173,6 +182,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 40,
             canvas: (1050, 620),
         },
@@ -185,6 +195,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -197,6 +208,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -209,6 +221,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -222,6 +235,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -235,6 +249,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 2,
             canvas: (768, 470),
         },
@@ -248,6 +263,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 20,
             canvas: (768, 470),
         },
@@ -268,7 +284,60 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 20,
+            canvas: (768, 470),
+        },
+        // The mark that appears beside a selection: the assistant, offering.
+        Scene {
+            name: "assist-mark",
+            script: [keys(":e ideas.md"), keys("\n"), keys("jjVj")].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            click_after: false,
+            settle: 20,
+            canvas: (768, 470),
+        },
+        // Clicking the mark, which is how the assistant is usually reached.
+        Scene {
+            name: "assist-open",
+            script: [keys(":e ideas.md"), keys("\n"), keys("jjVj")].concat(),
+            mouse: Point::new(745, 72),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            click_after: true,
+            settle: 20,
+            canvas: (768, 470),
+        },
+        // Asked, answered, and waiting to be kept or thrown away. The line is
+        // typed in first so there is something for the rehearsal backend to
+        // actually fix, and the diff has both colours in it.
+        Scene {
+            name: "assist-diff",
+            script: [
+                keys(":e ideas.md"),
+                keys("\n"),
+                keys("Go"),
+                keys("teh quick brown fox jumped  over teh lazy dog"),
+                keys("\x1b"),
+                keys("V"),
+                ctrl('a'),
+                keys("fix the typos"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            click_after: false,
+            settle: 30,
             canvas: (768, 470),
         },
         // Enter in the search box hands the keyboard to the results, on the
@@ -281,6 +350,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 20,
             canvas: (768, 470),
         },
@@ -293,6 +363,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 7,
             canvas: (768, 470),
         },
@@ -305,6 +376,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (900, 660),
         },
@@ -322,6 +394,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (900, 660),
         },
@@ -335,6 +408,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: -1.0,
+            click_after: false,
             settle: 30,
             canvas: (900, 660),
         },
@@ -357,6 +431,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 40,
             canvas: (900, 660),
         },
@@ -378,6 +453,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 40,
             canvas: (900, 660),
         },
@@ -396,6 +472,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -414,6 +491,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -426,6 +504,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: true,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -438,6 +517,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: Some((Point::new(200, 43), Point::new(340, 43))),
             wheel: 0.0,
+            click_after: false,
             settle: 20,
             canvas: (768, 470),
         },
@@ -450,6 +530,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -462,6 +543,7 @@ pub fn run() -> std::io::Result<()> {
             double_click: false,
             drag: None,
             wheel: 0.0,
+            click_after: false,
             settle: 30,
             canvas: (768, 470),
         },
@@ -545,6 +627,16 @@ pub fn run() -> std::io::Result<()> {
                 if let Some(press) = scene.script.get((f - script_start) as usize) {
                     input.keys.push(press.key);
                     input.mods = press.mods;
+                }
+            }
+            let after = script_start + scene.script.len() as u32;
+            if scene.click_after {
+                if f == after + 1 {
+                    input.mouse_down = true;
+                    input.mouse_pressed = true;
+                } else if f == after + 2 {
+                    input.mouse_down = false;
+                    input.mouse_released = true;
                 }
             }
             // Five notches, once the script has finished typing.

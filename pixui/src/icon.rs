@@ -39,6 +39,16 @@ pub const CHECK: &[&str] = &[
     ".##...",
 ];
 
+/// A four-pointed star, for the editing assistant.
+#[rustfmt::skip]
+pub const SPARK: &[&str] = &[
+    "...#...",
+    "..###..",
+    "#######",
+    "..###..",
+    "...#...",
+];
+
 /// Angle brackets, for source or code.
 #[rustfmt::skip]
 pub const CODE: &[&str] = &[

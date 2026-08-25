@@ -15,8 +15,11 @@
 //! navigation — and they are drawn with the same widgets as the rest of the UI.
 //! `std::fs` appears in `dialog.rs` and nowhere in `pixui`.
 
+pub mod assist;
 pub mod dialog;
+pub mod diff;
 pub mod indent;
+pub mod llm;
 pub mod markdown;
 pub mod render;
 pub mod shots;
@@ -124,6 +127,16 @@ pub struct Notes {
     /// Where the preview was left, so switching tabs comes back to it rather
     /// than to the top.
     pub preview_scroll: pixui::ScrollState,
+    /// Set by the key that asks for the assistant, and spent by the drawing,
+    /// which is where the selection's position on screen is known.
+    pub assist_wanted: bool,
+    /// Where the assistant's mark was drawn last frame, which is where it is
+    /// hit-tested this one.
+    pub mark_rect: Option<Rect>,
+    /// The assistant's panel, while one is open.
+    pub assist: Option<assist::Assist>,
+    /// The model on its thread, whichever one this build has.
+    pub helper: llm::Assistant,
     /// A source line the preview should bring into view on the next draw,
     /// which is when the document's heights are known.
     pub preview_reveal: Option<usize>,
@@ -216,6 +229,10 @@ impl Notes {
             editor_scroll: pixui::ScrollState::default(),
             preview_g: false,
             preview_reveal: None,
+            assist: None,
+            mark_rect: None,
+            assist_wanted: false,
+            helper: llm::Assistant::spawn(assistant()),
             tab_shown: 0,
             tab_anim: 0.0,
             fade: pixui::Canvas::new(1, 1),
@@ -379,6 +396,49 @@ impl Notes {
     /// Step out of the search box into the list it is filtering, landing on
     /// the first match. Stays put when there is nothing to land on, since
     /// moving to an empty list only takes the keyboard somewhere useless.
+    /// Open the assistant on whatever is selected.
+    ///
+    /// The range is taken now and kept: by the time an answer comes back the
+    /// selection may be anywhere, and the answer is about what was asked.
+    fn open_assist(&mut self, at: pixui::Point) {
+        let i = self.current.min(self.notes.len() - 1);
+        let buf = &self.notes[i].buffer;
+        let Some(sel) = self.vim.selection(buf) else {
+            return;
+        };
+        let Some((from, to)) = selected_range(sel, buf) else {
+            return;
+        };
+        let source = buf.text_between(from, to);
+        if source.trim().is_empty() {
+            return;
+        }
+        self.assist = Some(assist::Assist::new(from, to, source, at));
+    }
+
+    /// Put a suggestion in place of the range it was asked about.
+    ///
+    /// Typed in rather than spliced, because the answer may be several lines
+    /// where the question was one, and the buffer's own editing operations are
+    /// the only things that know how a line becomes two.
+    fn apply_suggestion(&mut self, open: &assist::Assist, text: &str) {
+        let i = self.current.min(self.notes.len() - 1);
+        let buf = &mut self.notes[i].buffer;
+        buf.checkpoint();
+        buf.delete_between(open.from, open.to);
+        for c in text.chars() {
+            if c == '\n' {
+                buf.insert_newline();
+            } else {
+                buf.insert_char(c);
+            }
+        }
+        buf.clamp_cursor(false);
+        // The selection it was about is gone, so the mode that was showing it
+        // goes too.
+        self.vim.mode = Mode::Normal;
+    }
+
     fn enter_list(&mut self) {
         let Some(&first) = self.shown().first() else {
             return;
@@ -561,12 +621,36 @@ pub fn theme() -> Theme {
 
 // --------------------------------------------------------------------- frame
 
+/// The assistant this build has: the local model when one is compiled in and
+/// its weights are on disk, and the rehearsal stub otherwise.
+///
+/// Chosen here rather than at the call site so that the interface never has to
+/// know which one it is talking to.
+pub fn assistant() -> Box<dyn llm::Backend> {
+    #[cfg(feature = "llm")]
+    {
+        let path = llm::local::default_path();
+        if path.exists() {
+            return Box::new(llm::local::Local::new(path));
+        }
+    }
+    Box::new(llm::Rehearsal)
+}
+
 pub fn frame(ui: &mut Ui, app: &mut Notes) {
     let screen = ui.canvas.bounds();
     let (titlebar, rest) = screen.split_top(13);
     let (body, statusbar) = rest.split_bottom(12);
 
-    let modal = app.dialog.is_some();
+    // An answer, if the worker has one. Collected before anything draws, so a
+    // suggestion appears on the frame it arrives rather than the one after.
+    if let Some(reply) = app.helper.poll() {
+        if let Some(open) = app.assist.as_mut() {
+            open.answered(reply);
+        }
+    }
+
+    let modal = app.dialog.is_some() || app.assist.is_some();
     app.caret_phase += ui.input.dt;
 
     // A dialog takes the keyboard for itself while it is open; nothing below
@@ -680,6 +764,28 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.save_to(&path);
             }
             None => {}
+        }
+    }
+
+    // Drawn last of all, over the dialog as well: it is the thing being
+    // talked to, and nothing should cover it.
+    if let Some(mut open) = app.assist.take() {
+        let model = app.helper.name().to_string();
+        match open.show(ui, &model) {
+            assist::Outcome::None => app.assist = Some(open),
+            assist::Outcome::Ask(ask) => {
+                if !app.helper.ask(ask) {
+                    open.phase = assist::Phase::Failed("still busy with the last one".into());
+                }
+                app.assist = Some(open);
+            }
+            assist::Outcome::Apply(text) => {
+                app.apply_suggestion(&open, &text);
+                app.status = "APPLIED".into();
+            }
+            assist::Outcome::Close => {
+                app.status = "DISMISSED".into();
+            }
         }
     }
 
@@ -843,6 +949,14 @@ fn handle_keys(ui: &mut Ui, app: &mut Notes) {
     for key in keys {
         // Already spent on a shortcut.
         if mods.cmd && !mods.ctrl {
+            continue;
+        }
+        // Ctrl-a asks the assistant about the selection: the same thing the
+        // mark beside it does, for hands that never left the keyboard. Where
+        // the panel hangs is decided by the drawing, which is the only place
+        // that knows where the selection ended up on screen.
+        if mods.ctrl && key == Key::Char('a') && app.vim.visual_kind().is_some() {
+            app.assist_wanted = true;
             continue;
         }
         // Ctrl-n / Ctrl-p walk the sidebar without leaving the editor.
@@ -1271,6 +1385,19 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     let i = app.current.min(app.notes.len() - 1);
     let total = app.notes[i].buffer.line_count();
 
+    // ---- the assistant's mark: asked for first, drawn last ---------------
+    // Its rect is the one it had last frame, because where it goes depends on
+    // where the selection lands on screen and that is not known until the
+    // drawing below has run. One frame of lag on a mark that appears when you
+    // select something is invisible. Taking the pointer *after* the editor's
+    // own hit test, which covers the whole pane, would not be: the click would
+    // move the caret and drop the selection instead of opening the panel.
+    let offer = app.assist.is_none() && app.vim.mode != Mode::Insert;
+    let mark = app
+        .mark_rect
+        .filter(|_| offer)
+        .map(|rect| ui.icon_button_hit(rect, "assist-mark"));
+
     // ---- pointer --------------------------------------------------------
     // Done before the caret-follow below, so a click sets the caret and the
     // scrolling then keeps it visible, rather than the two fighting.
@@ -1346,7 +1473,9 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     }
 
     let cursor = app.notes[i].buffer.cursor;
-
+    // Set by the drawing loop below, and used after it: the mark is a control,
+    // so it must not be clipped away with the text it hangs off.
+    let mut mark_at = None;
     // ---- keep the caret on screen ---------------------------------------
     // Lines wrap, so "how far down is the caret" is a count of *visual* rows,
     // not of lines. Scrolling stays line-granular (as vim's does), which keeps
@@ -1461,6 +1590,22 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                 {
                     let a = lo.max(from);
                     let b = hi.min(to.max(from));
+                    // Where the assistant's mark goes: after the last row of
+                    // the selection, which is the last one this ever runs for.
+                    // Not for a block selection: that is a rectangle of
+                    // columns, not a run of prose, and there is nothing to hand
+                    // an editor — so it is not offered one.
+                    let prose = !matches!(selection, Some(vim::Selection::Block { .. }));
+                    if b >= a && prose {
+                        // Out at the margin rather than against the end of the
+                        // selection: a charwise selection usually ends in the
+                        // middle of a line, and a control sitting there covers
+                        // the very words it is offering to change.
+                        mark_at = Some(pixui::Point::new(
+                            inner.right() - assist::MARK - 2,
+                            y,
+                        ));
+                    }
                     if b > a {
                         // The cell is the glyph plus a column of padding either
                         // side; see the caret below for why.
@@ -1534,7 +1679,50 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
         }
     });
 
+    // ---- the assistant's mark -------------------------------------------
+    // Only where there is something to talk about, and only where the end of
+    // the selection is actually on screen — a control you cannot see is a
+    // control that takes clicks meant for something else.
+    let at = mark_at.filter(|p: &pixui::Point| inner.contains(*p));
+    app.mark_rect = at.map(|p| Rect::new(p.x, p.y - 1, assist::MARK, assist::MARK));
+    if let Some(resp) = mark {
+        // Only painted where there is still something to point at; the rect it
+        // was hit-tested with may describe a selection that has since gone.
+        if at.is_some() {
+            ui.icon_button_drawn(&resp, pixui::icon::SPARK, pixui::Tone::Accent);
+        }
+        if resp.clicked {
+            if let Some(p) = at {
+                app.open_assist(p);
+            }
+        }
+    }
+    // Asked for with the keyboard: same panel, hung off the same mark.
+    if std::mem::take(&mut app.assist_wanted) {
+        if let Some(p) = at {
+            app.open_assist(p);
+        }
+    }
+
     area.inset(1)
+}
+
+/// The character range a selection covers, as one span of text.
+///
+/// A block selection has none: it is a rectangle of columns, and there is no
+/// single run of prose to hand anybody. The mark simply does not appear for it.
+fn selected_range(sel: vim::Selection, buf: &Buffer) -> Option<(text::Cursor, text::Cursor)> {
+    match sel {
+        vim::Selection::Chars { from, to } => Some((from, text::Cursor::new(to.line, to.col + 1))),
+        vim::Selection::Lines { from, to } => {
+            let last = to.min(buf.line_count().saturating_sub(1));
+            Some((
+                text::Cursor::new(from, 0),
+                text::Cursor::new(last, buf.line_len(last)),
+            ))
+        }
+        vim::Selection::Block { .. } => None,
+    }
 }
 
 fn token_color(th: &Theme, tok: Tok) -> Color {

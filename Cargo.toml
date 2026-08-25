@@ -8,8 +8,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The local model. Off by default: it builds llama.cpp from source and wants a
+# gigabyte of weights on disk, neither of which a note editor should need in
+# order to open a note. Without it the assistant is the rehearsal stub.
+llm = ["dep:llama-cpp-2"]
+
 [dependencies]
 pixui = { path = "pixui", features = ["gpu"] }
+
+# llama.cpp, for running a quantised model on the machine in front of you.
+# Metal on Apple silicon, plain CPU elsewhere.
+llama-cpp-2 = { version = "0.1.154", optional = true }
 
 # Sublime Text grammars, for highlighting fenced code blocks. Deliberately
 # without its themes: syntect's colour schemes are built for a full RGB palette

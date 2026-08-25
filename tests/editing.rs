@@ -1197,6 +1197,96 @@ fn naming_a_note_that_was_never_saved_writes_it() {
     assert!(!app.notes[i].buffer.dirty, "and it counts as saved");
 }
 
+// --------------------------------------------------------------- word diff
+
+use notes::diff::{self, Change};
+
+/// The diff as a compact string: `-` for gone, `+` for new, plain for kept.
+fn shape(before: &str, after: &str) -> String {
+    diff::words(before, after)
+        .iter()
+        .map(|p| match p.change {
+            Change::Same => p.text.clone(),
+            Change::Removed => format!("-[{}]", p.text),
+            Change::Added => format!("+[{}]", p.text),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn text_that_did_not_change_has_no_diff() {
+    let pieces = diff::words("the same words", "the same words");
+    assert!(diff::is_empty(&pieces));
+    assert_eq!(pieces.len(), 1, "and it is one run, not one per word");
+}
+
+#[test]
+fn a_replaced_word_shows_both_sides() {
+    assert_eq!(
+        shape("teh quick fox", "the quick fox"),
+        "-[teh] +[the] quick fox"
+    );
+}
+
+#[test]
+fn words_added_and_removed_are_found_where_they_are() {
+    assert_eq!(shape("one two", "one and two"), "one +[and] two");
+    assert_eq!(shape("one and two", "one two"), "one -[and] two");
+    assert_eq!(shape("", "all new"), "+[all new]");
+}
+
+#[test]
+fn a_run_of_changes_is_one_piece() {
+    // The renderer paints a band per piece, so neighbouring words that changed
+    // the same way have to arrive as one.
+    let pieces = diff::words("a b c d", "a x y d");
+    let changed: Vec<&str> = pieces
+        .iter()
+        .filter(|p| p.change != Change::Same)
+        .map(|p| p.text.as_str())
+        .collect();
+    assert_eq!(changed, vec!["b c", "x y"]);
+}
+
+#[test]
+fn line_breaks_survive_as_pieces_of_their_own() {
+    // The panel breaks its row on them rather than drawing them, so they must
+    // not be swallowed into the words either side.
+    let pieces = diff::words("one\ntwo", "one\ntwo three");
+    assert!(pieces.iter().any(|p| p.text == "\n"));
+    assert_eq!(pieces.last().unwrap().text, "three");
+}
+
+#[test]
+fn the_rehearsal_backend_fixes_what_it_claims_to() {
+    use notes::llm::{Ask, Backend};
+    let mut stub = notes::llm::Rehearsal;
+    let reply = stub
+        .edit(&Ask {
+            source: "  - teh  quick  fox\n  - adn a second".into(),
+            request: "fix it".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        reply, "  - the quick fox\n  - and a second",
+        "typos fixed, runs of spaces collapsed, indent and lines kept"
+    );
+}
+
+#[test]
+fn the_rehearsal_backend_always_leaves_something_to_review() {
+    use notes::llm::{Ask, Backend};
+    let mut stub = notes::llm::Rehearsal;
+    let reply = stub
+        .edit(&Ask {
+            source: "nothing to fix here".into(),
+            request: "Improve It".into(),
+        })
+        .unwrap();
+    assert!(reply.ends_with("(improve it)"), "got {reply:?}");
+}
+
 // -------------------------------------------------------------- auto-indent
 
 use notes::indent::{self, Opened};

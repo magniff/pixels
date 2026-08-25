@@ -972,6 +972,51 @@ impl Ui<'_> {
         resp
     }
 
+    /// A push button whose whole face is one icon.
+    ///
+    /// Named separately from its label because it has none: two icon buttons
+    /// with the same drawing are still two buttons, and the name is what keeps
+    /// their hover and their press apart.
+    pub fn icon_button_at(
+        &mut self,
+        rect: Rect,
+        name: &str,
+        rows: &[&str],
+        tone: Tone,
+    ) -> Response {
+        let resp = self.icon_button_hit(rect, name);
+        self.icon_button_drawn(&resp, rows, tone);
+        resp
+    }
+
+    /// The hit-testing half of an icon button.
+    ///
+    /// Split out for a control that has to take the pointer *before* something
+    /// underneath it and be painted *after* it: the first widget to ask for a
+    /// point gets it, so a mark floating over a text view has to ask early —
+    /// but the view's own drawing would paint straight over it, so it has to be
+    /// drawn late. Pair with [`Self::icon_button_drawn`].
+    pub fn icon_button_hit(&mut self, rect: Rect, name: &str) -> Response {
+        let id = self.id(name);
+        let mut resp = self.interact(id, rect);
+        if self.focusable(id) {
+            resp.clicked = true;
+            self.with_anim(id, |a| a.press.snap(1.0));
+        }
+        if resp.hovered {
+            self.request_cursor(Cursor::Pointer);
+        }
+        resp
+    }
+
+    /// The drawing half of an icon button; see [`Self::icon_button_hit`].
+    pub fn icon_button_drawn(&mut self, resp: &Response, rows: &[&str], tone: Tone) {
+        let ramp = self.theme.ramp(tone);
+        let anim = self.animate(resp.id, resp);
+        let body = self.draw_control_face(resp.rect, ramp, &anim);
+        icon::draw_centered(self.canvas, body, rows, ramp.ink);
+    }
+
     // ---------------------------------------------------------------- toggles
 
     /// A checkbox with a label to its right. Returns a response whose

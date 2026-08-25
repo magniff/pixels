@@ -126,6 +126,7 @@ not Control — Control is vim's.
 | **Search** | `/` `?`, `n` `N`, `*` for the word under the cursor |
 | **Commands** | `:w`, `:e`, `:q`, `:qa`, `:new`, `:preview`, `:source`, `:help` |
 | **Indenting** | `Tab` a level in, `Shift-Tab` a level out |
+| **Assistant** | `Ctrl-a` on a visual selection, or the mark in the margin |
 
 A new line inherits where it is. Enter in a list opens the next item already
 marked up — the same bullet, the next number, an unchecked box for a task, at
@@ -173,9 +174,70 @@ of the repo, and `pixui/README.md` covers it properly.
 
 ```sh
 cargo run --release -- --shots                 # regenerate screenshots/
-cargo test --workspace                         # 264 tests
+cargo test --workspace                         # 271 tests
 PIXUI_PROFILE=1 cargo run --release            # live frame breakdown
 ```
+
+## The assistant
+
+Select something in visual mode and a mark appears in the right margin, level
+with the last line of the selection. Press it — or `Ctrl-a`, for hands that
+never left the keyboard — and a panel opens asking what should change. The
+answer comes back as a word-level diff: struck through in red where words went,
+green where they arrived, and the note itself is not touched until **APPLY** is
+pressed. **REJECT** throws it away. Asking again refines what is on screen
+rather than starting over, so "now make it shorter" means shorter than the
+suggestion you are looking at.
+
+| offered | answered |
+|---|---|
+| ![the mark on a selection](screenshots/assist-open.png) | ![the diff](screenshots/assist-diff.png) |
+
+A line diff would be the wrong tool: a rewritten paragraph is one line in the
+source, so a line diff would say "all of it changed" and leave you reading two
+paragraphs to find the three words that moved. Words are the unit the
+suggestion is actually made in.
+
+The model runs on a worker thread and is spoken to through two channels.
+Nothing waits on it: a request is posted, the frame carries on drawing at sixty
+a second, and the answer is collected whenever it turns up.
+
+### Which model
+
+Two backends behind one trait. The default build has the **rehearsal** stub,
+which fixes a handful of typos and collapses runs of spaces — enough to build,
+test and screenshot the whole interaction without a gigabyte of weights, and
+enough that the app still has an assistant when built without one. It says
+`REHEARSAL` in the panel, because a stub that does not admit to being one is a
+demo pretending to be a feature.
+
+The real one is **Qwen3-1.7B**, quantised to four bits and run through
+llama.cpp — on the machine in front of you, offline, no key and no account.
+Build it in with `--features llm`, which compiles llama.cpp from source and so
+wants `cmake` and `clang`, and fetch the weights:
+
+```sh
+mkdir -p models && curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
+  https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
+```
+
+That is where it looks unless `PIXUI_MODEL` says otherwise; without it the build
+falls back to the stub. The weights load on the first question rather than at
+startup, so opening a note never waits on them. On Apple silicon the whole
+model goes to the GPU and an edit takes a second or two.
+
+There is a way to try it without the interface at all, which is also how to see
+what it costs:
+
+```sh
+echo "some prose with an error in it" | cargo run --features llm -- --ask "fix the grammar"
+```
+
+A 1.7B model is good at proofreading, tightening and rephrasing — the jobs
+where being local matters most, since the note never leaves the machine. It is
+**not** good at checking facts: it has no way to look anything up, and it will
+invent a correction with the same confidence it fixes a comma. That is the
+reason for the diff and the two buttons.
 
 ## Not implemented
 
