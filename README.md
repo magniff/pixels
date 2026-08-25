@@ -253,8 +253,14 @@ echo "some prose with an error in it" | cargo run --features llm -- --ask "fix t
 ```
 
 A 1.7B model is good at proofreading, tightening and rephrasing — the jobs
-where being local matters most, since the note never leaves the machine. It is
-**not** good at checking facts: it has no way to look anything up, and it will
+where being local matters most, since the note never leaves the machine. It
+wants a *concrete* instruction: "fix the grammar", "split into two sentences",
+"say it as a pirate" all work, where "make it goofy" gets the text handed back
+almost unchanged. At this size the model has no idea what you meant, and its
+safest guess is the passage it was given. When that happens the block says so
+and puts the question back in the field to be edited.
+
+It is **not** good at checking facts: it has no way to look anything up, and it will
 invent a correction with the same confidence it fixes a comma. That is the
 reason for the diff and the two buttons.
 

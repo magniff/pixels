@@ -106,13 +106,22 @@ impl Assist {
             Ok(proposal) => {
                 let pieces = diff::words(&self.source, &proposal);
                 if diff::is_empty(&pieces) {
-                    Phase::Failed("nothing to change".into())
+                    // A small model handed the text back rather than admit it
+                    // had no idea what to do with the instruction. Say which of
+                    // the two happened, since only one of them is worth
+                    // retrying.
+                    Phase::Failed("left it alone - try a more specific instruction".into())
                 } else {
                     Phase::Reviewing { proposal, pieces }
                 }
             }
             Err(why) => Phase::Failed(why),
         };
+        // A question that came to nothing goes back in the box, so it can be
+        // edited into a better one rather than typed again from scratch.
+        if matches!(self.phase, Phase::Failed(_)) && self.request.is_empty() {
+            self.request = std::mem::take(&mut self.asked);
+        }
     }
 
     /// Whether the model is working on this one.

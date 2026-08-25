@@ -70,21 +70,27 @@ impl Local {
 /// The conversation, in the format Qwen3 was trained on.
 ///
 /// The empty `<think>` block is not decoration: Qwen3 reasons out loud unless
-/// told the thinking is already done, and several hundred tokens of deliberation
-/// about a comma is not what anybody asked for.
+/// told the thinking is already done, and several hundred tokens of
+/// deliberation about a comma is not what anybody asked for.
+///
+/// The instruction comes *after* the text. A small model reads the last thing
+/// it was told as the thing to do, and with the order the other way round it
+/// reliably answered the question "what is this text?" — by handing the text
+/// back.
 fn prompt(ask: &Ask) -> String {
     format!(
         "<|im_start|>system\n\
-         You are a careful copy editor. You rewrite the text exactly as \
-         instructed, keeping the author's voice and any markdown markup. Reply \
-         with the rewritten text and nothing else: no preamble, no explanation, \
-         no quotes, no code fences.<|im_end|>\n\
+         You rewrite text on request. Always apply the instruction, even if the \
+         text already reads well, and return the whole passage rewritten rather \
+         than a comment on it. Keep any markdown markup. Reply with the \
+         rewritten text and nothing else: no preamble, no explanation, no \
+         quotes, no code fences.<|im_end|>\n\
          <|im_start|>user\n\
-         Instruction: {}\n\n\
-         Text:\n{}<|im_end|>\n\
+         Text:\n{}\n\n\
+         Instruction: {}<|im_end|>\n\
          <|im_start|>assistant\n<think>\n\n</think>\n\n",
-        ask.request.trim(),
-        ask.source
+        ask.source,
+        ask.request.trim()
     )
 }
 
@@ -131,10 +137,18 @@ impl Backend for Local {
         }
         ctx.decode(&mut batch).map_err(|e| format!("decode: {e}"))?;
 
-        // Greedy: an edit should be the model's best answer, not a sample from
-        // its neighbourhood. Two runs of the same request give the same text,
-        // which is what makes a suggestion something you can re-read.
-        let mut sampler = LlamaSampler::greedy();
+        // The sampler Qwen3 asks for outside its thinking mode. Greedy decoding
+        // was the obvious choice and the wrong one: at temperature zero a small
+        // model's safest continuation of a passage is the passage, so it handed
+        // the text back unchanged. The seed is fixed, so the same question still
+        // gets the same answer twice — which is what makes a suggestion
+        // something you can re-read rather than re-roll.
+        let mut sampler = LlamaSampler::chain_simple([
+            LlamaSampler::top_k(20),
+            LlamaSampler::top_p(0.8, 1),
+            LlamaSampler::temp(0.7),
+            LlamaSampler::dist(0x5EED),
+        ]);
         let mut out = Vec::new();
         let mut pos = tokens.len() as i32;
         let ceiling = pos + RESERVE as i32;
