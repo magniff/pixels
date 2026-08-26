@@ -50,6 +50,13 @@ pub struct Ask {
     /// is not the same as being told it has none: a tool it was never offered
     /// is one it cannot mention.
     pub tools: Vec<Tool>,
+    /// Whether looking things up is switched off rather than absent.
+    ///
+    /// The difference is worth telling the model, because the two produce the
+    /// same answer otherwise - "I do not have access to that" - and one of them
+    /// has a switch. A refusal that does not mention the switch is
+    /// indistinguishable from a broken feature.
+    pub web_off: bool,
 }
 
 impl Ask {
@@ -70,10 +77,19 @@ impl Ask {
         if !self.talking() {
             return editing.to_string();
         }
-        match self.tools.is_empty() {
+        let mut out = match self.tools.is_empty() {
             true => CHAT_PROMPT.to_string(),
             false => format!("{}\n\n{}", declare(&self.tools), CHAT_PROMPT),
+        };
+        if self.web_off {
+            out.push_str(
+                "\n\nLooking things up on the web is switched off in this app's settings, and \
+                 can be switched back on there or by typing /web. If a question needs the web - \
+                 the weather, the news, what is on a page - say that it is switched off and that \
+                 they can turn it on, rather than only that you cannot help.",
+            );
         }
+        out
     }
 }
 

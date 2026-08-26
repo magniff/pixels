@@ -45,6 +45,11 @@ pub const COMMANDS: &[Command] = &[
         what: "call this conversation something",
     },
     Command {
+        name: "web",
+        takes: "",
+        what: "let it look things up, or stop it",
+    },
+    Command {
         name: "help",
         takes: "",
         what: "list what can be typed here",
@@ -154,6 +159,8 @@ pub struct Chat {
     /// True on the frame a completion rewrote the draft, so the field picks up
     /// the new text and puts the caret after it.
     retype: bool,
+    /// Set by `/web`, and spent by the application on the same frame.
+    flip_web: bool,
     scroll: ScrollState,
     /// True when the view should be pinned to the newest turn.
     follow: bool,
@@ -179,6 +186,8 @@ pub enum Outcome {
     Ask,
     /// Give up on the answer that is on its way.
     Stop,
+    /// Turn looking things up on, or off.
+    Web,
     /// Something changed that should be written down.
     Save,
     /// Put this change into the project.
@@ -565,6 +574,7 @@ impl Chat {
             notice: None,
             grab: true,
             retype: false,
+            flip_web: false,
             scroll: ScrollState::default(),
             follow: true,
             overhead: 0,
@@ -619,6 +629,9 @@ impl Chat {
                 self.notice = Some(format!("renamed to \"{}\"", self.title()));
             }
             "rename" => self.notice = Some("rename to what? /rename <name>".into()),
+            // Answered by the application, which owns the settings: this only
+            // says that it was asked.
+            "web" => self.flip_web = true,
             "help" => self.notice = Some(manual()),
             other => self.notice = Some(format!("no command called /{other} - /help lists them")),
         }
@@ -1180,9 +1193,13 @@ impl Chat {
         if !held && ui.input.key_pressed(Key::Enter) && !self.draft.trim().is_empty() {
             let typed = self.draft.clone();
             if self.command(&typed) {
-                // A rename is worth writing down straight away: it is the kind
-                // of thing you do and then close the panel.
-                outcome = Outcome::Save;
+                outcome = if std::mem::take(&mut self.flip_web) {
+                    Outcome::Web
+                } else {
+                    // A rename is worth writing down straight away: it is the
+                    // kind of thing you do and then close the panel.
+                    Outcome::Save
+                };
             } else if !self.waiting {
                 self.notice = None;
                 self.commit();

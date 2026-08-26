@@ -91,7 +91,8 @@ ask for a change.
 - `Cmd-Enter` with nothing selected opens a conversation instead: the same
   context, no passage, and every chat is filed under the *project* it was had
   in - opened from any file in it you get the same conversations back, looking
-  at whichever file you asked from. `/help` lists what can be typed, Tab
+  at whichever file you asked from. `/help` lists what can be typed, `/web`
+  turns looking things up on and off without leaving the conversation, Tab
   finishes a half-typed command, and the title bar says what the last question
   came to in tokens
 - A conversation sees the whole project - every file in the folder, numbered -

@@ -5190,3 +5190,56 @@ fn knowing_the_day_needs_no_permission_to_leave_the_machine() {
     assert!(offline.contains(&"calc"));
     assert_eq!(offline.len(), 2, "and those are the two that are always on");
 }
+
+#[test]
+fn a_refusal_says_there_is_a_switch() {
+    // The bug this exists for: with looking things up off, the model answered
+    // "I don't have access to that", which is true and is also exactly what a
+    // broken feature says. One of them has a switch.
+    let off = notes::llm::Ask {
+        turns: vec![notes::llm::Turn {
+            mine: true,
+            text: "how hot is it in berlin".into(),
+        }],
+        tools: notes::tools::available(false),
+        web_off: true,
+        ..Default::default()
+    };
+    let said = off.system("editing");
+    assert!(said.contains("switched off"), "it is told which it is");
+    assert!(said.contains("/web"), "and how to change it");
+    assert!(
+        !said.contains("\"name\": \"weather\""),
+        "without being offered the tool itself"
+    );
+
+    let on = notes::llm::Ask {
+        tools: notes::tools::available(true),
+        web_off: false,
+        ..off.clone()
+    };
+    let said = on.system("editing");
+    assert!(
+        !said.contains("switched off"),
+        "and nothing about switches when it is on"
+    );
+    assert!(said.contains("\"name\": \"weather\""));
+}
+
+#[test]
+fn the_switch_can_be_thrown_from_the_conversation() {
+    let mut talk = chat::Chat::new("aquarium".into(), "water.md".into());
+    assert!(talk.command("/web"), "it is a command");
+    assert!(
+        !talk
+            .notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("no command"),
+        "and one this knows"
+    );
+    assert!(
+        notes::chat::COMMANDS.iter().any(|c| c.name == "web"),
+        "so /help says it is there"
+    );
+}

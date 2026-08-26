@@ -1177,6 +1177,10 @@ impl Notes {
             // Working a sum out happens here and is always on offer; looking
             // something up goes to somebody else's server and is not.
             tools: tools::available(self.settings.web),
+            // Off is not the same as absent, and the model should be able to
+            // say which it is: a refusal that does not mention the switch
+            // looks exactly like a feature that does not work.
+            web_off: !self.settings.web,
             ..llm::Ask::default()
         }
     }
@@ -1746,6 +1750,17 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                     talk.waiting = false;
                     talk.failed = Some("still busy with the last one".into());
                 }
+                app.chat = Some(talk);
+            }
+            chat::Outcome::Web => {
+                app.settings.web = !app.settings.web;
+                let _ = app.settings.save();
+                talk.notice = Some(if app.settings.web {
+                    "looking things up is on - the weather, wikipedia, releases, and any page"
+                        .into()
+                } else {
+                    "looking things up is off - nothing leaves this machine".into()
+                });
                 app.chat = Some(talk);
             }
             chat::Outcome::Stop => {
