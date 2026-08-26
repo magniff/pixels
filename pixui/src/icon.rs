@@ -29,6 +29,30 @@ pub const CROSS: &[&str] = &[
     "#...#",
 ];
 
+/// A folder with a cross on it, for starting a new one.
+#[rustfmt::skip]
+pub const FOLDER_PLUS: &[&str] = &[
+    "###.....",
+    "#..#####",
+    "#......#",
+    "#..#...#",
+    "#.###..#",
+    "#..#...#",
+    "########",
+];
+
+/// A pencil, for renaming something.
+#[rustfmt::skip]
+pub const PENCIL: &[&str] = &[
+    "....##",
+    "...###",
+    "..###.",
+    ".###..",
+    "###...",
+    "##....",
+    "#.....",
+];
+
 /// A waste bin, for throwing something away for good.
 #[rustfmt::skip]
 pub const BIN: &[&str] = &[

@@ -55,6 +55,9 @@ pub struct Response {
     pub focused: bool,
     /// A value widget wrote a new value this frame.
     pub changed: bool,
+    /// The other mouse button went down on it: the gesture that asks what can
+    /// be done with a thing, rather than doing anything to it.
+    pub right_clicked: bool,
 }
 
 /// Persistent state for one scrollable region.
@@ -498,7 +501,13 @@ impl<'a> Ui<'a> {
     pub fn layer<R>(&mut self, rect: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
         self.layer_depth += 1;
         self.state.layers.push((self.layer_depth, rect));
+        // Out from under whatever was clipping. A layer floats above the
+        // interface rather than inside a part of it, and one opened over a
+        // narrow pane was being cut off at that pane's edge - which for a menu
+        // meant its answers were missing the ends of their words.
+        self.canvas.push_no_clip();
         let r = f(self);
+        self.canvas.pop_clip();
         self.layer_depth -= 1;
         r
     }
@@ -571,6 +580,11 @@ impl<'a> Ui<'a> {
             }
         }
 
+        // Not through the capture dance the left button goes through: nothing
+        // is dragged with this, so there is nothing to hold, and taking capture
+        // would only mean a menu could not be opened over something already
+        // being pressed.
+        resp.right_clicked = inside && self.input.right_pressed;
         resp.focused = self.state.focus == Some(id);
         resp
     }

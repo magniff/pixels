@@ -116,6 +116,26 @@ impl Note {
     }
 }
 
+/// What a menu opened on, and how far it has got.
+///
+/// The confirmations are the same thing one step on rather than a second kind
+/// of menu: throwing a note away is one click and a second one that means it,
+/// and both are entries in a list that appeared where the pointer is.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Context {
+    Note(usize),
+    SureAboutNote(usize),
+    Project(String),
+    SureAboutProject(String),
+}
+
+/// What renaming is renaming, while a name is being typed for it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Renaming {
+    Note(usize),
+    Project(String),
+}
+
 /// The selection travelling between two notes.
 ///
 /// It does not slide: the highlight lets go of the note it was on and takes
@@ -225,6 +245,8 @@ pub struct Notes {
     pub picker: Option<chat::Picker>,
     /// Projects whose notes are folded away in the sidebar.
     pub folded: std::collections::HashSet<String>,
+    /// The menu the other mouse button opened, and what it is about.
+    pub context: Option<(pixui::Point, Context)>,
     /// The model on its thread, whichever one this build has.
     pub helper: llm::Assistant,
     /// What the assistant is and what it is told, kept between runs.
@@ -254,7 +276,7 @@ pub struct Notes {
     /// the moment you are looking for it.
     pub caret_phase: f32,
     /// A note being renamed in place: which one, and the name so far.
-    pub renaming: Option<(usize, String)>,
+    pub renaming: Option<(Renaming, String)>,
     /// Set on the frame a rename begins, to move focus into its field.
     focus_rename: bool,
     /// Sidebar width, once the user has dragged it.
@@ -380,6 +402,7 @@ impl Notes {
             chat: None,
             picker: None,
             folded: std::collections::HashSet::new(),
+            context: None,
             assist_lift: 0,
             helper: llm::Assistant::spawn(assistant(&config)),
             settings: config,
@@ -898,6 +921,117 @@ impl Notes {
             .or_else(|| self.notes.iter().position(|n| n.filename() == name))
     }
 
+    /// Take a note off the disk and out of the drawer.
+    pub fn delete_note(&mut self, index: usize) {
+        if index >= self.notes.len() {
+            return;
+        }
+        let named = self.notes[index].filename();
+        if let Some(path) = self.notes[index].path.clone() {
+            if let Err(e) = std::fs::remove_file(path) {
+                self.status = format!("COULD NOT DELETE: {e}").to_uppercase();
+                return;
+            }
+        }
+        self.notes.remove(index);
+        if self.notes.is_empty() {
+            self.notes.push(Note::blank(String::new()));
+        }
+        if self.current >= index {
+            self.current = self.current.saturating_sub(1).min(self.notes.len() - 1);
+        }
+        self.scroll = 0;
+        self.status = format!("DELETED {named}").to_uppercase();
+    }
+
+    /// Rename a project: the folder, the notes in it, and its conversations.
+    pub fn rename_project(&mut self, old: &str, name: &str) {
+        let name = slug(name.trim());
+        if name.is_empty() {
+            self.status = "NAME REQUIRED".into();
+            return;
+        }
+        if name == old {
+            return;
+        }
+        let to = self.notes_dir.join(&name);
+        if to.exists() {
+            self.status = format!("{name} ALREADY EXISTS").to_uppercase();
+            return;
+        }
+        if let Err(e) = std::fs::rename(self.notes_dir.join(old), &to) {
+            self.status = format!("RENAME FAILED: {e}").to_uppercase();
+            return;
+        }
+        // The conversations go with it: they are filed under the project, and
+        // a project that moved without them would look like one that had never
+        // been talked about.
+        let chats = chat::folder(&self.notes_dir, old);
+        if chats.exists() {
+            let _ = std::fs::create_dir_all(self.notes_dir.join(".chats"));
+            let _ = std::fs::rename(chats, chat::folder(&self.notes_dir, &name));
+        }
+        for note in &mut self.notes {
+            if note.project == old {
+                note.project = name.clone();
+                if let Some(file) = note.path.as_ref().and_then(|p| p.file_name()) {
+                    note.path = Some(to.join(file));
+                }
+            }
+        }
+        if self.folded.remove(old) {
+            self.folded.insert(name.clone());
+        }
+        self.notes.sort_by_key(Self::order);
+        self.status = format!("RENAMED TO {name}").to_uppercase();
+    }
+
+    /// Take a project, everything in it, and everything said about it.
+    pub fn delete_project(&mut self, project: &str) {
+        if let Err(e) = std::fs::remove_dir_all(self.notes_dir.join(project)) {
+            self.status = format!("COULD NOT DELETE: {e}").to_uppercase();
+            return;
+        }
+        let _ = std::fs::remove_dir_all(chat::folder(&self.notes_dir, project));
+        self.notes.retain(|n| n.project != project);
+        if self.notes.is_empty() {
+            self.notes.push(Note::blank(String::new()));
+        }
+        self.current = self.current.min(self.notes.len() - 1);
+        self.folded.remove(project);
+        self.scroll = 0;
+        self.status = format!("DELETED PROJECT {project}").to_uppercase();
+    }
+
+    /// Start a project: a folder, and the first note in it to make it visible.
+    ///
+    /// A project with nothing in it has no heading to draw - the headings come
+    /// from the notes - so an empty one would be a folder you had made and
+    /// could not see.
+    pub fn new_project(&mut self) -> String {
+        let mut name = "new-project".to_string();
+        for n in 2.. {
+            if !self.notes_dir.join(&name).exists() {
+                break;
+            }
+            name = format!("new-project-{n}");
+        }
+        if std::fs::create_dir_all(self.notes_dir.join(&name)).is_err() {
+            self.status = "COULD NOT MAKE THE FOLDER".into();
+            return String::new();
+        }
+        self.current = self.insert_note(Note::blank(name.clone()));
+        self.scroll = 0;
+        self.filter.clear();
+        self.status = "NEW PROJECT - NAME IT".into();
+        name
+    }
+
+    /// Where a note sorts: the order the vault reads it in.
+    fn order(note: &Note) -> (String, bool, String) {
+        (note.project.clone(), note.path.is_none(), note.filename())
+    }
+
     /// Put a note where it belongs, and say where that was.
     ///
     /// Where it belongs is the order the vault is read in: loose notes first,
@@ -910,11 +1044,10 @@ impl Notes {
         // after them: it has no name yet, only a placeholder, and sorting on
         // that would file it under whatever punctuation the placeholder starts
         // with. At the end of its project is where "just made" belongs.
-        let key = |n: &Note| (n.project.clone(), n.path.is_none(), n.filename());
         let at = self
             .notes
             .iter()
-            .position(|other| key(other) > key(&note))
+            .position(|other| Self::order(other) > Self::order(&note))
             .unwrap_or(self.notes.len());
         self.notes.insert(at, note);
         at
@@ -1132,7 +1265,11 @@ impl Notes {
         if !name.contains('.') {
             name.push_str(".md");
         }
-        let dest = self.notes_dir.join(&name);
+        // Into the note's own project, not the top of the vault: renaming a
+        // note should not move it out of the folder it belongs to.
+        let dest = self
+            .project_dir(&self.notes[index].project.clone())
+            .join(&name);
         let current = self.notes[index].path.clone();
         if current.as_deref() == Some(dest.as_path()) {
             return;
@@ -1513,6 +1650,11 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     }
 
     // ---- the menu, over whatever it covers -----------------------------
+    // After the panes, not inside the one it was opened over: a layer only
+    // settles who gets the *pointer*, and a menu drawn while the drawer was
+    // being drawn is painted over by the editor beside it a moment later.
+    context_menu(ui, app);
+
     if app.chrome.menu_open {
         let entries = [
             pixui::Segment::with_icon(pixui::icon::SLIDERS, "SETTINGS"),
@@ -1942,6 +2084,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
 
     let mut select = None;
     let mut toggle = None;
+    let mut opened = None;
     let mut begin_rename = None;
     let mut commit_rename = None;
     let mut cancel_rename = false;
@@ -1965,39 +2108,69 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                     if resp.clicked {
                         toggle = Some(project.clone());
                     }
-                    let shut = folded.contains(&project);
-                    let ink = if resp.hovered {
-                        th.accent.hi
-                    } else {
-                        th.accent.face
-                    };
-                    // A caret that turns, which is the one part of a tree that
-                    // says it is a tree rather than an indented list.
-                    let mark = Rect::new(head.x + 3, head.y + 2, 7, 7);
-                    pixui::icon::draw_centered(
-                        ui.canvas,
-                        mark,
-                        if shut {
-                            pixui::icon::CHEVRON
+                    if resp.right_clicked {
+                        opened = Some((ui.input.mouse, Context::Project(project.clone())));
+                    }
+                    let naming =
+                        matches!(&app.renaming, Some((Renaming::Project(p), _)) if *p == project);
+                    if naming {
+                        // The heading becomes a field in place, the way a note
+                        // row does, so a rename reads as editing *this* one.
+                        let field = Rect::new(head.x + 11, head.y + 1, head.w - 15, 11);
+                        let mut name = match app.renaming.take() {
+                            Some((_, n)) => n,
+                            None => String::new(),
+                        };
+                        let grab = app.focus_rename;
+                        app.focus_rename = false;
+                        ui.text_field_grab_at(field, "rename-project", &mut name, "", grab);
+                        if ui.input.key_pressed(pixui::Key::Enter) {
+                            commit_rename = Some((Renaming::Project(project.clone()), name));
+                        } else if ui.input.key_pressed(pixui::Key::Escape) {
+                            cancel_rename = true;
                         } else {
-                            pixui::icon::CARET_DOWN
-                        },
-                        ink,
-                    );
-                    let at = Rect::new(head.x + 13, head.y + 2, head.w - 17, pixui::font::line_h());
-                    pixui::font::draw_text_styled(
-                        ui.canvas,
-                        at.x,
-                        at.y,
-                        &project.to_uppercase(),
-                        ink,
-                        true,
-                    );
-                    let count = shown
-                        .iter()
-                        .filter(|&&j| app.notes[j].project == project)
-                        .count();
-                    ui.draw_text_in(at, &count.to_string(), th.ink_soft, Align::Right);
+                            app.renaming = Some((Renaming::Project(project.clone()), name));
+                        }
+                    }
+                    // Everything the heading normally says is drawn only when
+                    // it is not being renamed: a caret and a count over a field
+                    // being typed into is two things in one place.
+                    if !naming {
+                        let shut = folded.contains(&project);
+                        let ink = if resp.hovered {
+                            th.accent.hi
+                        } else {
+                            th.accent.face
+                        };
+                        // A caret that turns, which is the one part of a tree
+                        // that says it is a tree rather than an indented list.
+                        let mark = Rect::new(head.x + 3, head.y + 2, 7, 7);
+                        pixui::icon::draw_centered(
+                            ui.canvas,
+                            mark,
+                            if shut {
+                                pixui::icon::CHEVRON
+                            } else {
+                                pixui::icon::CARET_DOWN
+                            },
+                            ink,
+                        );
+                        let at =
+                            Rect::new(head.x + 13, head.y + 2, head.w - 17, pixui::font::line_h());
+                        pixui::font::draw_text_styled(
+                            ui.canvas,
+                            at.x,
+                            at.y,
+                            &project.to_uppercase(),
+                            ink,
+                            true,
+                        );
+                        let count = shown
+                            .iter()
+                            .filter(|&&j| app.notes[j].project == project)
+                            .count();
+                        ui.draw_text_in(at, &count.to_string(), th.ink_soft, Align::Right);
+                    }
                 }
                 last = Some(project.clone());
             }
@@ -2009,7 +2182,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             let title = app.notes[i].title();
             let dirty = app.notes[i].buffer.dirty;
             let preview = markdown::preview(app.notes[i].buffer.lines(), 2, cols);
-            let renaming = matches!(app.renaming, Some((idx, _)) if idx == i);
+            let renaming = matches!(&app.renaming, Some((Renaming::Note(idx), _)) if *idx == i);
 
             let selected = i == app.current;
             // A title, then a line of preview each: sized from the face, or a
@@ -2031,6 +2204,9 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             }
             if resp.double_clicked {
                 begin_rename = Some(i);
+            }
+            if resp.right_clicked {
+                opened = Some((ui.input.mouse, Context::Note(i)));
             }
 
             let face = if resp.hovered && !selected {
@@ -2086,11 +2262,11 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                 app.focus_rename = false;
                 ui.text_field_grab_at(field, "rename", &mut name, "", grab);
                 if ui.input.key_pressed(pixui::Key::Enter) {
-                    commit_rename = Some((i, name));
+                    commit_rename = Some((Renaming::Note(i), name));
                 } else if ui.input.key_pressed(pixui::Key::Escape) {
                     cancel_rename = true;
                 } else {
-                    app.renaming = Some((i, name));
+                    app.renaming = Some((Renaming::Note(i), name));
                 }
             } else {
                 // The ink travels with the fill under it. The patch covers the
@@ -2129,11 +2305,14 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| format!("{}.md", slug(&app.notes[i].title())));
-        app.renaming = Some((i, seed));
+        app.renaming = Some((Renaming::Note(i), seed));
         app.focus_rename = true;
     }
-    if let Some((i, name)) = commit_rename {
-        app.rename_note(i, &name);
+    if let Some((what, name)) = commit_rename {
+        match what {
+            Renaming::Note(i) => app.rename_note(i, &name),
+            Renaming::Project(old) => app.rename_project(&old, &name),
+        }
         app.renaming = None;
     }
     if cancel_rename {
@@ -2150,23 +2329,25 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             app.folded.insert(project);
         }
     }
+    if let Some(where_and_what) = opened {
+        app.context = Some(where_and_what);
+    }
 
+    // One button, because there is one thing down here that is not about a
+    // note that already exists. Everything you can do to a note or a project
+    // is on the note or the project, under the other mouse button.
     ui.column(footer, 3, |ui| {
-        ui.row_h(14, 4, |ui| {
-            let w = (footer.w - 4) / 2;
-            let cell = ui.alloc(w);
-            if ui.button_at(cell, "NEW", Tone::Neutral).clicked {
-                let here = app.note().project.clone();
-                app.current = app.insert_note(Note::blank(here));
-                app.scroll = 0;
-                app.filter.clear();
-                app.status = "NEW NOTE".into();
+        let cell = ui.alloc(14);
+        if ui
+            .icon_button_at(cell, "new-project", pixui::icon::FOLDER_PLUS, Tone::Accent)
+            .clicked
+        {
+            let made = app.new_project();
+            if !made.is_empty() {
+                app.renaming = Some((Renaming::Project(made), String::new()));
+                app.focus_rename = true;
             }
-            let cell = ui.alloc_rest();
-            if ui.button_at(cell, "OPEN", Tone::Accent).clicked {
-                app.dialog = Some(FileDialog::new(DialogKind::Open, &app.notes_dir, ""));
-            }
-        });
+        }
     });
 
     // Only the list needs one. A text field already lights its own border
@@ -2179,6 +2360,82 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
         // something that is not a thing you can move to. Drawn last so nothing
         // paints over it, and over the background the panel sits on.
         ui.focus_flare("pane:notes", rect, th.background, arrived);
+    }
+}
+
+/// The menu the other mouse button opened, and what it decided.
+///
+/// Drawn after the list rather than inside it, so it is not clipped by the
+/// scroll area it was opened over, and so it sits above every row rather than
+/// inside one of them.
+fn context_menu(ui: &mut Ui, app: &mut Notes) {
+    use pixui::icon;
+    let Some((at, what)) = app.context.clone() else {
+        return;
+    };
+    // Owned before the list borrows it: a confirmation should name the thing
+    // it is about, and the name outlives the menu that mentions it.
+    let naming = match &what {
+        Context::SureAboutNote(i) => format!("DELETE {}", app.notes[*i].filename().to_uppercase()),
+        Context::SureAboutProject(p) => {
+            let held = app.notes.iter().filter(|n| n.project == *p).count();
+            format!("DELETE {} AND {held} NOTES", p.to_uppercase())
+        }
+        _ => String::new(),
+    };
+    let items: Vec<pixui::Segment> = match &what {
+        Context::Note(_) => vec![
+            pixui::Segment::with_icon(icon::PENCIL, "RENAME"),
+            pixui::Segment::with_icon(icon::BIN, "DELETE"),
+        ],
+        Context::Project(_) => vec![
+            pixui::Segment::with_icon(icon::PAGE, "NEW NOTE"),
+            pixui::Segment::with_icon(icon::PENCIL, "RENAME"),
+            pixui::Segment::with_icon(icon::BIN, "DELETE"),
+        ],
+        // The second step, which is the same menu one entry on. A note goes
+        // for good and a project takes everything in it, so neither is a thing
+        // to do on one click that landed slightly wrong.
+        Context::SureAboutNote(_) | Context::SureAboutProject(_) => vec![
+            pixui::Segment::with_icon(icon::BIN, &naming),
+            pixui::Segment::new("KEEP IT"),
+        ],
+    };
+    let pick = ui.menu_items(at, &items);
+    if pick.dismissed {
+        app.context = None;
+        return;
+    }
+    let Some(chosen) = pick.chosen else {
+        return;
+    };
+    app.context = None;
+    match (&what, chosen) {
+        (Context::Note(i), 0) => {
+            let seed = app.notes[*i]
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| format!("{}.md", slug(&app.notes[*i].title())));
+            app.renaming = Some((Renaming::Note(*i), seed));
+            app.focus_rename = true;
+        }
+        (Context::Note(i), _) => app.context = Some((at, Context::SureAboutNote(*i))),
+        (Context::Project(p), 0) => {
+            app.current = app.insert_note(Note::blank(p.clone()));
+            app.scroll = 0;
+            app.status = "NEW NOTE".into();
+        }
+        (Context::Project(p), 1) => {
+            app.renaming = Some((Renaming::Project(p.clone()), p.clone()));
+            app.focus_rename = true;
+        }
+        (Context::Project(p), _) => app.context = Some((at, Context::SureAboutProject(p.clone()))),
+        (Context::SureAboutNote(i), 0) => app.delete_note(*i),
+        (Context::SureAboutProject(p), 0) => app.delete_project(p),
+        // "Keep it", which is the whole reason there are two steps.
+        _ => {}
     }
 }
 

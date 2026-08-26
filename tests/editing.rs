@@ -4252,3 +4252,152 @@ fn a_new_note_goes_into_the_project_being_read() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ------------------------------------------------------- projects on disk
+
+fn vault_with(dir: &std::path::Path, files: &[(&str, &str)]) {
+    let _ = std::fs::remove_dir_all(dir);
+    for (path, text) in files {
+        let at = dir.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
+}
+
+#[test]
+fn renaming_a_note_keeps_it_in_its_project() {
+    let dir = std::env::temp_dir().join(format!("pixui-rn-{}", std::process::id()));
+    vault_with(&dir, &[("aquarium/stock.md", "# Stock\n")]);
+    let mut app = notes::Notes::open(dir.clone());
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/stock.md")
+        .unwrap();
+    app.rename_note(i, "livestock.md");
+    assert!(
+        dir.join("aquarium").join("livestock.md").exists(),
+        "in the folder it was in"
+    );
+    assert!(
+        !dir.join("livestock.md").exists(),
+        "not at the top of the vault"
+    );
+    assert_eq!(app.notes[i].slug(), "aquarium/livestock.md");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn deleting_a_note_takes_it_off_the_disk() {
+    let dir = std::env::temp_dir().join(format!("pixui-dn-{}", std::process::id()));
+    vault_with(
+        &dir,
+        &[
+            ("aquarium/stock.md", "# Stock\n"),
+            ("aquarium/water.md", "# Water\n"),
+        ],
+    );
+    let mut app = notes::Notes::open(dir.clone());
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/stock.md")
+        .unwrap();
+    app.delete_note(i);
+    assert!(!dir.join("aquarium").join("stock.md").exists());
+    assert!(!app.notes.iter().any(|n| n.slug() == "aquarium/stock.md"));
+    assert!(
+        app.notes.iter().any(|n| n.slug() == "aquarium/water.md"),
+        "and only that one"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn renaming_a_project_takes_its_notes_and_its_chats_with_it() {
+    let dir = std::env::temp_dir().join(format!("pixui-rp-{}", std::process::id()));
+    vault_with(
+        &dir,
+        &[
+            ("aquarium/stock.md", "# Stock\n"),
+            ("aquarium/water.md", "# Water\n"),
+            (
+                ".chats/aquarium/why-shrimp-die.md",
+                "# why shrimp die\n\n## you\n\nwhy\n",
+            ),
+        ],
+    );
+    let mut app = notes::Notes::open(dir.clone());
+    app.rename_project("aquarium", "fishtank");
+
+    assert!(
+        dir.join("fishtank").join("stock.md").exists(),
+        "the folder moved"
+    );
+    assert!(!dir.join("aquarium").exists());
+    assert_eq!(
+        app.notes.iter().filter(|n| n.project == "fishtank").count(),
+        2,
+        "and the notes know where they are"
+    );
+    assert!(
+        app.notes.iter().all(|n| n
+            .path
+            .as_ref()
+            .is_none_or(|p| !p.starts_with(dir.join("aquarium")))),
+        "with their paths pointing at the new folder"
+    );
+    assert_eq!(
+        chat::filed(&dir, "fishtank").len(),
+        1,
+        "and the conversations came too - a project that moved without them \
+         would look like one nobody had talked about"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn deleting_a_project_takes_everything_in_it() {
+    let dir = std::env::temp_dir().join(format!("pixui-dp-{}", std::process::id()));
+    vault_with(
+        &dir,
+        &[
+            ("aquarium/stock.md", "# Stock\n"),
+            ("aquarium/water.md", "# Water\n"),
+            ("bicycle/routes.md", "# Routes\n"),
+            (".chats/aquarium/a.md", "# a\n\n## you\n\nq\n"),
+        ],
+    );
+    let mut app = notes::Notes::open(dir.clone());
+    app.delete_project("aquarium");
+
+    assert!(!dir.join("aquarium").exists());
+    assert!(!app.notes.iter().any(|n| n.project == "aquarium"));
+    assert!(
+        app.notes.iter().any(|n| n.slug() == "bicycle/routes.md"),
+        "and nothing else"
+    );
+    assert!(
+        chat::filed(&dir, "aquarium").is_empty(),
+        "its conversations went with it"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_project_arrives_with_a_note_so_it_can_be_seen() {
+    let dir = std::env::temp_dir().join(format!("pixui-np-{}", std::process::id()));
+    vault_with(&dir, &[("bicycle/routes.md", "# Routes\n")]);
+    let mut app = notes::Notes::open(dir.clone());
+    let made = app.new_project();
+    assert!(!made.is_empty());
+    assert!(dir.join(&made).is_dir(), "the folder is there");
+    assert_eq!(
+        app.notes[app.current].project, made,
+        "and the note being read is the one in it - a project with nothing in \
+         it has no heading, so it would be a folder you could not see"
+    );
+    let again = app.new_project();
+    assert_ne!(again, made, "a second one does not land on the first");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -1782,3 +1782,40 @@ fn what_is_copied_is_what_comes_back() {
     pixui::clipboard::copy("replaced");
     assert_eq!(pixui::clipboard::paste().as_deref(), Some("replaced"));
 }
+
+#[test]
+fn the_other_button_asks_rather_than_takes() {
+    let mut state = UiState::new();
+    let mut canvas = Canvas::new(200, 100);
+    let theme = Theme::default();
+    let rect = Rect::new(10, 10, 50, 20);
+
+    let input = Input {
+        mouse: Point::new(20, 20),
+        mouse_in_window: true,
+        right_pressed: true,
+        ..Default::default()
+    };
+    let mut ui = Ui::begin(&mut canvas, &input, &theme, &mut state);
+    let id = ui.id("row");
+    let resp = ui.interact(id, rect);
+    assert!(
+        resp.right_clicked,
+        "over it, and the other button went down"
+    );
+    assert!(!resp.clicked, "which is not a click");
+    assert!(!resp.held, "and takes nothing: nothing is dragged with it");
+    ui.finish();
+
+    // Somewhere else entirely.
+    let elsewhere = Input {
+        mouse: Point::new(150, 90),
+        mouse_in_window: true,
+        right_pressed: true,
+        ..Default::default()
+    };
+    let mut ui = Ui::begin(&mut canvas, &elsewhere, &theme, &mut state);
+    let id = ui.id("row");
+    assert!(!ui.interact(id, rect).right_clicked);
+    ui.finish();
+}

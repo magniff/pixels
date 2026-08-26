@@ -55,6 +55,12 @@ pub struct Input {
     pub mouse_pressed: bool,
     /// True only on the frame the button came up.
     pub mouse_released: bool,
+    /// True only on the frame the *other* button went down.
+    ///
+    /// Only the press: a right click is a gesture that asks a question rather
+    /// than one that drags something, so nothing needs to know it is being
+    /// held or where it came up.
+    pub right_pressed: bool,
     /// Whether the pointer is inside the window at all.
     pub mouse_in_window: bool,
     /// Accumulated scroll for this frame, in notches.
@@ -92,6 +98,7 @@ impl Input {
     pub fn begin_frame(&mut self) {
         self.mouse_pressed = false;
         self.mouse_released = false;
+        self.right_pressed = false;
         self.wheel = 0.0;
         self.keys.clear();
     }

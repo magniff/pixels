@@ -942,6 +942,17 @@ where
             WindowEvent::CursorLeft { .. } => self.input.mouse_in_window = false,
 
             WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                self.input.right_pressed = true;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+
+            WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..

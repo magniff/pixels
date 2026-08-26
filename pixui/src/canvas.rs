@@ -76,6 +76,16 @@ impl Canvas {
         self.clip = self.clip.intersect(rect);
     }
 
+    /// Draw over everything, whatever was clipping until now.
+    ///
+    /// For a layer: something floating above the interface is not part of the
+    /// pane it was opened over, and a menu cut off at the edge of the drawer it
+    /// came from is a menu with its answers missing.
+    pub fn push_no_clip(&mut self) {
+        self.clip_stack.push(self.clip);
+        self.clip = Rect::new(0, 0, self.width, self.height);
+    }
+
     pub fn pop_clip(&mut self) {
         if let Some(prev) = self.clip_stack.pop() {
             self.clip = prev;

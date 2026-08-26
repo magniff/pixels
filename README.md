@@ -56,7 +56,10 @@ it at a real vault.
 
 **Notes** — a forest of projects. A project is a folder of notes, drawn as a
 tree with a heading you can fold, and a note lying loose at the top of the vault
-stays where it is. Filtered as you type, `Ctrl-n`/`Ctrl-p` to walk.
+stays where it is. The other mouse button on a note offers to rename or delete
+it; on a project, to add a note as well — and deleting either asks first, in the
+same menu, saying what it would take. Filtered as you type, `Ctrl-n`/`Ctrl-p` to
+walk.
 `Cmd-p` opens the whole library to a fuzzy search: `mdsh` finds
 `markdown-showcase.md`, and the letters that answered are lit in the row.
 `cmd-e`, `cmd-n` and `cmd-s` put the keyboard in the editor, the list or the
