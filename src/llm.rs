@@ -82,8 +82,16 @@ everything the file should contain from now on
 
 <delete file=\"old-file.md\"></delete>
 
+<merge into=\"kept.md\" from=\"one.md, two.md\">
+what the one file should say, having read all of them
+</merge>
+
 Use edit to change a few lines of a file and write to lay down a whole one, whether or \
-not it is there yet. The file is named without its folder; leave the attribute off an \
+not it is there yet. Merge folds several files into one and takes the others away, in a \
+single step - do not write one file and delete the others by hand, because those would \
+be accepted separately and a merge half accepted loses a note. The file merged into may \
+be one of the files merged; leave the body of a merge empty to have them joined end to \
+end unchanged, and fill it in when you have something better to say than that. The file is named without its folder; leave the attribute off an \
 edit to mean the file they are looking at, and name a file that was not in the list only \
 when you mean to make it. Line numbers are \
 inclusive, count from one, and are the numbers in the margin - write the replacement \

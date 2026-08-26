@@ -375,6 +375,32 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             // A change the model offered, with the diff it would make.
+            name: "chat-merge",
+            seed: &[
+                ("reading/queue.md", "# Queue\n\n- [ ] Invisible Cities - Calvino\n- [x] A Pattern Language - Alexander\n"),
+                ("reading/patterns.md", "# Patterns\n\nNotes on A Pattern Language, which I finished in March.\n"),
+                (".chats/reading/queue/two-notes-one-subject.md", "# two notes one subject\n\n## you\n\nthese two overlap - fold patterns.md into queue.md\n\n## assistant\n\nThe queue already marks the book done, so the notes belong under it.\n\n<merge into=\"queue.md\" from=\"queue.md, patterns.md\">\n# Queue\n\n- [ ] Invisible Cities - Calvino\n- [x] A Pattern Language - Alexander\n\n## On A Pattern Language\n\nFinished in March.\n</merge>\n"),
+            ],
+            script: [
+                keys(":e queue.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 14,
+            canvas: (768, 470),
+        },
+        Scene {
             name: "chat-project",
             seed: &[
                 ("pixel-editor/rendering.md", "# Rendering\n\nEverything is drawn by hand into a `Vec<u32>`. No GPU canvas underneath and no\nsystem widget anywhere.\n\nA frame costs about a third of a millisecond.\n"),

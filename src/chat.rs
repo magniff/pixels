@@ -232,16 +232,45 @@ pub enum What {
     Write { text: String },
     /// A file that should not be there any more.
     Delete,
+    /// Several files folded into one, and the ones folded in taken away.
+    ///
+    /// Three blocks would do this - write the one, delete the others - but
+    /// they would be accepted one at a time, and a merge half accepted is a
+    /// note duplicated and a note lost. It is one thing, so it is one answer.
+    Merge {
+        /// What is being folded in. The target may be one of them, and then it
+        /// is written rather than removed.
+        from: Vec<String>,
+        /// What the result should say. Empty means the parts, end to end, in
+        /// the order they were named.
+        text: String,
+    },
 }
 
 impl Change {
     /// Lines gone and lines arrived, the way a diff counts them.
-    pub fn tally(&self, before: Option<&str>) -> (usize, usize) {
+    pub fn tally(&self, folder: &Folder) -> (usize, usize) {
         let count = |t: &str| if t.is_empty() { 0 } else { t.lines().count() };
+        let target = folder
+            .lines(self.file.as_ref())
+            .map(|l| l.len())
+            .unwrap_or(0);
         match &self.what {
             What::Edit { from, to, text } => (count(text), to.saturating_sub(*from) + 1),
-            What::Write { text } => (count(text), before.map(count).unwrap_or(0)),
-            What::Delete => (0, before.map(count).unwrap_or(0)),
+            What::Write { text } => (count(text), target),
+            What::Delete => (0, target),
+            // Everything folded in goes away as well as the target being
+            // rewritten, so the count says what the project loses, not what
+            // one file does.
+            What::Merge { from, .. } => {
+                let gone: usize = from
+                    .iter()
+                    .filter(|name| Some(*name) != self.file.as_ref())
+                    .filter_map(|name| folder.lines(Some(name)))
+                    .map(|l| l.len())
+                    .sum();
+                (count(&self.becoming(folder)), target + gone)
+            }
         }
     }
 
@@ -249,7 +278,8 @@ impl Change {
     ///
     /// None when there is nothing there to replace - lines past the end, or a
     /// file that is not there - so the panel can say so instead of guessing.
-    pub fn replacing(&self, lines: Option<&[String]>) -> Option<String> {
+    pub fn replacing(&self, folder: &Folder) -> Option<String> {
+        let lines = folder.lines(self.file.as_ref());
         match &self.what {
             What::Edit { from, to, .. } => {
                 let lines = lines?;
@@ -263,14 +293,27 @@ impl Change {
             // nothing at all when it is not there yet.
             What::Write { .. } => Some(lines.map(|l| l.join("\n")).unwrap_or_default()),
             What::Delete => Some(lines?.join("\n")),
+            // A merge that names a file which is not there has nothing to fold
+            // in, and is a mistake rather than a change.
+            What::Merge { from, .. } => from
+                .iter()
+                .all(|name| folder.lines(Some(name)).is_some())
+                .then(|| lines.map(|l| l.join("\n")).unwrap_or_default()),
         }
     }
 
     /// What it would leave behind in place of that.
-    pub fn becoming(&self) -> String {
+    pub fn becoming(&self, folder: &Folder) -> String {
         match &self.what {
             What::Edit { text, .. } | What::Write { text } => text.clone(),
             What::Delete => String::new(),
+            What::Merge { from, text } if text.is_empty() => from
+                .iter()
+                .filter_map(|name| folder.lines(Some(name)))
+                .map(|l| l.join("\n"))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            What::Merge { text, .. } => text.clone(),
         }
     }
 
@@ -282,6 +325,7 @@ impl Change {
             What::Edit { from, to, .. } => format!("{named}  LINES {from}-{to}"),
             What::Write { .. } => format!("WRITE  {named}"),
             What::Delete => format!("DELETE  {named}"),
+            What::Merge { from, .. } => format!("MERGE  {}  INTO  {named}", from.join(", ")),
         }
     }
 }
@@ -298,19 +342,26 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
     for (kind, tag, open, close) in blocks(reply) {
         let head = &reply[tag..open];
         let body = reply[open..close].trim_matches('\n').to_string();
-        let named = attr(head, "file");
+        // `into` for a merge, which reads as what it is, and `file` for the
+        // rest. Either spelling is taken for either, so a model reaching for
+        // the wrong one is still understood.
+        let named = attr(head, "into").or_else(|| attr(head, "file"));
         let what = match kind {
             "edit" => lines_attr(head).map(|(from, to)| What::Edit {
                 from,
                 to,
                 text: body,
             }),
-            // Both of these are about a file by name, and neither means
-            // anything without one.
-            // `create` as well, because it is the word a model reaches for
-            // and refusing it would be pedantry with a cost.
+            // The rest are about a file by name and none of them means
+            // anything without one. `create` as well as `write`, because it is
+            // the word a model reaches for and refusing it would be pedantry
+            // with a cost.
             "write" | "create" if named.is_some() => Some(What::Write { text: body }),
             "delete" if named.is_some() => Some(What::Delete),
+            "merge" if named.is_some() => {
+                let from = names(head);
+                (!from.is_empty()).then_some(What::Merge { from, text: body })
+            }
             _ => None,
         };
         let shut = close + kind.len() + 3;
@@ -341,7 +392,7 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
 /// which. One walk, so the reader and the writer below cannot disagree about
 /// which block is the second one.
 fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
-    const KINDS: &[&str] = &["edit", "write", "create", "delete"];
+    const KINDS: &[&str] = &["edit", "write", "create", "delete", "merge"];
     let mut out = Vec::new();
     let mut at = 0usize;
     let mut in_code = false;
@@ -429,6 +480,20 @@ fn lines_attr(tag: &str) -> Option<(usize, usize)> {
             Some((one, one))
         }
     }
+}
+
+/// The files a merge is folding in: `from="a.md, b.md"`.
+fn names(tag: &str) -> Vec<String> {
+    attr(tag, "from")
+        .into_iter()
+        .flat_map(|list| {
+            list.split([',', ' '])
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// One quoted attribute out of a tag.
@@ -1264,7 +1329,7 @@ impl Chat {
             proposals(&turn.text)
                 .1
                 .iter()
-                .any(|c| c.state.is_none() && c.replacing(folder.lines(c.file.as_ref())).is_some())
+                .any(|c| c.state.is_none() && c.replacing(folder).is_some())
         })
     }
 
@@ -1300,15 +1365,13 @@ impl Chat {
         ui.space(3);
         let head = ui.alloc(line_h);
         let span = change.headline(&folder.here);
-        let now = folder.lines(change.file.as_ref());
 
         // Settled, so there is nothing left to decide and nothing to compare
         // against: the project has already moved on, and a diff against it now
         // would be a diff of the change with itself. What is worth keeping is
         // what it did, in the shape a diff says it in.
         if let Some(taken) = change.state {
-            let before = now.map(|l| l.join("\n"));
-            let (plus, minus) = change.tally(before.as_deref());
+            let (plus, minus) = change.tally(folder);
             let (word, tint) = if taken {
                 ("APPLIED", th.positive.face)
             } else {
@@ -1327,7 +1390,7 @@ impl Chat {
             ui.draw_text_in(name, word, tint, Align::Right);
             // One line of what it came to, so the summary says what was done
             // and not only how much of it there was.
-            let becoming = change.becoming();
+            let becoming = change.becoming(folder);
             let gist =
                 becoming
                     .lines()
@@ -1346,7 +1409,7 @@ impl Chat {
             return None;
         }
 
-        let Some(before) = change.replacing(now) else {
+        let Some(before) = change.replacing(folder) else {
             // Nothing to act on: lines past the end, a file that is not there,
             // or one being made that already is. Said rather than offered,
             // because there is no honest diff to draw for any of them.
@@ -1360,7 +1423,7 @@ impl Chat {
         };
         let tint = match change.what {
             What::Delete => th.danger.face,
-            What::Write { .. } => th.positive.face,
+            What::Write { .. } | What::Merge { .. } => th.positive.face,
             What::Edit { .. } => th.info.hi,
         };
         font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, tint, true);
@@ -1380,7 +1443,7 @@ impl Chat {
         // the same question - what would this do to what is there - and two
         // answers to it that looked different would be two things to learn.
         let cols = ((width - 12) / font::advance()).max(8) as usize;
-        let pieces = crate::diff::words(&before, &change.becoming());
+        let pieces = crate::diff::words(&before, &change.becoming(folder));
         for row in crate::assist::rows(&pieces, cols).into_iter().take(WHOLE) {
             let at = ui.alloc(line_h);
             crate::assist::draw_row(ui, Rect::new(at.x + 8, at.y, at.w - 8, at.h), &row);

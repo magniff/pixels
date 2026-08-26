@@ -790,6 +790,49 @@ impl Notes {
                 }
                 self.scroll = 0;
             }
+            chat::What::Merge { from, text } => {
+                // The parts, before anything moves: once the target has been
+                // written the sources may already be gone, and a merge that
+                // half happened is the thing this verb exists to prevent.
+                let parts: Vec<String> = from
+                    .iter()
+                    .filter_map(|name| {
+                        self.notes
+                            .iter()
+                            .find(|n| n.project == here && n.filename() == *name)
+                            .map(|n| n.buffer.to_text())
+                    })
+                    .collect();
+                if parts.len() != from.len() {
+                    self.status = "SOME OF THOSE FILES ARE NOT THERE".into();
+                    return;
+                }
+                let body = if text.is_empty() {
+                    parts.join("\n\n")
+                } else {
+                    text.clone()
+                };
+                self.apply_change(&chat::Change {
+                    file: change.file.clone(),
+                    what: chat::What::Write { text: body },
+                    state: None,
+                });
+                for name in from {
+                    // Not the one being merged into, when it is one of them.
+                    if *name == named {
+                        continue;
+                    }
+                    self.apply_change(&chat::Change {
+                        file: Some(name.clone()),
+                        what: chat::What::Delete,
+                        state: None,
+                    });
+                }
+                self.status = format!("MERGED INTO {named}").to_uppercase();
+                if let Some(i) = self.find_note(&named) {
+                    self.current = i;
+                }
+            }
             chat::What::Delete => {
                 let Some(i) = found else {
                     self.status = "THAT FILE IS NOT THERE".into();

@@ -79,7 +79,7 @@ ask for a change.
   came to in tokens
 - A conversation sees the whole project - every file in the folder, numbered -
   and can propose changes to any of them: edit some lines, write a whole file,
-  or delete one
+  delete one, or merge several into one and take the rest away
 - It proposes rather than writes: the reply carries a block against numbered
   lines, and you get the diff with **ACCEPT** and
   **REJECT** before anything moves. What you decided is written into the

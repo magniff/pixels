@@ -3354,6 +3354,14 @@ fn a_line_that_is_not_a_command_is_a_question() {
     );
 }
 
+/// One file, as the panel would see the project it is in.
+fn folder_of<'a>(name: &str, lines: &'a [String]) -> chat::Folder<'a> {
+    chat::Folder {
+        here: name.to_string(),
+        files: vec![(name.to_string(), lines)],
+    }
+}
+
 #[test]
 fn a_reply_is_split_into_what_it_said_and_what_it_offered() {
     let reply = "Splitting that line reads better.\n\n<edit lines=\"6-7\">\nfirst new line\nsecond new line\n</edit>\n\nSay the word.";
@@ -3395,7 +3403,7 @@ fn a_single_line_and_a_deletion_are_both_edits() {
     );
     let (_, gone) = chat::proposals("<edit lines=\"4-5\">\n</edit>");
     assert_eq!(
-        gone[0].becoming(),
+        gone[0].becoming(&folder_of("n.md", &[])),
         "",
         "an empty block takes the lines away"
     );
@@ -3427,15 +3435,13 @@ fn a_change_to_lines_that_are_not_there_replaces_nothing() {
         },
         state: None,
     };
-    assert_eq!(
-        edit(2, 3).replacing(Some(&note)).as_deref(),
-        Some("two\nthree")
-    );
+    let folder = folder_of("n.md", &note);
+    assert_eq!(edit(2, 3).replacing(&folder).as_deref(), Some("two\nthree"));
     assert!(
-        edit(9, 9).replacing(Some(&note)).is_none(),
+        edit(9, 9).replacing(&folder).is_none(),
         "so the panel can say so instead of guessing"
     );
-    assert!(edit(3, 1).replacing(Some(&note)).is_none());
+    assert!(edit(3, 1).replacing(&folder).is_none());
 }
 
 #[test]
@@ -3575,7 +3581,8 @@ fn a_settled_change_says_how_much_it_moved() {
         },
         state: Some(true),
     };
-    assert_eq!(two_for_one.tally(None), (2, 1), "+2 -1");
+    let empty = folder_of("n.md", &[]);
+    assert_eq!(two_for_one.tally(&empty), (2, 1), "+2 -1");
     let gone = chat::Change {
         file: None,
         what: chat::What::Edit {
@@ -3585,7 +3592,7 @@ fn a_settled_change_says_how_much_it_moved() {
         },
         state: Some(true),
     };
-    assert_eq!(gone.tally(None), (0, 5), "taking lines out adds nothing");
+    assert_eq!(gone.tally(&empty), (0, 5), "taking lines out adds nothing");
 }
 
 #[test]
@@ -3796,13 +3803,17 @@ fn writing_over_a_file_counts_what_it_replaces() {
         },
         state: None,
     };
-    assert_eq!(write.tally(None), (3, 0), "a file that was not there");
-    assert_eq!(write.tally(Some("old\nold")), (3, 2), "and one that was");
-
     let old: Vec<String> = vec!["old".into(), "old".into()];
-    assert_eq!(write.replacing(Some(&old)).as_deref(), Some("old\nold"));
+    let empty = chat::Folder {
+        here: "here.md".into(),
+        files: vec![],
+    };
+    let there = folder_of("a.md", &old);
+    assert_eq!(write.tally(&empty), (3, 0), "a file that was not there");
+    assert_eq!(write.tally(&there), (3, 2), "and one that was");
+    assert_eq!(write.replacing(&there).as_deref(), Some("old\nold"));
     assert_eq!(
-        write.replacing(None).as_deref(),
+        write.replacing(&empty).as_deref(),
         Some(""),
         "nothing to replace yet"
     );
@@ -3941,5 +3952,131 @@ fn a_note_is_opened_by_name_wherever_it_is_filed() {
         "and by where it sits, which is the unambiguous way to say it"
     );
     assert!(app.find_note("nowhere.md").is_none(), "and not invented");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_merge_names_what_it_folds_in() {
+    let reply = "Both say the same thing.\n\n<merge into=\"reading.md\" from=\"queue.md, patterns.md\">\nthe one file\n</merge>";
+    let (prose, changes) = chat::proposals(reply);
+    assert_eq!(prose, "Both say the same thing.");
+    assert_eq!(changes[0].file.as_deref(), Some("reading.md"));
+    assert_eq!(
+        changes[0].what,
+        chat::What::Merge {
+            from: vec!["queue.md".into(), "patterns.md".into()],
+            text: "the one file".into()
+        }
+    );
+    let (_, spaced) = chat::proposals("<merge into=\"a.md\" from=\"b.md c.md\"></merge>");
+    assert_eq!(
+        spaced[0].what,
+        chat::What::Merge {
+            from: vec!["b.md".into(), "c.md".into()],
+            text: String::new()
+        },
+        "named with spaces or commas, since it will use both"
+    );
+    let (_, none) = chat::proposals("<merge into=\"a.md\">nothing to fold</merge>");
+    assert!(none.is_empty(), "a merge with nothing to merge is not one");
+}
+
+#[test]
+fn an_empty_merge_joins_the_parts_as_they_are() {
+    let one: Vec<String> = vec!["# One".into(), "first".into()];
+    let two: Vec<String> = vec!["# Two".into(), "second".into()];
+    let folder = chat::Folder {
+        here: "one.md".into(),
+        files: vec![
+            ("one.md".to_string(), &one[..]),
+            ("two.md".to_string(), &two[..]),
+        ],
+    };
+    let merge = chat::Change {
+        file: Some("both.md".into()),
+        what: chat::What::Merge {
+            from: vec!["one.md".into(), "two.md".into()],
+            text: String::new(),
+        },
+        state: None,
+    };
+    assert_eq!(
+        merge.becoming(&folder),
+        "# One\nfirst\n\n# Two\nsecond",
+        "end to end, in the order they were named"
+    );
+    assert_eq!(
+        merge.tally(&folder),
+        (5, 4),
+        "five arriving - the blank line between the parts is one of them - and four lost"
+    );
+    assert!(
+        merge.replacing(&folder).is_some(),
+        "both parts are there, so it can be done"
+    );
+
+    let missing = chat::Change {
+        file: Some("both.md".into()),
+        what: chat::What::Merge {
+            from: vec!["gone.md".into()],
+            text: String::new(),
+        },
+        state: None,
+    };
+    assert!(
+        missing.replacing(&folder).is_none(),
+        "and a part that is not there makes it a mistake rather than a change"
+    );
+}
+
+#[test]
+fn a_merge_happens_all_at_once_or_not_at_all() {
+    let dir = std::env::temp_dir().join(format!("pixui-merge-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("reading")).unwrap();
+    std::fs::write(
+        dir.join("reading").join("queue.md"),
+        "# Queue\n\n- a book\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("reading").join("patterns.md"),
+        "# Patterns\n\nnotes\n",
+    )
+    .unwrap();
+
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "reading/queue.md")
+        .unwrap();
+    app.apply_change(&chat::Change {
+        file: Some("queue.md".into()),
+        what: chat::What::Merge {
+            from: vec!["queue.md".into(), "patterns.md".into()],
+            text: "# Queue\n\n- a book\n\nnotes".into(),
+        },
+        state: None,
+    });
+
+    let kept = app
+        .notes
+        .iter()
+        .find(|n| n.slug() == "reading/queue.md")
+        .expect("the one merged into stays");
+    assert_eq!(kept.buffer.to_text(), "# Queue\n\n- a book\n\nnotes");
+    assert!(
+        !app.notes.iter().any(|n| n.slug() == "reading/patterns.md"),
+        "and the one folded in is gone"
+    );
+    assert!(
+        !dir.join("reading").join("patterns.md").exists(),
+        "from the disk too"
+    );
+    assert!(
+        dir.join("reading").join("queue.md").exists(),
+        "the target is not deleted for being one of its own parts"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
