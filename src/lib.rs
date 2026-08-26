@@ -1227,7 +1227,9 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             }
             chat::Outcome::Apply(edit) => {
                 app.apply_edit(&edit);
-                talk.settled(&edit, true);
+                // The chat has already written the decision into its own
+                // transcript; this is what puts that on disk.
+                let _ = talk.save(&app.notes_dir);
                 app.chat = Some(talk);
             }
             chat::Outcome::Close => {

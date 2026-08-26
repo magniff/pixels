@@ -3366,7 +3366,8 @@ fn a_reply_is_split_into_what_it_said_and_what_it_offered() {
         vec![chat::Edit {
             from: 6,
             to: 7,
-            text: "first new line\nsecond new line".into()
+            text: "first new line\nsecond new line".into(),
+            state: None,
         }]
     );
 }
@@ -3379,7 +3380,8 @@ fn a_single_line_and_a_deletion_are_both_edits() {
         vec![chat::Edit {
             from: 4,
             to: 4,
-            text: "just this".into()
+            text: "just this".into(),
+            state: None,
         }]
     );
     let (_, gone) = chat::proposals("<edit lines=\"4-5\">\n</edit>");
@@ -3407,12 +3409,14 @@ fn a_change_to_lines_that_are_not_there_replaces_nothing() {
         from: 2,
         to: 3,
         text: "x".into(),
+        state: None,
     };
     assert_eq!(good.replacing(&note).as_deref(), Some("two\nthree"));
     let past = chat::Edit {
         from: 9,
         to: 9,
         text: "x".into(),
+        state: None,
     };
     assert!(
         past.replacing(&note).is_none(),
@@ -3422,6 +3426,7 @@ fn a_change_to_lines_that_are_not_there_replaces_nothing() {
         from: 3,
         to: 1,
         text: "x".into(),
+        state: None,
     };
     assert!(backwards.replacing(&note).is_none());
 }
@@ -3490,5 +3495,87 @@ fn help_lists_every_command_there_is() {
     assert!(
         talk.turns.is_empty(),
         "and asking for help is not a question"
+    );
+}
+
+#[test]
+fn a_change_that_was_decided_stays_decided() {
+    // The bug this exists for: the decision lived in memory, so a conversation
+    // opened again offered a change that had already been taken.
+    let reply = "Split it.\n\n<edit lines=\"6-6\">\none\ntwo\n</edit>";
+    let settled = chat::settle(reply, 0, true);
+    let (_, edits) = chat::proposals(&settled);
+    assert_eq!(
+        edits[0].state,
+        Some(true),
+        "written into the block: {settled}"
+    );
+    assert_eq!(edits[0].from, 6, "and the change itself is untouched");
+    assert_eq!(edits[0].text, "one\ntwo");
+
+    let rejected = chat::settle(&settled, 0, false);
+    let (_, edits) = chat::proposals(&rejected);
+    assert_eq!(
+        edits[0].state,
+        Some(false),
+        "and a second thought replaces the first"
+    );
+    assert_eq!(
+        rejected.matches("state").count(),
+        1,
+        "without leaving the old one behind: {rejected}"
+    );
+}
+
+#[test]
+fn a_decision_survives_the_file_it_is_written_in() {
+    let dir = std::env::temp_dir().join(format!("pixui-settle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut talk = chat::Chat::new("welcome.md".into());
+    talk.turns = vec![
+        Turn {
+            mine: true,
+            text: "tighten line 6".into(),
+        },
+        Turn {
+            mine: false,
+            text: "Like so.\n\n<edit lines=\"6-6\" state=\"applied\">\ntighter\n</edit>".into(),
+        },
+    ];
+    talk.save(&dir).unwrap();
+    let back = chat::Chat::open(talk.path.as_ref().unwrap(), "welcome.md".into());
+    let (_, edits) = chat::proposals(&back.turns[1].text);
+    assert_eq!(edits[0].state, Some(true), "still applied a day later");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_settled_change_says_how_much_it_moved() {
+    let two_for_one = chat::Edit {
+        from: 6,
+        to: 6,
+        text: "one\ntwo".into(),
+        state: Some(true),
+    };
+    assert_eq!(two_for_one.tally(), (2, 1), "+2 -1");
+    let gone = chat::Edit {
+        from: 4,
+        to: 8,
+        text: String::new(),
+        state: Some(true),
+    };
+    assert_eq!(gone.tally(), (0, 5), "a deletion adds nothing");
+}
+
+#[test]
+fn only_the_block_that_was_decided_is_marked() {
+    let two = "<edit lines=\"1-1\">a</edit>\n\n<edit lines=\"5-5\">b</edit>";
+    let (_, edits) = chat::proposals(&chat::settle(two, 1, true));
+    assert_eq!(edits[0].state, None, "the first is still open");
+    assert_eq!(
+        edits[1].state,
+        Some(true),
+        "the second is the one that was answered"
     );
 }

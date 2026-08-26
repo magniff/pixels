@@ -153,10 +153,6 @@ pub struct Chat {
     /// the vault list and the note. Told to it once by the application, which
     /// is the thing that assembles them, rather than worked out every frame.
     pub overhead: usize,
-    /// Which proposals have been settled, and how, by turn and position in it.
-    /// A change is offered until it is answered, and then it says what happened
-    /// instead of asking again.
-    applied: std::collections::HashMap<(usize, usize), bool>,
 }
 
 /// A conversation on disk, as the picker lists it.
@@ -192,10 +188,29 @@ pub struct Edit {
     pub to: usize,
     /// What those lines should become. Empty means delete them.
     pub text: String,
+    /// What was decided about it, once something was. Kept in the transcript
+    /// rather than in memory: a conversation reopened tomorrow should not offer
+    /// again a change you took this morning, and the only place tomorrow can
+    /// learn that is the file.
+    pub state: Option<bool>,
 }
 
 impl Edit {
+    /// Lines gone and lines arrived, the way a diff counts them.
+    pub fn tally(&self) -> (usize, usize) {
+        let gone = self.to.saturating_sub(self.from) + 1;
+        let here = if self.text.is_empty() {
+            0
+        } else {
+            self.text.lines().count()
+        };
+        (here, gone)
+    }
+
     /// The lines it would replace, as they are now.
+    ///
+    /// None when they are not there any more, so the panel can say so instead
+    /// of guessing at what it would be changing.
     pub fn replacing(&self, lines: &[String]) -> Option<String> {
         let from = self.from.checked_sub(1)?;
         if from >= lines.len() || self.to < self.from {
@@ -214,40 +229,101 @@ impl Edit {
 pub fn proposals(reply: &str) -> (String, Vec<Edit>) {
     let mut prose = String::new();
     let mut edits = Vec::new();
-    let mut rest = reply;
-    let mut in_code = false;
-    while let Some(at) = rest.find("<edit") {
-        // A block inside a fence is a block being talked about, not one being
-        // made. Counting fences up to the marker is enough to tell which.
-        in_code ^= fences(&rest[..at]);
-        let head = &rest[..at];
-        if in_code {
-            prose.push_str(&rest[..at + 5]);
-            rest = &rest[at + 5..];
-            continue;
-        }
-        let Some(open) = rest[at..].find('>').map(|i| at + i + 1) else {
-            break;
-        };
-        let Some(close) = rest[open..].find("</edit>").map(|i| open + i) else {
-            break;
-        };
-        if let Some(range) = lines_attr(&rest[at..open]) {
-            edits.push(Edit {
-                from: range.0,
-                to: range.1,
-                text: rest[open..close].trim_matches('\n').to_string(),
-            });
-            prose.push_str(head);
-        } else {
+    let mut at = 0;
+    for (tag, open, close) in blocks(reply) {
+        match lines_attr(&reply[tag..open]) {
+            Some((from, to)) => {
+                prose.push_str(&reply[at..tag]);
+                edits.push(Edit {
+                    from,
+                    to,
+                    text: reply[open..close].trim_matches('\n').to_string(),
+                    state: state_attr(&reply[tag..open]),
+                });
+            }
             // Not a range this understands. Left in the prose rather than
             // swallowed, so a malformed block is visible instead of missing.
-            prose.push_str(&rest[..close + 7]);
+            None => prose.push_str(&reply[at..close + 7]),
         }
-        rest = &rest[close + 7..];
+        at = close + 7;
     }
-    prose.push_str(rest);
+    prose.push_str(&reply[at..]);
     (prose.trim().to_string(), edits)
+}
+
+/// Where the edit blocks are: the tag's start, where its body starts, and
+/// where its body ends.
+///
+/// A block inside a fence is a block being talked about rather than one being
+/// made, and counting the fences passed on the way to it is enough to tell
+/// which. One walk, so the reader and the writer below cannot disagree about
+/// which block is the second one.
+fn blocks(text: &str) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    let mut in_code = false;
+    while let Some(rel) = text[at..].find("<edit") {
+        let start = at + rel;
+        in_code ^= fences(&text[at..start]);
+        if in_code {
+            at = start + 5;
+            continue;
+        }
+        let Some(open) = text[start..].find('>').map(|i| start + i + 1) else {
+            break;
+        };
+        let Some(close) = text[open..].find("</edit>").map(|i| open + i) else {
+            break;
+        };
+        out.push((start, open, close));
+        at = close + 7;
+    }
+    out
+}
+
+/// Write down what was decided about the `nth` change in a reply.
+///
+/// Into the tag, so it is carried by the transcript and is still true when the
+/// conversation is opened again.
+pub fn settle(text: &str, nth: usize, taken: bool) -> String {
+    let mut seen = 0;
+    for (tag, open, _) in blocks(text) {
+        if lines_attr(&text[tag..open]).is_none() {
+            continue;
+        }
+        if seen == nth {
+            let word = if taken { "applied" } else { "rejected" };
+            let bare = strip_state(&text[tag..open]);
+            let bare = bare.trim_end().trim_end_matches('>').trim_end();
+            return format!("{}{bare} state=\"{word}\">{}", &text[..tag], &text[open..]);
+        }
+        seen += 1;
+    }
+    text.to_string()
+}
+
+/// The tag without any decision already written into it.
+fn strip_state(tag: &str) -> String {
+    let Some(at) = tag.find("state") else {
+        return tag.to_string();
+    };
+    let rest = &tag[at..];
+    let end = rest
+        .match_indices('"')
+        .nth(1)
+        .map(|(i, _)| at + i + 1)
+        .unwrap_or(tag.len());
+    format!("{}{}", &tag[..at], &tag[end..])
+}
+
+/// `state="applied"`, if a decision was written into the tag.
+fn state_attr(tag: &str) -> Option<bool> {
+    let at = tag.find("state")?;
+    match tag[at..].split('"').nth(1)?.trim() {
+        "applied" => Some(true),
+        "rejected" => Some(false),
+        _ => None,
+    }
 }
 
 /// Whether an odd number of code fences opened in this text.
@@ -294,7 +370,6 @@ impl Chat {
             scroll: ScrollState::default(),
             follow: true,
             overhead: 0,
-            applied: std::collections::HashMap::new(),
         }
     }
 
@@ -384,20 +459,6 @@ impl Chat {
             // asked, and asking it again is a matter of pressing Enter rather
             // than typing it out a second time.
             Err(why) => self.failed = Some(why),
-        }
-    }
-
-    /// Remember what happened to a proposal, so it is not offered again.
-    pub fn settled(&mut self, edit: &Edit, taken: bool) {
-        for (i, turn) in self.turns.iter().enumerate() {
-            if turn.mine {
-                continue;
-            }
-            for (j, other) in proposals(&turn.text).1.iter().enumerate() {
-                if other == edit {
-                    self.applied.insert((i, j), taken);
-                }
-            }
         }
     }
 
@@ -985,8 +1046,8 @@ impl Chat {
                     },
                 );
                 for (j, edit) in edits.iter().enumerate() {
-                    if let Some(taken) = self.offer(ui, width, note, edit, (i, j)) {
-                        answered = Some((edit.clone(), taken));
+                    if let Some(taken) = self.offer(ui, width, note, edit) {
+                        answered = Some((i, j, edit.clone(), taken));
                     }
                 }
             }
@@ -1065,10 +1126,13 @@ impl Chat {
             Align::Right,
         );
         match answered {
-            Some((edit, true)) => Outcome::Apply(edit),
-            Some((edit, false)) => {
-                self.settled(&edit, false);
-                Outcome::Save
+            Some((i, j, edit, taken)) => {
+                self.turns[i].text = settle(&self.turns[i].text, j, taken);
+                if taken {
+                    Outcome::Apply(edit)
+                } else {
+                    Outcome::Save
+                }
             }
             None => outcome,
         }
@@ -1095,19 +1159,54 @@ impl Chat {
     /// model was shown, which is the whole safety of this: if the lines have
     /// moved since it answered, what is drawn is the nonsense that would
     /// actually happen, and nobody presses accept on nonsense.
-    fn offer(
-        &self,
-        ui: &mut Ui,
-        width: i32,
-        note: &[String],
-        edit: &Edit,
-        at: (usize, usize),
-    ) -> Option<bool> {
+    fn offer(&self, ui: &mut Ui, width: i32, note: &[String], edit: &Edit) -> Option<bool> {
         let th = *ui.theme;
         let line_h = font::line_h();
         ui.space(3);
         let head = ui.alloc(line_h);
-        let settled = self.applied.get(&at).copied();
+        let span = if edit.from == edit.to {
+            format!("LINE {}", edit.from)
+        } else {
+            format!("LINES {}-{}", edit.from, edit.to)
+        };
+        // Settled, so there is nothing left to decide and nothing to compare
+        // against: the note has already moved on, and a diff against it now
+        // would be a diff of the change with itself. What is worth keeping is
+        // what it did, in the shape a diff says it in.
+        if let Some(taken) = edit.state {
+            let (plus, minus) = edit.tally();
+            let (word, tint) = if taken {
+                ("APPLIED", th.positive.face)
+            } else {
+                ("REJECTED", th.ink_soft)
+            };
+            font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, th.ink_soft, false);
+            let counts = format!("+{plus} -{minus}");
+            let at_x = head.right() - font::text_width(&counts);
+            font::draw_text_styled(ui.canvas, at_x, head.y, &counts, tint, true);
+            let name = Rect::new(
+                head.x,
+                head.y,
+                head.w - font::text_width(&counts) - 8,
+                head.h,
+            );
+            ui.draw_text_in(name, word, tint, Align::Right);
+            // One line of what it came to, so the summary says what was done
+            // and not only how much of it there was.
+            let gist = edit
+                .text
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("(the lines were taken out)");
+            let row = ui.alloc(line_h);
+            ui.draw_text_in(
+                Rect::new(row.x + 8, row.y, row.w - 8, row.h),
+                &one_line(gist, ((row.w - 16) / font::advance()).max(8) as usize),
+                th.ink_soft,
+                Align::Left,
+            );
+            return None;
+        }
         let Some(before) = edit.replacing(note) else {
             ui.draw_text_in(
                 head,
@@ -1120,28 +1219,17 @@ impl Chat {
             );
             return None;
         };
-        let span = if edit.from == edit.to {
-            format!("LINE {}", edit.from)
-        } else {
-            format!("LINES {}-{}", edit.from, edit.to)
-        };
         font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, th.info.hi, true);
         // Both answers, side by side and equally reachable. A change offered
         // with only a way to take it is a change you have to take.
         let mut answer = None;
-        match settled {
-            Some(true) => ui.draw_text_in(head, "APPLIED", th.positive.face, Align::Right),
-            Some(false) => ui.draw_text_in(head, "REJECTED", th.ink_soft, Align::Right),
-            None => {
-                let no = Rect::new(head.right() - 42, head.y - 2, 42, 13);
-                let yes = Rect::new(no.x - 46, head.y - 2, 44, 13);
-                if ui.button_at(yes, "ACCEPT", pixui::Tone::Positive).clicked {
-                    answer = Some(true);
-                }
-                if ui.button_at(no, "REJECT", pixui::Tone::Neutral).clicked {
-                    answer = Some(false);
-                }
-            }
+        let no = Rect::new(head.right() - 42, head.y - 2, 42, 13);
+        let yes = Rect::new(no.x - 46, head.y - 2, 44, 13);
+        if ui.button_at(yes, "ACCEPT", pixui::Tone::Positive).clicked {
+            answer = Some(true);
+        }
+        if ui.button_at(no, "REJECT", pixui::Tone::Neutral).clicked {
+            answer = Some(false);
         }
 
         // The diff, drawn the way the assistant's own block draws one: this is

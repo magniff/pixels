@@ -349,6 +349,32 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             // A change the model offered, with the diff it would make.
+            name: "chat-settled",
+            seed: &[(
+                "chats/welcome/tighten-the-opening.md",
+                "# tighten the opening\n\n## you\n\nline 6 is doing too much, split it\n\n## assistant\n\nIt runs three claims together. Split at the colon and let the second half stand on its own.\n\n<edit lines=\"6-6\" state=\"applied\">\nEverything you can see is a pixel buffer.\nThe sidebar, the caret and the save dialog are all drawn the same way.\n</edit>\n\n## you\n\nand line 7\n\n## assistant\n\nThat one is fine as it stands.\n",
+            )],
+            script: [
+                keys(":e welcome.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 14,
+            canvas: (768, 470),
+        },
+        Scene {
+            // A change the model offered, with the diff it would make.
             name: "chat-diff",
             seed: &[(
                 "chats/welcome/tighten-the-opening.md",
