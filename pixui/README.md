@@ -87,6 +87,30 @@ CPU path upscales first and hands the platform 3.3M pixels; the GPU path uploads
 the canvas *unscaled* — 36x less data — and magnifies it in a two-line fragment
 shader. That difference decides whether 120Hz is reachable at all.
 
+**Sharing the GPU.** Which makes the GPU backend the right default, and makes it
+the wrong one for the minutes an application spends *computing* on the same
+card. There is one queue and a command buffer runs to completion, so a frame
+submitted behind a long dispatch waits for the whole of it. Measured with a
+language model reading a question on a worker thread beside an animating window:
+
+| presenting on | fps while it read | worst frame |
+|---|---|---|
+| GPU | 50–87 | 200 ms |
+| CPU | 111–119 | 9.7 ms |
+
+Nothing about the CPU path got faster. It simply was not in the queue.
+`Ui::share_gpu()`, called each frame it is true of the way a repaint is asked
+for, hands the window over to it; the default presenter holds both and swaps.
+
+One way only. Once softbuffer has presented to a window, wgpu's surface on it is
+finished — every acquire returns `Occluded`, so the GPU presenter draws nothing
+and the window sits on the last frame the CPU drew. Reconfiguring the swapchain
+does not revive it and neither does building a new presenter; both were tried.
+So the GPU is given up once: an application that never computes on it keeps it
+for the whole run, and one that does spends the rest of the run at 11ms a frame
+— which, with frames drawn only when something moves, is nothing while sitting
+still and ~89 fps while typing.
+
 ## Not done
 
 - **ASCII only.** The 5x7 bitmap font covers printable ASCII. Shaping and IME

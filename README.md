@@ -77,9 +77,9 @@ ask for a change.
 - Qwen3, Qwen3.5 or GPT-OSS 20B through llama.cpp, on the GPU where there is
   one; no key, no account, and nothing leaves the machine unless you switch the
   next one on
-- **Working sums out** rather than remembering them, and **knowing what day it
-  is**, which are two things a language model cannot do and does not know it
-  cannot do. Both happen on the machine, so both are always on
+- **Working sums out** rather than remembering them, and **knowing what the
+  time and the date are**, which are two things a language model cannot do and
+  does not know it cannot do. Both happen on the machine, so both are always on
 - **Looking things up**, off by default: the weather anywhere, an encyclopaedia,
   the newest release of a project on GitHub, and any page you or it names. Real
   APIs rather than a scraped search engine, so there is still no key and no
@@ -108,7 +108,11 @@ ask for a change.
 - The answer arrives as a word-level diff, and the note is not touched until
   you keep it — `Cmd-Enter` again, or **APPLY**
 - The answer arrives word by word rather than all at once, and **STOP** gives up
-  on one you no longer want — what it had got to is what you keep
+  on one you no longer want — what it had got to is what you keep. Reading the
+  question is the slow half and it counts itself out loud, so the wait says how
+  far along it is rather than that it is busy; stopping lands there too
+- While it works, the window steps off the GPU rather than queueing behind it —
+  see below
 - Asking again refines the suggestion rather than starting over
 - Settings fetches the weights for you, and can be switched off entirely
 
@@ -140,12 +144,24 @@ the shape of the whole app rather than overflowing it.
 an immediate-mode widget set, floating layers, and a swappable presenter with
 CPU (softbuffer) and GPU (wgpu) backends. It draws a frame when there is a
 reason to and not otherwise: a spring in flight or a blinking caret keeps a
-clock running, and a window sitting still costs nothing to sit still. It is a path dependency of this app
-rather than the point of the repo, and `pixui/README.md` covers it properly.
+clock running, and a window sitting still costs nothing to sit still.
+
+It also knows how to get out of its own way. The model runs on the same GPU the
+window is drawn on, and a Metal command buffer runs to completion — so a frame
+arriving behind a chunk of the question waited for all of it, and the window
+fell to 15 frames a second with 400ms gaps. `Ui::share_gpu` says *something else
+needs this more*, and the presenter answers by drawing on the CPU instead: not
+faster, 11ms a frame against 1.5ms, but not in the queue. 85 frames a second
+through the same work. It is given up once and not taken back, because a window
+softbuffer has drawn on never accepts wgpu again — every acquire after that
+comes back occluded, which looks exactly like a hang.
+
+It is a path dependency of this app rather than the point of the repo, and
+`pixui/README.md` covers it properly.
 
 ```sh
 cargo run --release -- --shots      # regenerate screenshots/
-cargo test --workspace              # 293 tests
+cargo test --workspace              # 405 tests
 PIXUI_PROFILE=1 cargo run --release # live frame breakdown
 ```
 
