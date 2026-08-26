@@ -29,7 +29,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut tick = |p: notes::llm::Progress| {
             eprint!(
                 "\r[{} {} tokens, {:.0}/s, {:.1}s]   ",
-                if p.deliberating { "thinking" } else { "writing" },
+                if p.deliberating {
+                    "thinking"
+                } else {
+                    "writing"
+                },
                 p.written,
                 p.rate(),
                 p.elapsed.as_secs_f32()

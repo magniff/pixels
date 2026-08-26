@@ -178,7 +178,11 @@ fn render(model: &LlamaModel, system: &str, user: &str, thinks: bool) -> Result<
 
 /// What to ask the model to do, which is the same whichever model it is.
 fn instruction(ask: &Ask) -> String {
-    format!("Text:\n{}\n\nInstruction: {}", ask.source, ask.request.trim())
+    format!(
+        "Text:\n{}\n\nInstruction: {}",
+        ask.source,
+        ask.request.trim()
+    )
 }
 
 /// Arrange to leave without running the rest of the C++ teardown.

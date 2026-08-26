@@ -244,12 +244,7 @@ pub fn run() -> std::io::Result<()> {
         Scene {
             // A pattern half typed: vim lights the hits before you commit.
             name: "incsearch",
-            script: [
-                keys(":e markdown-showcase.md"),
-                keys("\n"),
-                keys("/ital"),
-            ]
-            .concat(),
+            script: [keys(":e markdown-showcase.md"), keys("\n"), keys("/ital")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
             double_click: false,

@@ -296,7 +296,10 @@ pub fn search(notes: &[Candidate], query: &str) -> Vec<Hit> {
         // `.md`, so scoring against it means the letters m and d match every
         // note in the library and the ranking is decided by an accident of
         // filing rather than by what anybody typed.
-        let stem = cand.file.rsplit_once('.').map_or(&cand.file[..], |(s, _)| s);
+        let stem = cand
+            .file
+            .rsplit_once('.')
+            .map_or(&cand.file[..], |(s, _)| s);
         let on_title = fuzzy(&cand.title, needle).map(|(s, at)| (s, On::Title, at));
         let on_file = fuzzy(stem, needle).map(|(s, at)| (s - 1, On::File, at));
         let best = match (on_title, on_file) {
@@ -332,8 +335,8 @@ pub fn fuzzy(text: &str, needle: &str) -> Option<(i32, Vec<usize>)> {
     let mut from = 0usize;
     let mut last: Option<usize> = None;
     for want in needle.chars().flat_map(char::to_lowercase) {
-        let found = (from..hay.len())
-            .find(|&i| hay[i].to_lowercase().next().is_some_and(|c| c == want))?;
+        let found =
+            (from..hay.len()).find(|&i| hay[i].to_lowercase().next().is_some_and(|c| c == want))?;
         score += 1;
         if last == Some(found.wrapping_sub(1)) {
             // Contiguous, which is the strongest signal there is that this is
