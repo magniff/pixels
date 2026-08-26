@@ -27,26 +27,31 @@ const RESERVE: usize = 2048;
 ///
 /// Reading it is one call into llama.cpp that does not come back until it is
 /// done, and on a Mac it is the GPU doing the reading - the same GPU the window
-/// is drawn on. A whole batch at once is a single dispatch long enough to hold
-/// every frame behind it: measured on the 9B this ships against, 2,048 tokens
-/// took 3.8 seconds, which is 3.8 seconds of a window that does not repaint,
-/// does not highlight what the pointer is over, and cannot be told to stop.
+/// is drawn on. Metal runs a command buffer to completion, so however long one
+/// of these takes is how long a frame can be made to wait.
 ///
-/// Smaller is not slower. Reading the same 2,835-token question, twice each:
+/// Measured at the window rather than at the worker, which is where the
+/// complaint is: a window drawing an animation at 120fps, with a real 4,835
+/// token question read on a worker thread beside it.
 ///
-/// | tokens per read | whole question | longest single read |
-/// | --- | --- | --- |
-/// | 2048 | 8.42 s | 3763 ms |
-/// | 256 | 7.99 s | 472 ms |
-/// | 128 | 8.55 s | 250 ms |
-/// | 64 | 13.60 s | 196 ms |
+/// | tokens per read | whole answer | frames a second while reading | worst frame |
+/// | --- | --- | --- | --- |
+/// | 2048 | 9.4 s | 13-32 | 417 ms |
+/// | 256 | 9.4 s | 10-33 | 425 ms |
+/// | 128 | 9.6 s | 50-87 | 200 ms |
+/// | 64 | 14.4 s | 72-78 | 150 ms |
 ///
-/// So this is not a trade of speed for smoothness - 256 is the fastest of the
-/// four as well as eight times the shortest stall, and the same shape holds on
-/// the 1.7B (2.35 s to 2.25 s). Below it the per-dispatch overhead starts to
-/// dominate and 64 falls off a cliff, which is why this is a measured number
-/// and not simply the smallest one.
-const MOUTHFUL: usize = 256;
+/// So 128: four times the frame rate for two percent of the time. 64 buys
+/// another 50ms of worst case for half again as long to answer, which is the
+/// wrong way round - and the worst frame stops improving there anyway, so
+/// something other than this sets a floor around 150ms and going smaller only
+/// pays the per-call overhead to find it.
+///
+/// Letting the GPU drain between mouthfuls was tried and does nothing: resting
+/// 4ms and 10ms after each one left the worst frame at 187-205ms, unchanged,
+/// for the time the resting cost. The stall is a frame arriving behind a
+/// dispatch that has already started, and only a shorter dispatch helps.
+const MOUTHFUL: usize = 128;
 
 /// Where the weights are, unless `PIXUI_MODEL` says otherwise.
 pub fn default_path() -> PathBuf {
