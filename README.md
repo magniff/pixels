@@ -77,8 +77,11 @@ ask for a change.
   so it can be picked up again later. `/help` lists what can be typed, Tab
   finishes a half-typed command, and the title bar says what the last question
   came to in tokens
-- Asked to change the note, it proposes rather than writes: the reply carries an
-  edit against numbered lines, and you get the diff with **ACCEPT** and
+- A conversation sees the whole project - every file in the folder, numbered -
+  and can propose changes to any of them: edit some lines, write a whole file,
+  or delete one
+- It proposes rather than writes: the reply carries a block against numbered
+  lines, and you get the diff with **ACCEPT** and
   **REJECT** before anything moves. What you decided is written into the
   transcript, so a change taken today is a `+2 -1` summary tomorrow rather than
   a question asked twice. The field is held while one is waiting: a change

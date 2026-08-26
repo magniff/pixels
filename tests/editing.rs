@@ -3366,10 +3366,13 @@ fn a_reply_is_split_into_what_it_said_and_what_it_offered() {
     assert!(prose.ends_with("Say the word."));
     assert_eq!(
         edits,
-        vec![chat::Edit {
-            from: 6,
-            to: 7,
-            text: "first new line\nsecond new line".into(),
+        vec![chat::Change {
+            file: None,
+            what: chat::What::Edit {
+                from: 6,
+                to: 7,
+                text: "first new line\nsecond new line".into()
+            },
             state: None,
         }]
     );
@@ -3380,15 +3383,22 @@ fn a_single_line_and_a_deletion_are_both_edits() {
     let (_, one) = chat::proposals("<edit lines=\"4\">just this</edit>");
     assert_eq!(
         one,
-        vec![chat::Edit {
-            from: 4,
-            to: 4,
-            text: "just this".into(),
+        vec![chat::Change {
+            file: None,
+            what: chat::What::Edit {
+                from: 4,
+                to: 4,
+                text: "just this".into()
+            },
             state: None,
         }]
     );
     let (_, gone) = chat::proposals("<edit lines=\"4-5\">\n</edit>");
-    assert_eq!(gone[0].text, "", "an empty block takes the lines away");
+    assert_eq!(
+        gone[0].becoming(),
+        "",
+        "an empty block takes the lines away"
+    );
 }
 
 #[test]
@@ -3408,30 +3418,24 @@ fn an_edit_block_inside_a_fence_is_being_talked_about() {
 #[test]
 fn a_change_to_lines_that_are_not_there_replaces_nothing() {
     let note: Vec<String> = "one\ntwo\nthree".lines().map(str::to_string).collect();
-    let good = chat::Edit {
-        from: 2,
-        to: 3,
-        text: "x".into(),
+    let edit = |from, to| chat::Change {
+        file: None,
+        what: chat::What::Edit {
+            from,
+            to,
+            text: "x".into(),
+        },
         state: None,
     };
-    assert_eq!(good.replacing(&note).as_deref(), Some("two\nthree"));
-    let past = chat::Edit {
-        from: 9,
-        to: 9,
-        text: "x".into(),
-        state: None,
-    };
+    assert_eq!(
+        edit(2, 3).replacing(Some(&note)).as_deref(),
+        Some("two\nthree")
+    );
     assert!(
-        past.replacing(&note).is_none(),
+        edit(9, 9).replacing(Some(&note)).is_none(),
         "so the panel can say so instead of guessing"
     );
-    let backwards = chat::Edit {
-        from: 3,
-        to: 1,
-        text: "x".into(),
-        state: None,
-    };
-    assert!(backwards.replacing(&note).is_none());
+    assert!(edit(3, 1).replacing(Some(&note)).is_none());
 }
 
 #[test]
@@ -3513,8 +3517,15 @@ fn a_change_that_was_decided_stays_decided() {
         Some(true),
         "written into the block: {settled}"
     );
-    assert_eq!(edits[0].from, 6, "and the change itself is untouched");
-    assert_eq!(edits[0].text, "one\ntwo");
+    assert_eq!(
+        edits[0].what,
+        chat::What::Edit {
+            from: 6,
+            to: 6,
+            text: "one\ntwo".into()
+        },
+        "and the change itself is untouched"
+    );
 
     let rejected = chat::settle(&settled, 0, false);
     let (_, edits) = chat::proposals(&rejected);
@@ -3555,20 +3566,26 @@ fn a_decision_survives_the_file_it_is_written_in() {
 
 #[test]
 fn a_settled_change_says_how_much_it_moved() {
-    let two_for_one = chat::Edit {
-        from: 6,
-        to: 6,
-        text: "one\ntwo".into(),
+    let two_for_one = chat::Change {
+        file: None,
+        what: chat::What::Edit {
+            from: 6,
+            to: 6,
+            text: "one\ntwo".into(),
+        },
         state: Some(true),
     };
-    assert_eq!(two_for_one.tally(), (2, 1), "+2 -1");
-    let gone = chat::Edit {
-        from: 4,
-        to: 8,
-        text: String::new(),
+    assert_eq!(two_for_one.tally(None), (2, 1), "+2 -1");
+    let gone = chat::Change {
+        file: None,
+        what: chat::What::Edit {
+            from: 4,
+            to: 8,
+            text: String::new(),
+        },
         state: Some(true),
     };
-    assert_eq!(gone.tally(), (0, 5), "a deletion adds nothing");
+    assert_eq!(gone.tally(None), (0, 5), "taking lines out adds nothing");
 }
 
 #[test]
@@ -3589,6 +3606,10 @@ fn a_change_waiting_for_an_answer_holds_the_field() {
         .lines()
         .map(str::to_string)
         .collect();
+    let folder = chat::Folder {
+        here: "n.md".into(),
+        files: vec![("n.md".to_string(), &note[..])],
+    };
     let mut talk = chat::Chat::new("n.md".into());
     talk.turns = vec![
         Turn {
@@ -3601,12 +3622,12 @@ fn a_change_waiting_for_an_answer_holds_the_field() {
         },
     ];
     assert!(
-        talk.pending(&note),
+        talk.pending(&folder),
         "it asked something back and is owed an answer"
     );
 
     talk.turns[1].text = chat::settle(&talk.turns[1].text, 0, false);
-    assert!(!talk.pending(&note), "rejecting is an answer too");
+    assert!(!talk.pending(&folder), "rejecting is an answer too");
 }
 
 #[test]
@@ -3614,6 +3635,10 @@ fn a_change_that_can_no_longer_be_made_holds_nothing() {
     // Otherwise a block whose lines have gone is a conversation nobody can get
     // out of: it cannot be accepted, cannot be rejected, and blocks the field.
     let note: Vec<String> = vec!["only one line".to_string()];
+    let folder = chat::Folder {
+        here: "n.md".into(),
+        files: vec![("n.md".to_string(), &note[..])],
+    };
     let mut talk = chat::Chat::new("n.md".into());
     talk.turns = vec![
         Turn {
@@ -3625,14 +3650,21 @@ fn a_change_that_can_no_longer_be_made_holds_nothing() {
             text: "<edit lines=\"40-41\">\nnope\n</edit>".into(),
         },
     ];
-    assert!(!talk.pending(&note));
+    assert!(!talk.pending(&folder));
 }
 
 #[test]
 fn nothing_offered_means_nothing_to_answer() {
     let note: Vec<String> = vec!["a line".to_string()];
+    let folder = chat::Folder {
+        here: "n.md".into(),
+        files: vec![("n.md".to_string(), &note[..])],
+    };
     let mut talk = chat::Chat::new("n.md".into());
-    assert!(!talk.pending(&note), "an empty conversation blocks nothing");
+    assert!(
+        !talk.pending(&folder),
+        "an empty conversation blocks nothing"
+    );
     talk.turns = vec![
         Turn {
             mine: true,
@@ -3644,7 +3676,7 @@ fn nothing_offered_means_nothing_to_answer() {
         },
     ];
     assert!(
-        !talk.pending(&note),
+        !talk.pending(&folder),
         "and neither does an answer with no change in it"
     );
 }
@@ -3702,5 +3734,212 @@ fn two_projects_can_hold_the_same_filename() {
         notes::chat::folder(&dir, &vault[1].slug()),
         "and their conversations are not the same conversations"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_three_verbs_are_read_back_as_what_they_are() {
+    let reply = "Three things.\n\n<edit file=\"a.md\" lines=\"2-3\">two\n</edit>\n\n<write file=\"b.md\">all of it</write>\n\n<delete file=\"c.md\"></delete>";
+    let (prose, changes) = chat::proposals(reply);
+    assert_eq!(
+        prose, "Three things.",
+        "and none of the machinery is left in it"
+    );
+    assert_eq!(changes.len(), 3);
+    assert_eq!(changes[0].file.as_deref(), Some("a.md"));
+    assert_eq!(
+        changes[0].what,
+        chat::What::Edit {
+            from: 2,
+            to: 3,
+            text: "two".into()
+        }
+    );
+    assert_eq!(
+        changes[1].what,
+        chat::What::Write {
+            text: "all of it".into()
+        }
+    );
+    assert_eq!(changes[2].what, chat::What::Delete);
+}
+
+#[test]
+fn create_is_taken_to_mean_write() {
+    // It is the word a model reaches for, and refusing it would be pedantry
+    // with a cost.
+    let (_, changes) = chat::proposals("<create file=\"new.md\">hello</create>");
+    assert_eq!(
+        changes[0].what,
+        chat::What::Write {
+            text: "hello".into()
+        }
+    );
+}
+
+#[test]
+fn a_block_with_no_file_named_is_not_one() {
+    let (prose, changes) = chat::proposals("<write>no name</write>");
+    assert!(changes.is_empty(), "there is nothing to write it to");
+    assert!(
+        prose.contains("<write>"),
+        "and it stays visible rather than vanishing"
+    );
+}
+
+#[test]
+fn writing_over_a_file_counts_what_it_replaces() {
+    let write = chat::Change {
+        file: Some("a.md".into()),
+        what: chat::What::Write {
+            text: "one\ntwo\nthree".into(),
+        },
+        state: None,
+    };
+    assert_eq!(write.tally(None), (3, 0), "a file that was not there");
+    assert_eq!(write.tally(Some("old\nold")), (3, 2), "and one that was");
+
+    let old: Vec<String> = vec!["old".into(), "old".into()];
+    assert_eq!(write.replacing(Some(&old)).as_deref(), Some("old\nold"));
+    assert_eq!(
+        write.replacing(None).as_deref(),
+        Some(""),
+        "nothing to replace yet"
+    );
+}
+
+#[test]
+fn a_change_finds_the_file_it_names_in_the_project() {
+    let a: Vec<String> = vec!["in a".into()];
+    let b: Vec<String> = vec!["in b".into()];
+    let folder = chat::Folder {
+        here: "a.md".into(),
+        files: vec![("a.md".to_string(), &a[..]), ("b.md".to_string(), &b[..])],
+    };
+    assert_eq!(
+        folder.lines(None),
+        Some(&a[..]),
+        "unqualified means the one in front of you"
+    );
+    assert_eq!(folder.lines(Some(&"b.md".to_string())), Some(&b[..]));
+    assert!(folder.lines(Some(&"nowhere.md".to_string())).is_none());
+}
+
+#[test]
+fn the_digest_says_which_project_a_note_is_in() {
+    let vault = vault_of(&[("a.md", "# A\n\nfirst"), ("b.md", "# B\n\nsecond")]);
+    let text = digest::vault(&vault);
+    assert!(text.contains("`a.md`"), "a loose note is named by its file");
+    let mut in_project = vault_of(&[("beds.md", "# Beds\n\nfour")]);
+    in_project[0].project = "allotment".into();
+    assert!(
+        digest::vault(&in_project).contains("`allotment/beds.md`"),
+        "and one in a project is named by where it sits"
+    );
+}
+
+#[test]
+fn the_three_verbs_do_what_they_say_to_a_project() {
+    let dir = std::env::temp_dir().join(format!("pixui-apply-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("work")).unwrap();
+    std::fs::write(
+        dir.join("work").join("one.md"),
+        "# One\n\nkeep\nchange me\nkeep\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("work").join("two.md"), "# Two\n").unwrap();
+
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "work/one.md")
+        .unwrap();
+
+    // Edit: the named lines, in the named file.
+    app.apply_change(&chat::Change {
+        file: Some("one.md".into()),
+        what: chat::What::Edit {
+            from: 4,
+            to: 4,
+            text: "changed".into(),
+        },
+        state: None,
+    });
+    let one = app
+        .notes
+        .iter()
+        .find(|n| n.slug() == "work/one.md")
+        .unwrap();
+    assert_eq!(one.buffer.to_text(), "# One\n\nkeep\nchanged\nkeep\n");
+
+    // Write: a file that is not there yet, in the project being read.
+    app.apply_change(&chat::Change {
+        file: Some("three.md".into()),
+        what: chat::What::Write {
+            text: "# Three\n\nnew".into(),
+        },
+        state: None,
+    });
+    let three = app
+        .notes
+        .iter()
+        .find(|n| n.slug() == "work/three.md")
+        .expect("it is there now");
+    assert_eq!(three.buffer.to_text(), "# Three\n\nnew");
+    assert!(
+        three.buffer.dirty,
+        "unsaved, like anything else the editor makes"
+    );
+
+    // Write again, over a file that exists: it is replaced, not appended to.
+    app.apply_change(&chat::Change {
+        file: Some("two.md".into()),
+        what: chat::What::Write {
+            text: "# Two\n\nrewritten".into(),
+        },
+        state: None,
+    });
+    let two = app
+        .notes
+        .iter()
+        .find(|n| n.slug() == "work/two.md")
+        .unwrap();
+    assert_eq!(two.buffer.to_text(), "# Two\n\nrewritten");
+
+    // Delete: off the disk as well as out of the list.
+    app.apply_change(&chat::Change {
+        file: Some("one.md".into()),
+        what: chat::What::Delete,
+        state: None,
+    });
+    assert!(
+        !app.notes.iter().any(|n| n.slug() == "work/one.md"),
+        "gone from the vault"
+    );
+    assert!(
+        !dir.join("work").join("one.md").exists(),
+        "and gone from the disk"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_note_is_opened_by_name_wherever_it_is_filed() {
+    let dir = std::env::temp_dir().join(format!("pixui-open-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("deep")).unwrap();
+    std::fs::write(dir.join("deep").join("buried.md"), "# Buried\n").unwrap();
+
+    let app = notes::Notes::open(dir.clone());
+    let found = app.find_note("buried.md").expect("found by its bare name");
+    assert_eq!(app.notes[found].slug(), "deep/buried.md");
+    assert_eq!(
+        app.find_note("deep/buried.md"),
+        Some(found),
+        "and by where it sits, which is the unambiguous way to say it"
+    );
+    assert!(app.find_note("nowhere.md").is_none(), "and not invented");
     let _ = std::fs::remove_dir_all(&dir);
 }

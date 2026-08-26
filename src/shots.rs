@@ -375,6 +375,33 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             // A change the model offered, with the diff it would make.
+            name: "chat-project",
+            seed: &[
+                ("pixel-editor/rendering.md", "# Rendering\n\nEverything is drawn by hand into a `Vec<u32>`. No GPU canvas underneath and no\nsystem widget anywhere.\n\nA frame costs about a third of a millisecond.\n"),
+                ("pixel-editor/fonts.md", "# Fonts\n\nFive bitmap faces, chosen in settings.\n"),
+                (".chats/pixel-editor/rendering/a-glossary.md", "# a glossary\n\n## you\n\nmake a glossary for this project\n\n## assistant\n\nThree terms are used across both files without being defined anywhere.\n\n<write file=\"glossary.md\">\n# Glossary\n\n- **Bitmap face** - a font stored as a table of bits rather than as outlines\n- **Frame budget** - how long one redraw may take before it is felt\n</write>\n"),
+            ],
+            script: [
+                keys(":e rendering.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 14,
+            canvas: (768, 470),
+        },
+        Scene {
+            // A change the model offered, with the diff it would make.
             name: "chat-diff",
             seed: &[(
                 ".chats/welcome/tighten-the-opening.md",

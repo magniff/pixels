@@ -493,6 +493,12 @@ impl Notes {
             "e" | "edit" | "o" | "open" => {
                 if arg.is_empty() {
                     self.dialog = Some(FileDialog::new(DialogKind::Open, &self.notes_dir, ""));
+                } else if let Some(i) = self.find_note(arg) {
+                    // A name already in the vault goes to that note wherever it
+                    // is filed. Without this, `:e rendering.md` looks for a
+                    // file at the top of a vault that keeps everything in
+                    // projects, and makes an empty one.
+                    self.go_to_note(i);
                 } else {
                     let path = self.notes_dir.join(arg);
                     self.open_path(&path);
@@ -737,29 +743,141 @@ impl Notes {
     /// Through the buffer's own editing rather than by rewriting the lines
     /// underneath it, so `u` takes it back like anything else and the caret
     /// ends up somewhere sensible.
-    fn apply_edit(&mut self, edit: &chat::Edit) {
-        let i = self.current.min(self.notes.len() - 1);
-        let buf = &mut self.notes[i].buffer;
-        let Some(from) = edit.from.checked_sub(1).filter(|f| *f < buf.line_count()) else {
-            self.status = "THOSE LINES ARE NOT THERE".into();
-            return;
-        };
-        let to = edit.to.min(buf.line_count()).saturating_sub(1);
-        if to < from {
-            self.status = "THOSE LINES ARE NOT THERE".into();
-            return;
+    pub fn apply_change(&mut self, change: &chat::Change) {
+        let here = self.note().project.clone();
+        let named = change
+            .file
+            .clone()
+            .unwrap_or_else(|| self.note().filename());
+        let found = self
+            .notes
+            .iter()
+            .position(|n| n.project == here && n.filename() == named);
+
+        match &change.what {
+            chat::What::Write { text } => {
+                // Unsaved either way, like anything else the editor makes:
+                // `:w` puts it on disk, `u` takes it back, and until one of
+                // those happens nothing has really happened.
+                match found {
+                    Some(i) => {
+                        let buf = &mut self.notes[i].buffer;
+                        buf.checkpoint();
+                        // The new text goes in under the old and the old comes
+                        // out from over it, rather than the other way round: a
+                        // buffer keeps a line even when everything is deleted,
+                        // and emptying it first leaves that line behind.
+                        let old = buf.line_count();
+                        buf.insert_lines(
+                            old,
+                            &text.split('\n').map(str::to_string).collect::<Vec<_>>(),
+                        );
+                        buf.delete_lines(0, old - 1);
+                        buf.cursor = text::Cursor::new(0, 0);
+                        buf.clamp_cursor(false);
+                        self.current = i;
+                        self.status = format!("REWROTE {named}").to_uppercase();
+                    }
+                    None => {
+                        let mut note = Note::blank(here.clone());
+                        note.buffer = Buffer::from_text(text);
+                        note.path = Some(self.project_dir(&here).join(&named));
+                        note.buffer.dirty = true;
+                        self.notes.push(note);
+                        self.current = self.notes.len() - 1;
+                        self.status = format!("CREATED {named}").to_uppercase();
+                    }
+                }
+                self.scroll = 0;
+            }
+            chat::What::Delete => {
+                let Some(i) = found else {
+                    self.status = "THAT FILE IS NOT THERE".into();
+                    return;
+                };
+                // Off the disk as well as out of the list. There is no undo for
+                // this one, which is what the asking was for.
+                if let Some(path) = self.notes[i].path.clone() {
+                    let _ = std::fs::remove_file(path);
+                }
+                self.notes.remove(i);
+                if self.notes.is_empty() {
+                    self.notes.push(Note::blank(here));
+                }
+                self.current = self.current.min(self.notes.len() - 1);
+                self.scroll = 0;
+                self.status = format!("DELETED {named}").to_uppercase();
+            }
+            chat::What::Edit { from, to, text } => {
+                let Some(i) = found else {
+                    self.status = "THAT FILE IS NOT THERE".into();
+                    return;
+                };
+                let buf = &mut self.notes[i].buffer;
+                let Some(first) = from.checked_sub(1).filter(|f| *f < buf.line_count()) else {
+                    self.status = "THOSE LINES ARE NOT THERE".into();
+                    return;
+                };
+                let last = to.min(&buf.line_count()).saturating_sub(1);
+                if last < first {
+                    self.status = "THOSE LINES ARE NOT THERE".into();
+                    return;
+                }
+                buf.checkpoint();
+                buf.delete_lines(first, last);
+                let fresh: Vec<String> = if text.is_empty() {
+                    Vec::new()
+                } else {
+                    text.split('\n').map(str::to_string).collect()
+                };
+                buf.insert_lines(first, &fresh);
+                buf.cursor = text::Cursor::new(first.min(buf.line_count().saturating_sub(1)), 0);
+                buf.clamp_cursor(false);
+                // Onto the note that changed, so what was accepted is what you
+                // are looking at.
+                self.current = i;
+                self.status = "APPLIED".into();
+            }
         }
-        buf.checkpoint();
-        buf.delete_lines(from, to);
-        let fresh: Vec<String> = if edit.text.is_empty() {
-            Vec::new()
+    }
+
+    /// A note already open, by where it sits or by what it is called.
+    ///
+    /// The slug first, because it is the unambiguous one, and the filename
+    /// after it - preferring the current project, since a bare `todo.md` typed
+    /// while reading one almost always means that project's.
+    pub fn find_note(&self, name: &str) -> Option<usize> {
+        if let Some(i) = self.notes.iter().position(|n| n.slug() == name) {
+            return Some(i);
+        }
+        let here = self.note().project.clone();
+        self.notes
+            .iter()
+            .position(|n| n.project == here && n.filename() == name)
+            .or_else(|| self.notes.iter().position(|n| n.filename() == name))
+    }
+
+    /// Where a project's files live on disk.
+    fn project_dir(&self, project: &str) -> PathBuf {
+        if project.is_empty() {
+            self.notes_dir.clone()
         } else {
-            edit.text.split('\n').map(str::to_string).collect()
-        };
-        buf.insert_lines(from, &fresh);
-        buf.cursor = text::Cursor::new(from.min(buf.line_count().saturating_sub(1)), 0);
-        buf.clamp_cursor(false);
-        self.status = "APPLIED".into();
+            self.notes_dir.join(project)
+        }
+    }
+
+    /// The project a conversation is about, as it is right now.
+    fn folder(&self) -> chat::Folder<'_> {
+        let here = self.note().project.clone();
+        chat::Folder {
+            here: self.note().filename(),
+            files: self
+                .notes
+                .iter()
+                .filter(|n| n.project == here)
+                .map(|n| (n.filename(), n.buffer.lines()))
+                .collect(),
+        }
     }
 
     /// Hand a conversation the one number it cannot work out for itself.
@@ -774,12 +892,18 @@ impl Notes {
 
     /// The conversation, told what it is about.
     fn chat_ask(&self, talk: &chat::Chat) -> llm::Ask {
-        let i = self.current.min(self.notes.len() - 1);
+        let here = self.note().project.clone();
+        let files: Vec<(String, String)> = self
+            .notes
+            .iter()
+            .filter(|n| n.project == here)
+            .map(|n| (n.filename(), n.buffer.to_text()))
+            .collect();
         llm::Ask {
             turns: talk.turns.clone(),
             vault: digest::vault(&self.notes),
-            file: self.notes[i].filename(),
-            within: Some(digest::numbered(&self.notes[i].buffer.to_text())),
+            file: self.note().slug(),
+            within: Some(digest::project(&files)),
             ..llm::Ask::default()
         }
     }
@@ -1273,9 +1397,8 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         }
     }
     if let Some(mut talk) = app.chat.take() {
-        let i = app.current.min(app.notes.len() - 1);
-        let note = app.notes[i].buffer.lines().to_vec();
-        match talk.show(ui, &note) {
+        let folder = app.folder();
+        match talk.show(ui, &folder) {
             chat::Outcome::None => app.chat = Some(talk),
             chat::Outcome::Ask => {
                 let ask = app.chat_ask(&talk);
@@ -1289,8 +1412,8 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 let _ = talk.save(&app.notes_dir);
                 app.chat = Some(talk);
             }
-            chat::Outcome::Apply(edit) => {
-                app.apply_edit(&edit);
+            chat::Outcome::Apply(change) => {
+                app.apply_change(&change);
                 // The chat has already written the decision into its own
                 // transcript; this is what puts that on disk.
                 let _ = talk.save(&app.notes_dir);

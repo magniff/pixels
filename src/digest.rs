@@ -48,10 +48,11 @@ const ROOM: usize = 8000;
 pub const OPEN: &str = "<selection>";
 pub const CLOSE: &str = "</selection>";
 
-/// One line per note: what it is called, what it is filed as, and its gist.
+/// One line per note: where it sits, what it calls itself, and its gist.
 ///
-/// Ordered by filename rather than by the order the vault happened to be read
-/// in, so the same vault always produces the same text.
+/// Ordered by path rather than by the order the vault happened to be read in,
+/// so the same vault always produces the same text - and sorting by path is
+/// what puts a project's notes together under each other.
 pub fn vault(notes: &[Note]) -> String {
     let mut lines: Vec<String> = notes.iter().map(entry).collect();
     lines.sort();
@@ -64,7 +65,10 @@ fn entry(note: &Note) -> String {
     // twenty-four characters and shouted, because it lives in a narrow column.
     // "FIBONACCI NUMBERS: A SI~" tells the model less than nothing.
     let title = crate::markdown::derive_title(lines, TITLE);
-    let mut out = format!("- `{}` \"{}\"", note.filename(), title);
+    // Named by where it sits rather than by what it is called, so a vault of
+    // projects reads as one: two of them may each have a `todo.md`, and a list
+    // that says `todo.md` twice has told the model nothing about either.
+    let mut out = format!("- `{}` \"{}\"", note.slug(), title);
     if let Some(gist) = gist(lines) {
         out.push_str(": ");
         out.push_str(&gist);
@@ -213,7 +217,24 @@ fn keep_first(text: &str, room: usize) -> String {
     format!("{}\n[...later lines not shown...]", &text[..cut])
 }
 
-/// The note with its lines numbered, for a conversation that may be asked to
+/// Every file in a project, numbered, for a conversation that may be asked to
+/// change one of them.
+///
+/// All of them rather than the one being read: a project is the unit somebody
+/// thinks in, and half the questions worth asking about a note are about the
+/// note next to it. Whole rather than summarised, because a change has to name
+/// lines and lines are only real in the whole file.
+pub fn project(files: &[(String, String)]) -> String {
+    let mut out = String::new();
+    for (name, text) in files {
+        out.push_str(&format!("=== {name} ===\n"));
+        out.push_str(&numbered(text));
+        out.push('\n');
+    }
+    out
+}
+
+/// A note with its lines numbered, for a conversation that may be asked to
 /// change one of them.
 ///
 /// Numbers rather than quoting the text back: a model asked to reproduce the

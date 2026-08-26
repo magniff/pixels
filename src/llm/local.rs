@@ -244,7 +244,10 @@ fn surroundings(ask: &Ask) -> String {
             format!("`{}`, the note open in the editor", ask.file)
         };
         if ask.talking() {
-            out.push_str(&format!("Here is {named}:\n\n{within}\n\n"));
+            out.push_str(&format!(
+                "You are looking at {named}. Here is every file in its project, \
+                 with the lines numbered:\n\n{within}\n"
+            ));
         } else {
             out.push_str(&format!(
                 "Here is {named}, with the passage in question marked between {} and {}:\n\n{within}\n\n",

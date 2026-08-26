@@ -171,23 +171,44 @@ pub enum Outcome {
     Ask,
     /// Something changed that should be written down.
     Save,
-    /// Put this change into the note.
-    Apply(Edit),
+    /// Put this change into the project.
+    Apply(Change),
     /// Take it away.
     Close,
 }
 
-/// A change to the note, as the model proposed it.
+/// The files a conversation is about, as they are now.
 ///
-/// Line numbers rather than text to find: the note is shown numbered, and a
+/// Borrowed for the frame rather than copied: a project is every note in a
+/// folder, and copying all of them to draw one diff would be a strange price.
+pub struct Folder<'a> {
+    /// The note in front of you, which is what an unqualified change means.
+    pub here: String,
+    pub files: Vec<(String, &'a [String])>,
+}
+
+impl Folder<'_> {
+    /// The file a change is about, if it is there at all.
+    pub fn lines(&self, named: Option<&String>) -> Option<&[String]> {
+        let want = named.cloned().unwrap_or_else(|| self.here.clone());
+        self.files
+            .iter()
+            .find(|(name, _)| *name == want)
+            .map(|(_, lines)| *lines)
+    }
+}
+
+/// Something the model has offered to do to the project.
+///
+/// Line numbers rather than text to find: the files are shown numbered, and a
 /// number cannot be misquoted. Both are one-based and inclusive, the way they
 /// are written in the margin.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Edit {
-    pub from: usize,
-    pub to: usize,
-    /// What those lines should become. Empty means delete them.
-    pub text: String,
+pub struct Change {
+    /// Which file, by name within the project. None means the note in front of
+    /// you, which is what an unqualified change is about.
+    pub file: Option<String>,
+    pub what: What,
     /// What was decided about it, once something was. Kept in the transcript
     /// rather than in memory: a conversation reopened tomorrow should not offer
     /// again a change you took this morning, and the only place tomorrow can
@@ -195,29 +216,73 @@ pub struct Edit {
     pub state: Option<bool>,
 }
 
-impl Edit {
+/// The three things it can offer to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum What {
+    /// Replace these lines with this text. Empty text takes them out.
+    Edit {
+        from: usize,
+        to: usize,
+        text: String,
+    },
+    /// What the file should contain from now on, whether or not it is there
+    /// yet. One verb rather than create-and-append-and-replace: "here is what
+    /// this file says now" covers all three, and a model that has been handed
+    /// the whole file reaches for it naturally.
+    Write { text: String },
+    /// A file that should not be there any more.
+    Delete,
+}
+
+impl Change {
     /// Lines gone and lines arrived, the way a diff counts them.
-    pub fn tally(&self) -> (usize, usize) {
-        let gone = self.to.saturating_sub(self.from) + 1;
-        let here = if self.text.is_empty() {
-            0
-        } else {
-            self.text.lines().count()
-        };
-        (here, gone)
+    pub fn tally(&self, before: Option<&str>) -> (usize, usize) {
+        let count = |t: &str| if t.is_empty() { 0 } else { t.lines().count() };
+        match &self.what {
+            What::Edit { from, to, text } => (count(text), to.saturating_sub(*from) + 1),
+            What::Write { text } => (count(text), before.map(count).unwrap_or(0)),
+            What::Delete => (0, before.map(count).unwrap_or(0)),
+        }
     }
 
-    /// The lines it would replace, as they are now.
+    /// What this would replace, given the file it is about as it is now.
     ///
-    /// None when they are not there any more, so the panel can say so instead
-    /// of guessing at what it would be changing.
-    pub fn replacing(&self, lines: &[String]) -> Option<String> {
-        let from = self.from.checked_sub(1)?;
-        if from >= lines.len() || self.to < self.from {
-            return None;
+    /// None when there is nothing there to replace - lines past the end, or a
+    /// file that is not there - so the panel can say so instead of guessing.
+    pub fn replacing(&self, lines: Option<&[String]>) -> Option<String> {
+        match &self.what {
+            What::Edit { from, to, .. } => {
+                let lines = lines?;
+                let first = from.checked_sub(1)?;
+                if first >= lines.len() || to < from {
+                    return None;
+                }
+                Some(lines[first..(*to).min(lines.len())].join("\n"))
+            }
+            // A file being written replaces whatever it said before, which is
+            // nothing at all when it is not there yet.
+            What::Write { .. } => Some(lines.map(|l| l.join("\n")).unwrap_or_default()),
+            What::Delete => Some(lines?.join("\n")),
         }
-        let to = self.to.min(lines.len());
-        Some(lines[from..to].join("\n"))
+    }
+
+    /// What it would leave behind in place of that.
+    pub fn becoming(&self) -> String {
+        match &self.what {
+            What::Edit { text, .. } | What::Write { text } => text.clone(),
+            What::Delete => String::new(),
+        }
+    }
+
+    /// How to say what it is, in a few words.
+    pub fn headline(&self, whose: &str) -> String {
+        let named = self.file.clone().unwrap_or_else(|| whose.to_string());
+        match &self.what {
+            What::Edit { from, to, .. } if from == to => format!("{named}  LINE {from}"),
+            What::Edit { from, to, .. } => format!("{named}  LINES {from}-{to}"),
+            What::Write { .. } => format!("WRITE  {named}"),
+            What::Delete => format!("DELETE  {named}"),
+        }
     }
 }
 
@@ -226,57 +291,80 @@ impl Edit {
 /// The blocks are lifted out of the prose rather than left in it: a reply is
 /// read as a sentence and a change, and showing the raw block would be showing
 /// somebody the machinery instead of the change.
-pub fn proposals(reply: &str) -> (String, Vec<Edit>) {
+pub fn proposals(reply: &str) -> (String, Vec<Change>) {
     let mut prose = String::new();
-    let mut edits = Vec::new();
+    let mut changes = Vec::new();
     let mut at = 0;
-    for (tag, open, close) in blocks(reply) {
-        match lines_attr(&reply[tag..open]) {
-            Some((from, to)) => {
+    for (kind, tag, open, close) in blocks(reply) {
+        let head = &reply[tag..open];
+        let body = reply[open..close].trim_matches('\n').to_string();
+        let named = attr(head, "file");
+        let what = match kind {
+            "edit" => lines_attr(head).map(|(from, to)| What::Edit {
+                from,
+                to,
+                text: body,
+            }),
+            // Both of these are about a file by name, and neither means
+            // anything without one.
+            // `create` as well, because it is the word a model reaches for
+            // and refusing it would be pedantry with a cost.
+            "write" | "create" if named.is_some() => Some(What::Write { text: body }),
+            "delete" if named.is_some() => Some(What::Delete),
+            _ => None,
+        };
+        let shut = close + kind.len() + 3;
+        match what {
+            Some(what) => {
                 prose.push_str(&reply[at..tag]);
-                edits.push(Edit {
-                    from,
-                    to,
-                    text: reply[open..close].trim_matches('\n').to_string(),
-                    state: state_attr(&reply[tag..open]),
+                changes.push(Change {
+                    file: named,
+                    what,
+                    state: state_attr(head),
                 });
             }
-            // Not a range this understands. Left in the prose rather than
-            // swallowed, so a malformed block is visible instead of missing.
-            None => prose.push_str(&reply[at..close + 7]),
+            // Not a block this understands. Left in the prose rather than
+            // swallowed, so a malformed one is visible instead of missing.
+            None => prose.push_str(&reply[at..shut]),
         }
-        at = close + 7;
+        at = shut;
     }
     prose.push_str(&reply[at..]);
-    (prose.trim().to_string(), edits)
+    (prose.trim().to_string(), changes)
 }
 
-/// Where the edit blocks are: the tag's start, where its body starts, and
-/// where its body ends.
+/// Where the blocks are: which kind, the tag's start, where its body starts,
+/// and where its body ends.
 ///
 /// A block inside a fence is a block being talked about rather than one being
 /// made, and counting the fences passed on the way to it is enough to tell
 /// which. One walk, so the reader and the writer below cannot disagree about
 /// which block is the second one.
-fn blocks(text: &str) -> Vec<(usize, usize, usize)> {
+fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
+    const KINDS: &[&str] = &["edit", "write", "create", "delete"];
     let mut out = Vec::new();
     let mut at = 0usize;
     let mut in_code = false;
-    while let Some(rel) = text[at..].find("<edit") {
-        let start = at + rel;
+    loop {
+        let next = KINDS
+            .iter()
+            .filter_map(|k| text[at..].find(&format!("<{k}")).map(|i| (at + i, *k)))
+            .min_by_key(|(i, _)| *i);
+        let Some((start, kind)) = next else { break };
         in_code ^= fences(&text[at..start]);
         if in_code {
-            at = start + 5;
+            at = start + 1;
             continue;
         }
         let Some(open) = text[start..].find('>').map(|i| start + i + 1) else {
             break;
         };
-        let Some(close) = text[open..].find("</edit>").map(|i| open + i) else {
+        let shut = format!("</{kind}>");
+        let Some(close) = text[open..].find(&shut).map(|i| open + i) else {
             break;
         };
-        out.push((start, open, close));
-        at = close + 7;
+        out.push((kind, start, open, close));
+        at = close + shut.len();
     }
     out
 }
@@ -286,18 +374,13 @@ fn blocks(text: &str) -> Vec<(usize, usize, usize)> {
 /// Into the tag, so it is carried by the transcript and is still true when the
 /// conversation is opened again.
 pub fn settle(text: &str, nth: usize, taken: bool) -> String {
-    let mut seen = 0;
-    for (tag, open, _) in blocks(text) {
-        if lines_attr(&text[tag..open]).is_none() {
-            continue;
-        }
-        if seen == nth {
+    for (i, (_, tag, open, _)) in blocks(text).into_iter().enumerate() {
+        if i == nth {
             let word = if taken { "applied" } else { "rejected" };
             let bare = strip_state(&text[tag..open]);
             let bare = bare.trim_end().trim_end_matches('>').trim_end();
             return format!("{}{bare} state=\"{word}\">{}", &text[..tag], &text[open..]);
         }
-        seen += 1;
     }
     text.to_string()
 }
@@ -307,8 +390,7 @@ fn strip_state(tag: &str) -> String {
     let Some(at) = tag.find("state") else {
         return tag.to_string();
     };
-    let rest = &tag[at..];
-    let end = rest
+    let end = tag[at..]
         .match_indices('"')
         .nth(1)
         .map(|(i, _)| at + i + 1)
@@ -318,8 +400,7 @@ fn strip_state(tag: &str) -> String {
 
 /// `state="applied"`, if a decision was written into the tag.
 fn state_attr(tag: &str) -> Option<bool> {
-    let at = tag.find("state")?;
-    match tag[at..].split('"').nth(1)?.trim() {
+    match attr(tag, "state")?.as_str() {
         "applied" => Some(true),
         "rejected" => Some(false),
         _ => None,
@@ -340,9 +421,7 @@ fn fences(text: &str) -> bool {
 
 /// `lines="12-14"`, or `lines="12"` for a single one.
 fn lines_attr(tag: &str) -> Option<(usize, usize)> {
-    let at = tag.find("lines")?;
-    let value = tag[at..].split('"').nth(1)?;
-    let value = value.trim();
+    let value = attr(tag, "lines")?;
     match value.split_once('-') {
         Some((a, b)) => Some((a.trim().parse().ok()?, b.trim().parse().ok()?)),
         None => {
@@ -350,6 +429,12 @@ fn lines_attr(tag: &str) -> Option<(usize, usize)> {
             Some((one, one))
         }
     }
+}
+
+/// One quoted attribute out of a tag.
+fn attr(tag: &str, name: &str) -> Option<String> {
+    let at = tag.find(name)?;
+    Some(tag[at..].split('"').nth(1)?.trim().to_string())
 }
 
 impl Chat {
@@ -925,6 +1010,9 @@ impl Default for Picker {
 
 // ---------------------------------------------------------- the conversation
 
+/// How many rows of a diff to draw before saying how many are left.
+const WHOLE: usize = 14;
+
 /// How much room the field and its hint take at the foot of the panel.
 const FOOT: i32 = 34;
 
@@ -933,7 +1021,7 @@ impl Chat {
     ///
     /// Call this with the rest of the frame wrapped in [`Ui::input_blocked`],
     /// the way the dialogs are: a conversation has the keyboard while it is up.
-    pub fn show(&mut self, ui: &mut Ui, note: &[String]) -> Outcome {
+    pub fn show(&mut self, ui: &mut Ui, folder: &Folder) -> Outcome {
         let th = *ui.theme;
         let line_h = font::line_h();
         let screen = ui.canvas.bounds();
@@ -946,7 +1034,7 @@ impl Chat {
         // a rename you do twice. The readout beside it is what the last
         // question actually came to, which is the only honest way to say how
         // much of the window a conversation is using.
-        let inner = ui.panel_badged(rect, &self.title().to_uppercase(), &self.weight(note));
+        let inner = ui.panel_badged(rect, &self.title().to_uppercase(), &self.weight(folder));
         ui.capture_keyboard();
 
         let mut outcome = Outcome::None;
@@ -957,7 +1045,7 @@ impl Chat {
         // before anything else is asked. Otherwise the next answer is written
         // against a note that may or may not be about to change, and the diff
         // sitting above it quietly stops meaning what it says.
-        let held = self.pending(note);
+        let held = self.pending(folder);
         // Enter sends. A conversation is one question at a time, so the key
         // that ends a sentence is the key that asks it; a newline inside one
         // question is a thing to want later and not today.
@@ -1058,9 +1146,9 @@ impl Chat {
                         reveal: None,
                     },
                 );
-                for (j, edit) in edits.iter().enumerate() {
-                    if let Some(taken) = self.offer(ui, width, note, edit) {
-                        answered = Some((i, j, edit.clone(), taken));
+                for (j, change) in edits.iter().enumerate() {
+                    if let Some(taken) = self.offer(ui, width, folder, change) {
+                        answered = Some((i, j, change.clone(), taken));
                     }
                 }
             }
@@ -1171,12 +1259,12 @@ impl Chat {
     /// Only one that could still be made counts. A block whose lines have since
     /// gone is not something anybody can accept or reject, and letting one of
     /// those hold the field would be a conversation nobody can get out of.
-    pub fn pending(&self, note: &[String]) -> bool {
+    pub fn pending(&self, folder: &Folder) -> bool {
         self.turns.iter().filter(|t| !t.mine).any(|turn| {
             proposals(&turn.text)
                 .1
                 .iter()
-                .any(|e| e.state.is_none() && e.replacing(note).is_some())
+                .any(|c| c.state.is_none() && c.replacing(folder.lines(c.file.as_ref())).is_some())
         })
     }
 
@@ -1186,12 +1274,17 @@ impl Chat {
     /// prompt on its way in and says so, and that number is exact. Before the
     /// first question there is nothing to have counted, so what is shown is an
     /// estimate off the characters, marked as one.
-    fn weight(&self, note: &[String]) -> String {
+    fn weight(&self, folder: &Folder) -> String {
         if self.progress.prompt > 0 {
             return format!("{} TOKENS", round(self.progress.prompt));
         }
         let said: usize = self.turns.iter().map(|t| t.text.len()).sum();
-        let here: usize = note.iter().map(|l| l.len() + 1).sum();
+        let here: usize = folder
+            .files
+            .iter()
+            .flat_map(|(_, lines)| lines.iter())
+            .map(|l| l.len() + 1)
+            .sum();
         format!("~{} TOKENS", round(self.overhead + (said + here) / 4))
     }
 
@@ -1201,22 +1294,21 @@ impl Chat {
     /// model was shown, which is the whole safety of this: if the lines have
     /// moved since it answered, what is drawn is the nonsense that would
     /// actually happen, and nobody presses accept on nonsense.
-    fn offer(&self, ui: &mut Ui, width: i32, note: &[String], edit: &Edit) -> Option<bool> {
+    fn offer(&self, ui: &mut Ui, width: i32, folder: &Folder, change: &Change) -> Option<bool> {
         let th = *ui.theme;
         let line_h = font::line_h();
         ui.space(3);
         let head = ui.alloc(line_h);
-        let span = if edit.from == edit.to {
-            format!("LINE {}", edit.from)
-        } else {
-            format!("LINES {}-{}", edit.from, edit.to)
-        };
+        let span = change.headline(&folder.here);
+        let now = folder.lines(change.file.as_ref());
+
         // Settled, so there is nothing left to decide and nothing to compare
-        // against: the note has already moved on, and a diff against it now
+        // against: the project has already moved on, and a diff against it now
         // would be a diff of the change with itself. What is worth keeping is
         // what it did, in the shape a diff says it in.
-        if let Some(taken) = edit.state {
-            let (plus, minus) = edit.tally();
+        if let Some(taken) = change.state {
+            let before = now.map(|l| l.join("\n"));
+            let (plus, minus) = change.tally(before.as_deref());
             let (word, tint) = if taken {
                 ("APPLIED", th.positive.face)
             } else {
@@ -1235,11 +1327,15 @@ impl Chat {
             ui.draw_text_in(name, word, tint, Align::Right);
             // One line of what it came to, so the summary says what was done
             // and not only how much of it there was.
-            let gist = edit
-                .text
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("(the lines were taken out)");
+            let becoming = change.becoming();
+            let gist =
+                becoming
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or(match change.what {
+                        What::Delete => "(the file was taken away)",
+                        _ => "(the lines were taken out)",
+                    });
             let row = ui.alloc(line_h);
             ui.draw_text_in(
                 Rect::new(row.x + 8, row.y, row.w - 8, row.h),
@@ -1249,19 +1345,25 @@ impl Chat {
             );
             return None;
         }
-        let Some(before) = edit.replacing(note) else {
+
+        let Some(before) = change.replacing(now) else {
+            // Nothing to act on: lines past the end, a file that is not there,
+            // or one being made that already is. Said rather than offered,
+            // because there is no honest diff to draw for any of them.
             ui.draw_text_in(
                 head,
-                &format!(
-                    "A CHANGE TO LINES {}-{}, WHICH ARE NOT THERE",
-                    edit.from, edit.to
-                ),
+                &format!("{span} - WHICH IS NOT THERE TO CHANGE"),
                 th.danger.face,
                 Align::Left,
             );
             return None;
         };
-        font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, th.info.hi, true);
+        let tint = match change.what {
+            What::Delete => th.danger.face,
+            What::Write { .. } => th.positive.face,
+            What::Edit { .. } => th.info.hi,
+        };
+        font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, tint, true);
         // Both answers, side by side and equally reachable. A change offered
         // with only a way to take it is a change you have to take.
         let mut answer = None;
@@ -1278,10 +1380,22 @@ impl Chat {
         // the same question - what would this do to what is there - and two
         // answers to it that looked different would be two things to learn.
         let cols = ((width - 12) / font::advance()).max(8) as usize;
-        let pieces = crate::diff::words(&before, &edit.text);
-        for row in crate::assist::rows(&pieces, cols) {
+        let pieces = crate::diff::words(&before, &change.becoming());
+        for row in crate::assist::rows(&pieces, cols).into_iter().take(WHOLE) {
             let at = ui.alloc(line_h);
             crate::assist::draw_row(ui, Rect::new(at.x + 8, at.y, at.w - 8, at.h), &row);
+        }
+        // A whole file arriving or leaving is more than anybody reads in a
+        // panel, and the count above it already said how much there is.
+        let rows = crate::assist::rows(&pieces, cols).len();
+        if rows > WHOLE {
+            let at = ui.alloc(line_h);
+            ui.draw_text_in(
+                Rect::new(at.x + 8, at.y, at.w - 8, at.h),
+                &format!("... AND {} MORE LINES", rows - WHOLE),
+                th.ink_soft,
+                Align::Left,
+            );
         }
         answer
     }
