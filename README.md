@@ -60,8 +60,8 @@ system's — they are built from the same widgets as everything else.
 **An assistant, on your machine** — select something, press `Cmd-Enter`, and
 ask for a change.
 
-- Qwen3 or GPT-OSS 20B through llama.cpp, on the GPU where there is one; no
-  key, no account, nothing leaves the machine
+- Qwen3, Qwen3.5 or GPT-OSS 20B through llama.cpp, on the GPU where there is
+  one; no key, no account, nothing leaves the machine
 - Prompts are built from each model's own chat template, so a family that
   spells its turns differently is spoken to correctly
 - A context ceiling you set, and a window sized per request underneath it; the

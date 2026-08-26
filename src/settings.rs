@@ -62,6 +62,13 @@ pub const CATALOGUE: &[Weights] = &[
         note: "REWRITES AND CHANGES TONE",
     },
     Weights {
+        label: "QWEN3.5 9B",
+        file: "Qwen3.5-9B-Q4_K_M.gguf",
+        url: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
+        megabytes: 5681,
+        note: "REWRITES WELL FOR ITS SIZE",
+    },
+    Weights {
         label: "QWEN3 14B",
         file: "Qwen3-14B-Q4_K_M.gguf",
         url: "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
