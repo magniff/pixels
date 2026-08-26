@@ -37,9 +37,11 @@ fn arithmetic() -> Tool {
 fn calendar() -> Tool {
     Tool {
         name: "date",
-        about: "Call this before you say what the date is, what year it is, what day of the week \
-                it is, or how long until anything. You do not know any of those and you cannot \
-                work them out: asked the date you gave one three weeks out, and asked how long \
+        about: "Call this before you say what the time is, what the date is, what year it is, \
+                what day of the week it is, whether it is morning or evening, or how long until \
+                anything. It gives the clock time and the timezone as well as the day. You do \
+                not know any of it and you cannot work it out: asked the date you gave one three \
+                weeks out, asked the time you said you had no way of telling, and asked how long \
                 until Christmas you used a year that had already gone. It also says how far off \
                 another day is, so do not count days yourself - give it the date and read the \
                 answer. A day with no year, like 12-25, means the next one there is.",

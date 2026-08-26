@@ -5269,3 +5269,24 @@ fn nobody_is_shown_the_calling_out() {
     // The other spelling, in case the outer tag never arrives.
     assert_eq!(without_machinery("ok <function=calc>").trim(), "ok");
 }
+
+#[test]
+fn the_clock_says_it_gives_the_time_and_not_only_the_day() {
+    // The bug this exists for: the tool returned the clock time all along, and
+    // the description never mentioned it. Asked whether it was evening yet the
+    // model answered "I don't know your location, so I can't tell you what
+    // time it is" - and never called the thing that knew.
+    let clock = notes::tools::available(false)
+        .into_iter()
+        .find(|t| t.name == "date")
+        .expect("the clock is always offered");
+    for word in ["time", "date", "year", "day of the week", "evening"] {
+        assert!(
+            clock.about.contains(word),
+            "the clock never mentions {word}, so it will not be reached for one"
+        );
+    }
+    // And it does give what it claims.
+    let now = notes::clock::about("today").unwrap();
+    assert!(now.contains("the time is"), "{now}");
+}
