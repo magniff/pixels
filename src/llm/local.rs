@@ -308,7 +308,7 @@ impl Backend for Local {
         self.loaded = None;
     }
 
-    fn edit(&mut self, ask: &Ask, tick: &mut dyn FnMut(super::Progress)) -> Reply {
+    fn edit(&mut self, ask: &Ask, watch: &mut dyn super::Watcher) -> Reply {
         let started = std::time::Instant::now();
         self.load()?;
         let thinks = self.thinks;
@@ -383,7 +383,7 @@ impl Backend for Local {
             generating: std::time::Duration::ZERO,
             ..super::Progress::default()
         };
-        tick(report);
+        watch.tick(report, "");
         // The clock the rate is measured on starts here, once the weights are
         // in and the question has been read.
         let mut writing_since = std::time::Instant::now();
@@ -404,6 +404,12 @@ impl Backend for Local {
         let mut pos = tokens.len() as i32;
         let ceiling = pos + RESERVE as i32;
         while pos < ceiling {
+            // Between two tokens is the only place a question can be given up
+            // on: the decode itself is one call into a library that does not
+            // come back until it is done.
+            if !watch.carry_on() {
+                break;
+            }
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
             let piece = model
@@ -452,7 +458,11 @@ impl Backend for Local {
                 report.written = 0;
                 writing_since = std::time::Instant::now();
             }
-            tick(report);
+            // What it has said so far, so somebody watching sees the answer
+            // arrive rather than a number going up. The markers the reply is
+            // wrapped in are taken out on the way, or the first thing on
+            // screen is machinery.
+            watch.tick(report, &super::clean_reply(&String::from_utf8_lossy(&out)));
         }
 
         let text = String::from_utf8_lossy(&out).to_string();

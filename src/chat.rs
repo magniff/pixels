@@ -143,6 +143,8 @@ pub struct Chat {
     pub waiting: bool,
     /// What the worker last said about it.
     pub progress: crate::llm::Progress,
+    /// The answer as far as it has got, while it is still arriving.
+    pub partial: String,
     /// Why the last question failed, if it did.
     pub failed: Option<String>,
     /// Something worth saying that is not a failure - what a command did.
@@ -175,6 +177,8 @@ pub enum Outcome {
     None,
     /// Send the conversation as it stands.
     Ask,
+    /// Give up on the answer that is on its way.
+    Stop,
     /// Something changed that should be written down.
     Save,
     /// Put this change into the project.
@@ -556,6 +560,7 @@ impl Chat {
             draft: String::new(),
             waiting: false,
             progress: crate::llm::Progress::default(),
+            partial: String::new(),
             failed: None,
             notice: None,
             grab: true,
@@ -1301,8 +1306,8 @@ impl Chat {
             }
             if self.waiting {
                 ui.space(3);
-                let row = ui.alloc(line_h);
                 let p = self.progress;
+                let row = ui.alloc(line_h);
                 let said = if p.looking {
                     format!("LOOKING SOMETHING UP... ({} SO FAR)", p.steps)
                 } else if p.deliberating {
@@ -1313,6 +1318,25 @@ impl Chat {
                     "READING THE NOTES...".to_string()
                 };
                 font::draw_text_styled(ui.canvas, row.x + 4, row.y, &said, th.info.hi, true);
+                // The answer as it arrives, in the ink it will keep. A counter
+                // going up says the machine is busy; the words say what it is
+                // saying, and twenty seconds of the first one is twenty
+                // seconds of having to take it on trust.
+                if !self.partial.trim().is_empty() {
+                    let lines: Vec<String> =
+                        self.partial.lines().map(str::to_string).collect::<Vec<_>>();
+                    let blocks = markdown::parse_located(&lines);
+                    render::draw_document(
+                        ui,
+                        &blocks,
+                        render::Request {
+                            width,
+                            numbered: false,
+                            search: None,
+                            reveal: None,
+                        },
+                    );
+                }
             }
             if let Some(why) = &self.failed {
                 ui.space(3);
@@ -1346,7 +1370,18 @@ impl Chat {
 
         // ---- what to say next ----------------------------------------------
         let field = Rect::new(foot.x, foot.y + 2, foot.w, 15);
-        if held {
+        if self.waiting {
+            // Nothing to type into while an answer is on its way, so the room
+            // is spent on the way out of it instead.
+            let button = Rect::new(field.right() - 52, field.y, 52, 15);
+            let say = Rect::new(field.x + 4, field.y, field.w - 62, field.h);
+            ui.canvas
+                .box_chamfer(field, th.well.shade(-0.04), th.well_border, 1);
+            ui.draw_text_in(say, "ANSWERING...", th.ink_soft, Align::Left);
+            if ui.button_at(button, "STOP", pixui::Tone::Danger).clicked {
+                outcome = Outcome::Stop;
+            }
+        } else if held {
             // Not a disabled field but no field at all: one that looks like it
             // takes typing and does not is worse than one that is plainly not
             // there, and the space is better spent saying why.
@@ -1360,11 +1395,7 @@ impl Chat {
                 Align::Left,
             );
         } else {
-            let hint = if self.waiting {
-                "WAITING FOR AN ANSWER"
-            } else {
-                "ASK SOMETHING"
-            };
+            let hint = "ASK SOMETHING";
             let mut draft = std::mem::take(&mut self.draft);
             // `grab` also puts the caret after the text, which is what a field
             // whose contents were just completed for it needs.

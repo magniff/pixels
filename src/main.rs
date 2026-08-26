@@ -24,19 +24,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let started = std::time::Instant::now();
         // The same numbers the block shows, on the line it is working on, so
         // a run from the shell says what it is doing too.
-        let mut tick = |p: notes::llm::Progress| {
-            eprint!(
-                "\r[{} {} tokens, {:.0}/s, {:.1}s]   ",
-                if p.deliberating {
-                    "thinking"
-                } else {
-                    "writing"
-                },
-                p.written,
-                p.rate(),
-                p.elapsed.as_secs_f32()
-            );
-        };
+        // One line, rewritten in place, which is what a terminal has instead
+        // of a panel.
+        struct Line;
+        impl notes::llm::Watcher for Line {
+            fn tick(&mut self, p: notes::llm::Progress, _said: &str) {
+                eprint!(
+                    "\r[{} {} tokens, {:.0}/s, {:.1}s]   ",
+                    if p.deliberating {
+                        "thinking"
+                    } else {
+                        "writing"
+                    },
+                    p.written,
+                    p.rate(),
+                    p.elapsed.as_secs_f32()
+                );
+            }
+
+            fn carry_on(&self) -> bool {
+                true
+            }
+        }
+        let mut tick = Line;
         // The same surroundings the editor sends: every note in the vault as
         // one line each, and - when the passage can be found in one of them -
         // that note with the passage marked where it sits. Found rather than

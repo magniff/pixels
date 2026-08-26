@@ -106,6 +106,8 @@ ask for a change.
 - The question opens *in* the text, between the lines
 - The answer arrives as a word-level diff, and the note is not touched until
   you keep it — `Cmd-Enter` again, or **APPLY**
+- The answer arrives word by word rather than all at once, and **STOP** gives up
+  on one you no longer want — what it had got to is what you keep
 - Asking again refines the suggestion rather than starting over
 - Settings fetches the weights for you, and can be switched off entirely
 

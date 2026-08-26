@@ -1526,12 +1526,17 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         if let Some(talk) = app.chat.as_mut().filter(|c| c.waiting) {
             talk.progress = p;
         }
+        let words = app.helper.partial().to_string();
+        if let Some(talk) = app.chat.as_mut().filter(|c| c.waiting) {
+            talk.partial = words;
+        }
     }
     if let Some(reply) = app.helper.poll() {
         // Whoever is waiting gets it, and only one thing ever is: the worker
         // takes one question at a time and refuses a second while it is busy.
         let mut said = None;
         if let Some(talk) = app.chat.as_mut().filter(|c| c.waiting) {
+            talk.partial.clear();
             talk.answered(reply, &app.notes_dir);
             said = Some("CHAT".to_string());
         } else if let Some(open) = app.assist.as_mut() {
@@ -1740,6 +1745,11 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                     talk.waiting = false;
                     talk.failed = Some("still busy with the last one".into());
                 }
+                app.chat = Some(talk);
+            }
+            chat::Outcome::Stop => {
+                app.helper.stop();
+                app.status = "STOPPING".into();
                 app.chat = Some(talk);
             }
             chat::Outcome::Save => {

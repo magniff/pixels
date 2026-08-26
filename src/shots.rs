@@ -417,7 +417,6 @@ pub fn run() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
-            // A change the model offered, with the diff it would make.
             name: "backlinks",
             right_click: None,
             seed: &[

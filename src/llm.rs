@@ -259,11 +259,39 @@ pub fn called(reply: &str) -> Option<(String, String)> {
 }
 
 /// Something that can rewrite a piece of text on request.
+/// What a backend calls as it goes, and what it hears back.
+///
+/// The words as well as the numbers, because a counter that says four hundred
+/// tokens is telling you the machine is busy and not what it is saying - and
+/// twenty seconds of that is twenty seconds of having to trust it. The answer
+/// back is whether to carry on: a question you no longer want the answer to
+/// should stop costing you, and the only place that can be noticed is between
+/// two tokens.
+pub trait Watcher {
+    /// How far along, and what has been said so far.
+    fn tick(&mut self, at: Progress, said: &str);
+    /// False once somebody has asked for this to stop.
+    fn carry_on(&self) -> bool;
+}
+
+/// A watcher for a caller that is not watching.
+///
+/// A test, or anything that wants the answer and not the writing of it.
+pub struct Quiet;
+
+impl Watcher for Quiet {
+    fn tick(&mut self, _at: Progress, _said: &str) {}
+    fn carry_on(&self) -> bool {
+        true
+    }
+}
+
 pub trait Backend: Send + 'static {
     /// Shown in the status bar, so it is never a mystery which one answered.
     fn name(&self) -> String;
-    /// Answer, calling `tick` as often as there is something new to report.
-    fn edit(&mut self, ask: &Ask, tick: &mut dyn FnMut(Progress)) -> Reply;
+    /// Answer, telling `watch` as often as there is something new to report,
+    /// and stopping when it says to.
+    fn edit(&mut self, ask: &Ask, watch: &mut dyn Watcher) -> Reply;
     /// Let go of whatever was being held for speed. Called when nothing has
     /// been asked for a while; the next question loads it again.
     fn release(&mut self) {}
@@ -274,26 +302,83 @@ pub trait Backend: Send + 'static {
 /// The loop lives here rather than in a backend, because it is not about
 /// language models: it is about a question that took a few steps. The stub
 /// answers in one and never notices there is a loop around it.
-fn answer(backend: &mut dyn Backend, ask: Ask, beat: &Sender<Progress>) -> Reply {
+/// The worker's end of a question in flight: it reports, and it listens.
+struct Watching<'a> {
+    beat: &'a Sender<Progress>,
+    words: &'a Sender<String>,
+    stop: &'a std::sync::atomic::AtomicBool,
+    /// Which tool call this is, which the backend knows nothing about.
+    step: u8,
+    /// Words sent so far, so a stream is not the same sentence over and over.
+    sent: usize,
+    at: Progress,
+}
+
+impl Watcher for Watching<'_> {
+    fn tick(&mut self, at: Progress, said: &str) {
+        self.at = Progress {
+            steps: self.step,
+            ..at
+        };
+        // A closed channel means the application has gone; the answer itself
+        // will notice on the way out.
+        let _ = self.beat.send(self.at);
+        // Whole words only. A stream that redraws on every token spends more
+        // of the machine on drawing half a word than on writing the next one,
+        // and a word appearing is what reads as writing anyway.
+        //
+        // Counted rather than looked for at the end: what arrives here has
+        // been through the tidying that takes the model's markers off, and
+        // that trims, so the text never ends in the space that would have said
+        // a word had finished.
+        let words = said.split_whitespace().count();
+        if words > self.sent {
+            self.sent = words;
+            let _ = self.words.send(said.to_string());
+        }
+    }
+
+    fn carry_on(&self) -> bool {
+        !self.stop.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+fn answer(
+    backend: &mut dyn Backend,
+    ask: Ask,
+    beat: &Sender<Progress>,
+    words: &Sender<String>,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Reply {
     let mut turns = ask.turns.clone();
     let mut used: Vec<Used> = Vec::new();
     let mut step = 0u8;
     loop {
-        let mut at = Progress {
-            steps: step,
-            ..Progress::default()
-        };
-        let mut tick = |p: Progress| {
-            // A closed channel means the application has gone; the answer
-            // itself will notice on the way out.
-            at = Progress { steps: step, ..p };
-            let _ = beat.send(at);
+        let mut watch = Watching {
+            beat,
+            words,
+            stop,
+            step,
+            sent: 0,
+            at: Progress {
+                steps: step,
+                ..Progress::default()
+            },
         };
         let asked = Ask {
             turns: turns.clone(),
             ..ask.clone()
         };
-        let said = to_ascii(&backend.edit(&asked, &mut tick)?);
+        let said = to_ascii(&backend.edit(&asked, &mut watch)?);
+        let at = watch.at;
+        // Stopped: what it had got to is the answer. Half a paragraph you
+        // asked it to stop writing is more use than nothing, and it is what
+        // you were looking at when you pressed the button.
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let mut out: String = used.iter().map(Used::written).collect();
+            out.push_str(said.trim());
+            return Ok(out);
+        }
 
         let Some((tool, arg)) = called(&said).filter(|_| !ask.tools.is_empty()) else {
             // Whatever it looked up goes in front of what it said, so the
@@ -346,10 +431,18 @@ pub struct Assistant {
     tx: Sender<Ask>,
     rx: Receiver<Reply>,
     ticks: Receiver<Progress>,
+    /// What is being written, as it is written.
+    words: Receiver<String>,
+    /// Raised to ask the question in flight to give up. Shared with the worker
+    /// rather than sent down the channel: a request to stop is no use behind a
+    /// queue of the thing it is trying to stop.
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     name: String,
     busy: bool,
     /// The last thing the worker said about the question in flight.
     progress: Progress,
+    /// The answer so far, while there is one.
+    partial: String,
 }
 
 impl Assistant {
@@ -358,13 +451,16 @@ impl Assistant {
         let (tx, asks) = std::sync::mpsc::channel::<Ask>();
         let (replies, rx) = std::sync::mpsc::channel::<Reply>();
         let (beat, ticks) = std::sync::mpsc::channel::<Progress>();
+        let (said, words) = std::sync::mpsc::channel::<String>();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
         std::thread::spawn(move || {
             // Ends when the application drops its end of the channel.
             let mut warm = false;
             loop {
                 match asks.recv_timeout(IDLE) {
                     Ok(ask) => {
-                        let reply = answer(&mut *backend, ask, &beat);
+                        let reply = answer(&mut *backend, ask, &beat, &said, &flag);
                         warm = true;
                         if replies.send(reply).is_err() {
                             break;
@@ -384,9 +480,12 @@ impl Assistant {
             tx,
             rx,
             ticks,
+            words,
+            stop,
             name,
             busy: false,
             progress: Progress::default(),
+            partial: String::new(),
         }
     }
 
@@ -418,11 +517,32 @@ impl Assistant {
         self.progress
     }
 
+    /// The answer as far as it has got, for showing while it is being written.
+    pub fn partial(&mut self) -> &str {
+        while let Ok(said) = self.words.try_recv() {
+            self.partial = said;
+        }
+        &self.partial
+    }
+
+    /// Ask the question in flight to give up.
+    ///
+    /// What it had got to comes back as the answer rather than nothing: half a
+    /// paragraph you asked it to stop writing is more use than an empty panel,
+    /// and it is what you were looking at when you pressed the button.
+    pub fn stop(&mut self) {
+        if self.busy {
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     /// Collect an answer if one has arrived. Never blocks.
     pub fn poll(&mut self) -> Option<Reply> {
         match self.rx.try_recv() {
             Ok(reply) => {
                 self.busy = false;
+                self.partial.clear();
+                self.stop.store(false, std::sync::atomic::Ordering::Relaxed);
                 Some(reply)
             }
             Err(TryRecvError::Empty) => None,
@@ -546,13 +666,16 @@ impl Backend for Rehearsal {
         "REHEARSAL".into()
     }
 
-    fn edit(&mut self, ask: &Ask, tick: &mut dyn FnMut(Progress)) -> Reply {
+    fn edit(&mut self, ask: &Ask, watch: &mut dyn Watcher) -> Reply {
         // It answers instantly, so there is one report and it is the finished
         // one — enough for the block to have something true to draw.
-        tick(Progress {
-            prompt: ask.source.split_whitespace().count(),
-            ..Progress::default()
-        });
+        watch.tick(
+            Progress {
+                prompt: ask.source.split_whitespace().count(),
+                ..Progress::default()
+            },
+            "",
+        );
         // Line by line, so a selection keeps its shape, and indent by indent,
         // so a list item keeps its nesting.
         let out = ask

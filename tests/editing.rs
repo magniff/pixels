@@ -1334,7 +1334,7 @@ fn the_rehearsal_backend_fixes_what_it_claims_to() {
                 request: "fix it".into(),
                 ..Default::default()
             },
-            &mut |_| {},
+            &mut notes::llm::Quiet,
         )
         .unwrap();
     assert_eq!(
@@ -1591,16 +1591,30 @@ fn the_status_line_says_what_the_model_is_doing() {
 #[test]
 fn a_question_in_flight_reports_where_it_has_got_to() {
     use notes::llm::{Ask, Backend, Progress};
+    /// A watcher that keeps everything it is told, so a test can look.
+    struct Noting {
+        seen: Vec<Progress>,
+    }
+    impl notes::llm::Watcher for Noting {
+        fn tick(&mut self, at: Progress, _said: &str) {
+            self.seen.push(at);
+        }
+        fn carry_on(&self) -> bool {
+            true
+        }
+    }
+
     let mut stub = notes::llm::Rehearsal;
-    let mut seen: Vec<Progress> = Vec::new();
+    let mut watch = Noting { seen: Vec::new() };
     let _ = stub.edit(
         &Ask {
             source: "teh quick fox".into(),
             request: "fix it".into(),
             ..Default::default()
         },
-        &mut |p| seen.push(p),
+        &mut watch,
     );
+    let seen = watch.seen;
     assert_eq!(
         seen.len(),
         1,
@@ -1634,7 +1648,7 @@ fn the_rehearsal_backend_always_leaves_something_to_review() {
                 request: "Improve It".into(),
                 ..Default::default()
             },
-            &mut |_| {},
+            &mut notes::llm::Quiet,
         )
         .unwrap();
     assert!(reply.ends_with("(improve it)"), "got {reply:?}");
@@ -4951,4 +4965,113 @@ fn a_note_does_not_point_at_itself() {
         .unwrap();
     assert!(app.linked_from(water).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ------------------------------------------------------- streaming and stopping
+
+/// A backend that writes slowly and does as it is told, so the plumbing around
+/// one can be tested without twelve gigabytes of weights.
+struct Dawdler;
+
+impl notes::llm::Backend for Dawdler {
+    fn name(&self) -> String {
+        "DAWDLER".into()
+    }
+    fn edit(
+        &mut self,
+        _ask: &notes::llm::Ask,
+        watch: &mut dyn notes::llm::Watcher,
+    ) -> notes::llm::Reply {
+        let mut said = String::new();
+        for i in 0..200 {
+            if !watch.carry_on() {
+                break;
+            }
+            said.push_str(&format!("word{i} "));
+            watch.tick(
+                notes::llm::Progress {
+                    written: i + 1,
+                    ..Default::default()
+                },
+                said.trim(),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+        Ok(said.trim().to_string())
+    }
+}
+
+#[test]
+fn the_answer_can_be_watched_as_it_is_written() {
+    let mut helper = notes::llm::Assistant::spawn(Box::new(Dawdler));
+    assert!(helper.ask(notes::llm::Ask::default()));
+
+    let mut lengths = Vec::new();
+    let reply = loop {
+        if let Some(r) = helper.poll() {
+            break r;
+        }
+        let n = helper.partial().len();
+        if lengths.last() != Some(&n) {
+            lengths.push(n);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    .expect("an answer");
+
+    assert!(
+        lengths.len() > 5,
+        "it arrived in pieces rather than all at once: {lengths:?}"
+    );
+    assert!(
+        lengths.windows(2).all(|w| w[0] <= w[1]),
+        "and the pieces only ever grew"
+    );
+    assert!(reply.ends_with("word199"), "and the whole of it turned up");
+    assert!(
+        helper.partial().is_empty(),
+        "the partial is cleared once it is whole"
+    );
+}
+
+#[test]
+fn a_question_can_be_given_up_on() {
+    let mut helper = notes::llm::Assistant::spawn(Box::new(Dawdler));
+    assert!(helper.ask(notes::llm::Ask::default()));
+
+    let started = std::time::Instant::now();
+    let mut stopped = false;
+    let reply = loop {
+        if let Some(r) = helper.poll() {
+            break r;
+        }
+        if !stopped && helper.partial().split_whitespace().count() > 5 {
+            helper.stop();
+            stopped = true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert!(started.elapsed().as_secs() < 20, "it never stopped");
+    }
+    .expect("what it had got to");
+
+    let words = reply.split_whitespace().count();
+    assert!(stopped, "it was asked");
+    assert!(words < 200, "it did not finish: {words} words");
+    assert!(
+        words >= 5,
+        "and what it had got to came back rather than nothing - half a \
+         paragraph you asked it to stop writing is what you were looking at"
+    );
+
+    // And the next question is not still trying to stop.
+    assert!(helper.ask(notes::llm::Ask::default()));
+    let again = loop {
+        if let Some(r) = helper.poll() {
+            break r;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert!(started.elapsed().as_secs() < 30);
+    }
+    .expect("an answer");
+    assert!(again.ends_with("word199"), "the flag was put down again");
 }
