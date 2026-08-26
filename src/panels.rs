@@ -49,15 +49,7 @@ pub enum Action {
     Scheme(String),
     /// Read in this face.
     Font(String),
-    /// The context ceiling moved, so the assistant needs rebuilding with it.
-    Context,
 }
-
-/// The windows offered, in tokens. Powers of two because that is how everything
-/// downstream thinks about them, and stopping at 32K because past that the
-/// key/value cache for a twenty-billion-parameter model is measured in gigabytes
-/// and this is a note editor.
-const WINDOWS: &[u32] = &[4096, 8192, 16384, 32768];
 
 /// The system prompt, edited the way everything else in this app is edited.
 ///
@@ -622,30 +614,7 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
                     ui.draw_text_in(row, &chrome.notice, th.danger.face, Align::Left);
                 }
 
-                // ---- how much room the model is given ----------------------
-                // A ceiling rather than a size: a request opens the smallest
-                // window that fits it, and this is how far it may go. The cache
-                // is allocated in the same memory the weights are in, so the
-                // largest setting is a promise about memory, not about quality.
                 ui.space(3);
-                let row = ui.alloc(13);
-                let (label, choices) = row.split_left(row.w - WINDOWS.len() as i32 * 44);
-                ui.draw_text_in(label, "CONTEXT WINDOW", th.accent.face, Align::Left);
-                for (i, window) in WINDOWS.iter().enumerate() {
-                    let at = Rect::new(choices.x + i as i32 * 44, row.y, 42, 13);
-                    let worn = config.context == *window;
-                    let tone = if worn { Tone::Accent } else { Tone::Neutral };
-                    if ui
-                        .button_at(at, &format!("{}K", window / 1024), tone)
-                        .clicked
-                        && !worn
-                    {
-                        config.context = *window;
-                        action = Action::Context;
-                    }
-                }
-
-                ui.space(2);
                 let head = ui.alloc(8);
                 ui.draw_text_in(head, "SYSTEM PROMPT", th.accent.face, Align::Left);
                 // A vim editor with no mode showing is a vim editor you have to guess

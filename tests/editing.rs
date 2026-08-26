@@ -2832,13 +2832,12 @@ fn settings_survive_a_round_trip_through_a_file() {
         scheme: "NORD".into(),
         font: "COZETTE".into(),
         assist: false,
-        context: 16384,
         model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
         // A prompt has newlines in it, and the format is one line per setting.
         prompt: "first line\nsecond line\nand a backslash \\ too".into(),
     };
     let text = config.to_text();
-    assert_eq!(text.lines().count(), 6, "one line per setting");
+    assert_eq!(text.lines().count(), 5, "one line per setting");
     assert_eq!(Settings::parse(&text), config);
 }
 
@@ -3037,5 +3036,18 @@ fn pasting_into_a_search_pattern_types_it_rather_than_the_note() {
         b.to_text(),
         "alpha\nbeta gamma\nalpha",
         "the note is untouched"
+    );
+}
+
+#[test]
+fn a_setting_that_no_longer_exists_is_read_past() {
+    // The context ceiling was a setting until it became the model's own number.
+    // A file written by the build that had it must still be read by this one.
+    let config = Settings::parse("scheme = NORD\ncontext = 32768\nassist = off\n");
+    assert_eq!(config.scheme, "NORD");
+    assert!(!config.assist, "the settings after it are not lost with it");
+    assert!(
+        !config.to_text().contains("context"),
+        "and it is not written back out"
     );
 }

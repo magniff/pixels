@@ -64,8 +64,8 @@ ask for a change.
   one; no key, no account, nothing leaves the machine
 - Prompts are built from each model's own chat template, so a family that
   spells its turns differently is spoken to correctly
-- A context ceiling you set, and a window sized per request underneath it; the
-  weights are put down again after a few minutes' quiet
+- The window is sized per request, up to whatever the model was trained to
+  read; the weights are put down again after a few minutes' quiet
 - The question opens *in* the text, between the lines
 - The answer arrives as a word-level diff, and the note is not touched until
   you keep it — `Cmd-Enter` again, or **APPLY**

@@ -484,7 +484,6 @@ impl Notes {
                 ui.request_theme(theme_for(&self.settings));
             }
             panels::Action::None | panels::Action::Prompt => {}
-            panels::Action::Context => self.rebuild_assistant(),
             panels::Action::Use(file) => {
                 self.settings.model = Some(file);
                 self.rebuild_assistant();
@@ -881,11 +880,7 @@ pub fn theme_for(config: &settings::Settings) -> Theme {
 pub fn assistant(config: &settings::Settings) -> Box<dyn llm::Backend> {
     #[cfg(feature = "llm")]
     if let Some(path) = config.model_path() {
-        return Box::new(llm::local::Local::new(
-            path,
-            config.prompt.clone(),
-            config.context,
-        ));
+        return Box::new(llm::local::Local::new(path, config.prompt.clone()));
     }
     let _ = config;
     Box::new(llm::Rehearsal)

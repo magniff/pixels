@@ -34,21 +34,16 @@ pub struct Local {
     path: PathBuf,
     /// What the model is told it is doing, from the settings.
     system: String,
-    /// The largest window this is allowed to open, from the settings. Bigger
-    /// is not free: the key/value cache grows with it, in the same memory the
-    /// weights are sitting in.
-    context: u32,
     loaded: Option<(LlamaBackend, LlamaModel)>,
     /// Whether this model reasons out loud unless told the thinking is done.
     thinks: bool,
 }
 
 impl Local {
-    pub fn new(path: impl AsRef<Path>, system: String, context: u32) -> Self {
+    pub fn new(path: impl AsRef<Path>, system: String) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             system,
-            context,
             loaded: None,
             thinks: false,
         }
@@ -126,7 +121,7 @@ fn no_room(e: llama_cpp_2::DecodeError) -> String {
                 .to_string()
         }
         llama_cpp_2::DecodeError::NoKvCacheSlot => {
-            "that selection needs a bigger context window than this is set to".to_string()
+            "there was no room in the cache for that selection".to_string()
         }
         other => format!("decode: {other}"),
     }
@@ -232,24 +227,30 @@ impl Backend for Local {
         let started = std::time::Instant::now();
         self.load()?;
         let thinks = self.thinks;
-        let ceiling = self.context;
         let system = self.system.clone();
         let (backend, model) = self.loaded.as_ref().expect("loaded above");
+        // How far this model was trained to read. Asked of the model rather
+        // than set by hand: it is the model's own number, the same on every
+        // machine, and nobody sitting in front of a note editor is in a
+        // position to pick a better one.
+        let ceiling = model.n_ctx_train();
         let text = render(model, &system, &instruction(ask), thinks)?;
         let tokens = model
             .str_to_token(&text, AddBos::Never)
             .map_err(|e| format!("tokenising: {e}"))?;
         if tokens.len() + RESERVE > ceiling as usize {
             return Err(format!(
-                "that selection needs more than the {}k window this is set to",
-                ceiling / 1024
+                "that selection is longer than this model can read - {} tokens against {}",
+                tokens.len(),
+                ceiling
             ));
         }
 
         // The window is sized to this request rather than to the ceiling. The
         // key/value cache is allocated with the context and paid for in memory
         // whether or not it is used, so a one-line edit should not reserve room
-        // for a whole note.
+        // for a whole note - and the ceiling being the model's whole training
+        // length costs nothing until something actually asks for it.
         let want = ((tokens.len() + RESERVE) as u32)
             .next_power_of_two()
             .clamp(1024, ceiling);

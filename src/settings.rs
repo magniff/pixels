@@ -113,10 +113,6 @@ pub struct Settings {
     pub scheme: String,
     /// The face, likewise.
     pub font: String,
-    /// The largest context window the assistant may open, in tokens. The
-    /// key/value cache for one is allocated in the same memory the weights are
-    /// in, so this is a memory budget as much as a length.
-    pub context: u32,
     /// Whether the editing assistant is offered at all. With this off there is
     /// no mark beside a selection and nothing to ask — the app is a text editor
     /// and nothing else, which is a perfectly good thing for it to be.
@@ -134,7 +130,6 @@ impl Default for Settings {
             // hour, which is what a note editor is for.
             scheme: "GRUVBOX DARK".to_string(),
             font: "PIXUI 5X7".to_string(),
-            context: 8192,
             // On, because a feature nobody can see is a feature nobody finds.
             assist: true,
             model: None,
@@ -181,11 +176,6 @@ impl Settings {
             match key.trim() {
                 "scheme" if !value.is_empty() => out.scheme = value.to_string(),
                 "font" if !value.is_empty() => out.font = value.to_string(),
-                "context" => {
-                    if let Ok(n) = value.parse::<u32>() {
-                        out.context = n.clamp(2048, 131_072);
-                    }
-                }
                 "assist" => out.assist = value != "off",
                 "model" if !value.is_empty() => out.model = Some(value.to_string()),
                 "prompt" if !value.is_empty() => out.prompt = unescape(value),
@@ -199,7 +189,6 @@ impl Settings {
         let mut out = String::new();
         out.push_str(&format!("scheme = {}\n", self.scheme));
         out.push_str(&format!("font = {}\n", self.font));
-        out.push_str(&format!("context = {}\n", self.context));
         out.push_str(&format!(
             "assist = {}\n",
             if self.assist { "on" } else { "off" }
