@@ -4144,3 +4144,111 @@ fn loose_notes_keep_their_conversations_at_the_top() {
     );
     assert_eq!(chat::called("reading"), "READING");
 }
+
+#[test]
+fn a_created_note_lands_in_its_own_project() {
+    // The bug this exists for: a new note was appended after every project, so
+    // the sidebar - which begins a heading wherever the project changes - drew
+    // its project a second time, and the drawer showed two of them.
+    let dir = std::env::temp_dir().join(format!("pixui-order-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (project, file) in [
+        ("aquarium", "stock.md"),
+        ("aquarium", "water.md"),
+        ("bicycle", "routes.md"),
+        ("typography", "faces.md"),
+    ] {
+        std::fs::create_dir_all(dir.join(project)).unwrap();
+        std::fs::write(dir.join(project).join(file), "# x\n").unwrap();
+    }
+
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/stock.md")
+        .unwrap();
+    app.apply_change(&chat::Change {
+        file: Some("plants.md".into()),
+        what: chat::What::Write {
+            text: "# Plants\n".into(),
+        },
+        state: None,
+    });
+
+    let slugs: Vec<String> = app.notes.iter().map(|n| n.slug()).collect();
+    assert_eq!(
+        slugs,
+        vec![
+            // The reference note the vault installs, lying loose at the top.
+            "markdown-showcase.md",
+            "aquarium/plants.md",
+            "aquarium/stock.md",
+            "aquarium/water.md",
+            "bicycle/routes.md",
+            "typography/faces.md",
+        ],
+        "in the order the vault reads, so each project is one run of notes"
+    );
+
+    // Which is the property the sidebar depends on: walking the list, a
+    // project must never be met twice.
+    let mut met: Vec<&str> = Vec::new();
+    for note in &app.notes {
+        if met.last() != Some(&note.project.as_str()) {
+            assert!(
+                !met.contains(&note.project.as_str()),
+                "{} is met twice, so it would be drawn twice",
+                note.project
+            );
+            met.push(&note.project);
+        }
+    }
+    assert_eq!(
+        app.notes[app.current].slug(),
+        "aquarium/plants.md",
+        "and the new note is the one being read"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_note_goes_into_the_project_being_read() {
+    let dir = std::env::temp_dir().join(format!("pixui-newnote-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("bicycle")).unwrap();
+    std::fs::write(dir.join("bicycle").join("routes.md"), "# Routes\n").unwrap();
+    std::fs::create_dir_all(dir.join("typography")).unwrap();
+    std::fs::write(dir.join("typography").join("faces.md"), "# Faces\n").unwrap();
+
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "bicycle/routes.md")
+        .unwrap();
+    let at = app.insert_note(notes::Note::blank("bicycle".into()));
+    assert_eq!(app.notes[at].project, "bicycle");
+    // The property the sidebar rests on: whatever else the order is, a
+    // project's notes are one unbroken run, so its heading is drawn once.
+    let mut met: Vec<String> = Vec::new();
+    for note in &app.notes {
+        if met.last() != Some(&note.project) {
+            assert!(
+                !met.contains(&note.project),
+                "{} is met twice, so its heading would be drawn twice",
+                note.project
+            );
+            met.push(note.project.clone());
+        }
+    }
+    assert!(
+        app.notes
+            .iter()
+            .position(|n| n.project == "typography")
+            .unwrap()
+            > at,
+        "and it went in before the projects that sort after it"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

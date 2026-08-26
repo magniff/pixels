@@ -444,12 +444,12 @@ impl Notes {
         }
         match std::fs::read_to_string(path) {
             Ok(text) => {
-                self.notes.push(Note {
+                let note = Note {
                     project: self.project_of(path),
                     path: Some(path.to_path_buf()),
                     buffer: Buffer::from_text(&text),
-                });
-                self.current = self.notes.len() - 1;
+                };
+                self.current = self.insert_note(note);
                 self.scroll = 0;
                 self.status = format!(
                     "OPENED {}",
@@ -518,8 +518,7 @@ impl Notes {
                 // Into whichever project is being read, which is nearly always
                 // the one the new note belongs beside.
                 let here = self.note().project.clone();
-                self.notes.push(Note::blank(here));
-                self.current = self.notes.len() - 1;
+                self.current = self.insert_note(Note::blank(here));
                 self.scroll = 0;
                 self.status = "NEW NOTE".into();
             }
@@ -783,8 +782,7 @@ impl Notes {
                         note.buffer = Buffer::from_text(text);
                         note.path = Some(self.project_dir(&here).join(&named));
                         note.buffer.dirty = true;
-                        self.notes.push(note);
-                        self.current = self.notes.len() - 1;
+                        self.current = self.insert_note(note);
                         self.status = format!("CREATED {named}").to_uppercase();
                     }
                 }
@@ -898,6 +896,28 @@ impl Notes {
             .iter()
             .position(|n| n.project == here && n.filename() == name)
             .or_else(|| self.notes.iter().position(|n| n.filename() == name))
+    }
+
+    /// Put a note where it belongs, and say where that was.
+    ///
+    /// Where it belongs is the order the vault is read in: loose notes first,
+    /// then projects, then filenames. Appending instead would put a new note
+    /// after every project rather than in its own, and the sidebar - which
+    /// begins a heading wherever the project changes - would draw that project
+    /// a second time.
+    pub fn insert_note(&mut self, note: Note) -> usize {
+        // Named notes in filename order, and one that has never been saved
+        // after them: it has no name yet, only a placeholder, and sorting on
+        // that would file it under whatever punctuation the placeholder starts
+        // with. At the end of its project is where "just made" belongs.
+        let key = |n: &Note| (n.project.clone(), n.path.is_none(), n.filename());
+        let at = self
+            .notes
+            .iter()
+            .position(|other| key(other) > key(&note))
+            .unwrap_or(self.notes.len());
+        self.notes.insert(at, note);
+        at
     }
 
     /// Where a project's files live on disk.
@@ -2137,8 +2157,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             let cell = ui.alloc(w);
             if ui.button_at(cell, "NEW", Tone::Neutral).clicked {
                 let here = app.note().project.clone();
-                app.notes.push(Note::blank(here));
-                app.current = app.notes.len() - 1;
+                app.current = app.insert_note(Note::blank(here));
                 app.scroll = 0;
                 app.filter.clear();
                 app.status = "NEW NOTE".into();
