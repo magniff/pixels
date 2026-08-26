@@ -212,6 +212,16 @@ impl Ui<'_> {
     ///
     /// Pass an empty title for a plain frame with no strip.
     pub fn panel(&mut self, rect: Rect, title: &str) -> Rect {
+        self.panel_badged(rect, title, "")
+    }
+
+    /// A panel with a quiet readout at the other end of its title strip.
+    ///
+    /// For a number that belongs to the panel rather than to anything in it -
+    /// how much of something is being used, how many of something there are.
+    /// Drawn in the title's own ink, dimmed: it is a fact about the window, and
+    /// it should never compete with the window's name.
+    pub fn panel_badged(&mut self, rect: Rect, title: &str, badge: &str) -> Rect {
         let th = *self.theme;
         let m = th.metrics;
 
@@ -245,6 +255,10 @@ impl Ui<'_> {
             let text = strip.translate(m.text_pad, 0);
             let y = text.y + (text.h - font::glyph_h()) / 2;
             font::draw_text_styled(self.canvas, text.x, y, title, th.panel_title_ink, true);
+            if !badge.is_empty() {
+                let at = strip.right() - m.text_pad - font::text_width(badge);
+                font::draw_text(self.canvas, at, y, badge, th.panel_title_ink.shade(-0.3));
+            }
         }
         inner.inset(m.pad)
     }

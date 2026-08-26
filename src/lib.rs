@@ -656,7 +656,8 @@ impl Notes {
     fn open_chat(&mut self) {
         let note = self.notes[self.current.min(self.notes.len() - 1)].filename();
         if chat::filed(&self.notes_dir, &note).is_empty() {
-            self.chat = Some(chat::Chat::new(note));
+            let fresh = self.begin_chat(chat::Chat::new(note));
+            self.chat = Some(fresh);
             self.status = "CHAT - ASK SOMETHING".into();
         } else {
             self.picker = Some(chat::Picker::new());
@@ -692,6 +693,16 @@ impl Notes {
         buf.cursor = text::Cursor::new(from.min(buf.line_count().saturating_sub(1)), 0);
         buf.clamp_cursor(false);
         self.status = "APPLIED".into();
+    }
+
+    /// Hand a conversation the one number it cannot work out for itself.
+    ///
+    /// The vault digest is built here anyway on every question; doing it once
+    /// more when a chat opens is cheaper than a chat rebuilding it every frame
+    /// to put a number in its title bar.
+    fn begin_chat(&self, mut talk: chat::Chat) -> chat::Chat {
+        talk.overhead = digest::vault(&self.notes).len() / 4;
+        talk
     }
 
     /// The conversation, told what it is about.
@@ -1177,7 +1188,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             chat::Picked::None => app.picker = Some(picker),
             chat::Picked::Close => app.status = "EDITOR".into(),
             chat::Picked::Fresh => {
-                app.chat = Some(chat::Chat::new(note));
+                app.chat = Some(app.begin_chat(chat::Chat::new(note)));
                 app.status = "CHAT - ASK SOMETHING".into();
             }
             chat::Picked::Delete(path) => {
@@ -1192,7 +1203,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.picker = Some(picker);
             }
             chat::Picked::Open(path) => {
-                app.chat = Some(chat::Chat::open(&path, note));
+                app.chat = Some(app.begin_chat(chat::Chat::open(&path, note)));
                 app.status = "CHAT".into();
             }
         }

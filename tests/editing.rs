@@ -3425,3 +3425,70 @@ fn a_change_to_lines_that_are_not_there_replaces_nothing() {
     };
     assert!(backwards.replacing(&note).is_none());
 }
+
+#[test]
+fn a_half_typed_command_offers_what_it_could_be() {
+    assert_eq!(
+        chat::completions("/").len(),
+        chat::COMMANDS.len(),
+        "a bare slash offers everything"
+    );
+    let one = chat::completions("/re");
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].name, "rename");
+    assert!(
+        chat::completions("/rename some name").is_empty(),
+        "past the space the name is settled and the rest is an argument"
+    );
+    assert!(chat::completions("what is this note about").is_empty());
+    assert!(chat::completions("/zzz").is_empty());
+}
+
+#[test]
+fn tab_finishes_a_command_as_far_as_it_can() {
+    assert_eq!(
+        chat::complete("/re").as_deref(),
+        Some("/rename "),
+        "one match finishes it, with room for the argument"
+    );
+    assert_eq!(
+        chat::complete("/h").as_deref(),
+        Some("/help"),
+        "and no trailing space when it takes nothing"
+    );
+    assert_eq!(chat::complete("/zzz"), None, "nothing to finish");
+}
+
+#[test]
+fn every_command_in_the_list_is_a_command() {
+    // The table is what /help prints and what completion offers. A name in it
+    // that nothing answers to would be a lie told in two places.
+    for command in chat::COMMANDS {
+        let mut talk = chat::Chat::new("n.md".into());
+        assert!(talk.command(&format!("/{} something", command.name)));
+        let notice = talk.notice.unwrap_or_default();
+        assert!(
+            !notice.contains("no command called"),
+            "/{} is listed but not answered",
+            command.name
+        );
+    }
+}
+
+#[test]
+fn help_lists_every_command_there_is() {
+    let mut talk = chat::Chat::new("n.md".into());
+    assert!(talk.command("/help"));
+    let printed = talk.notice.expect("it says something");
+    for command in chat::COMMANDS {
+        assert!(
+            printed.contains(command.name) && printed.contains(command.what),
+            "/{} is missing from the listing:\n{printed}",
+            command.name
+        );
+    }
+    assert!(
+        talk.turns.is_empty(),
+        "and asking for help is not a question"
+    );
+}

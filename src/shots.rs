@@ -321,6 +321,33 @@ pub fn run() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
+            // A half-typed command, with what it could still become.
+            name: "chat-command",
+            seed: &[(
+                "chats/welcome/how-does-wrapping-work.md",
+                "# how does wrapping work\n\n## you\n\nhow does wrapping work in the source view\n\n## assistant\n\nAt the width of the pane, on spaces. A word longer than the line is broken\nrather than pushed out.\n",
+            )],
+            script: [
+                keys(":e welcome.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("\n"),
+                keys("/"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
             // A change the model offered, with the diff it would make.
             name: "chat-diff",
             seed: &[(

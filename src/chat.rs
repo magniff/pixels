@@ -26,6 +26,93 @@ use crate::llm::Turn;
 use crate::markdown;
 use crate::render;
 
+/// One thing that can be typed with a slash in front of it.
+pub struct Command {
+    pub name: &'static str,
+    /// What it takes after the name, for the listing and for completing it.
+    pub takes: &'static str,
+    pub what: &'static str,
+}
+
+/// Every command there is.
+///
+/// The table is what `/help` prints and what completion offers, so a command
+/// that is not in it does not exist as far as anybody typing is concerned.
+pub const COMMANDS: &[Command] = &[
+    Command {
+        name: "rename",
+        takes: " <name>",
+        what: "call this conversation something",
+    },
+    Command {
+        name: "help",
+        takes: "",
+        what: "list what can be typed here",
+    },
+];
+
+/// The commands, one per line, laid out in a column.
+fn manual() -> String {
+    let widest = COMMANDS
+        .iter()
+        .map(|c| c.name.len() + c.takes.len())
+        .max()
+        .unwrap_or(0);
+    COMMANDS
+        .iter()
+        .map(|c| {
+            let head = format!("/{}{}", c.name, c.takes);
+            format!("{head:<0$}   {1}", widest + 1, c.what)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The commands a half-typed one could still become.
+///
+/// Nothing once there is a space: the name is settled by then and what follows
+/// is an argument, which this knows nothing about.
+pub fn completions(draft: &str) -> Vec<&'static Command> {
+    let Some(rest) = draft.strip_prefix('/') else {
+        return Vec::new();
+    };
+    if rest.contains(' ') {
+        return Vec::new();
+    }
+    COMMANDS
+        .iter()
+        .filter(|c| c.name.starts_with(rest))
+        .collect()
+}
+
+/// What Tab should make of a half-typed command.
+///
+/// The longest beginning every candidate shares, the way a shell completes:
+/// one match finishes the word, several take it as far as they agree.
+pub fn complete(draft: &str) -> Option<String> {
+    let hits = completions(draft);
+    let first = hits.first()?;
+    let mut common = first.name.to_string();
+    for hit in &hits[1..] {
+        let keep = common
+            .chars()
+            .zip(hit.name.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        common.truncate(keep);
+    }
+    if hits.len() == 1 {
+        // A finished name gets the space its argument would go after, so the
+        // next keystroke is the argument rather than another Tab.
+        return Some(format!(
+            "/{}{}",
+            common,
+            if first.takes.is_empty() { "" } else { " " }
+        ));
+    }
+    Some(format!("/{common}"))
+}
+
 /// Where a turn begins, and whose it is.
 const MINE: &str = "## you";
 const THEIRS: &str = "## assistant";
@@ -56,9 +143,16 @@ pub struct Chat {
     pub notice: Option<String>,
     /// True on the frame it opens, so the field takes the keyboard.
     grab: bool,
+    /// True on the frame a completion rewrote the draft, so the field picks up
+    /// the new text and puts the caret after it.
+    retype: bool,
     scroll: ScrollState,
     /// True when the view should be pinned to the newest turn.
     follow: bool,
+    /// Roughly how many tokens the context around the conversation comes to -
+    /// the vault list and the note. Told to it once by the application, which
+    /// is the thing that assembles them, rather than worked out every frame.
+    pub overhead: usize,
     /// Which proposals have been settled, and how, by turn and position in it.
     /// A change is offered until it is answered, and then it says what happened
     /// instead of asking again.
@@ -196,8 +290,10 @@ impl Chat {
             failed: None,
             notice: None,
             grab: true,
+            retype: false,
             scroll: ScrollState::default(),
             follow: true,
+            overhead: 0,
             applied: std::collections::HashMap::new(),
         }
     }
@@ -245,12 +341,13 @@ impl Chat {
         let (word, arg) = rest.split_once(' ').unwrap_or((rest, ""));
         let arg = arg.trim();
         match word {
-            "rename" | "name" if !arg.is_empty() => {
+            "rename" if !arg.is_empty() => {
                 self.name = Some(one_line(arg, 60));
                 self.notice = Some(format!("renamed to \"{}\"", self.title()));
             }
-            "rename" | "name" => self.notice = Some("rename to what?".into()),
-            other => self.notice = Some(format!("no command called /{other}")),
+            "rename" => self.notice = Some("rename to what? /rename <name>".into()),
+            "help" => self.notice = Some(manual()),
+            other => self.notice = Some(format!("no command called /{other} - /help lists them")),
         }
         self.draft.clear();
         true
@@ -476,6 +573,14 @@ fn one_line(text: &str, room: usize) -> String {
     let head: String = first.chars().take(room).collect();
     let cut = head.rfind(' ').unwrap_or(head.len());
     format!("{}...", head[..cut].trim_end())
+}
+
+/// A count, shortened once it stops being worth reading digit by digit.
+fn round(n: usize) -> String {
+    if n < 1000 {
+        return n.to_string();
+    }
+    format!("{:.1}K", n as f32 / 1000.0)
 }
 
 /// How long ago, in the roundest terms that are still true.
@@ -773,8 +878,10 @@ impl Chat {
         let rect = screen.centered((screen.w - 60).min(620), screen.h - 40);
         // Named after the conversation rather than the note, because the name
         // is the thing `/rename` changes and a rename you cannot see happen is
-        // a rename you do twice.
-        let inner = ui.panel(rect, &self.title().to_uppercase());
+        // a rename you do twice. The readout beside it is what the last
+        // question actually came to, which is the only honest way to say how
+        // much of the window a conversation is using.
+        let inner = ui.panel_badged(rect, &self.title().to_uppercase(), &self.weight(note));
         ui.capture_keyboard();
 
         let mut outcome = Outcome::None;
@@ -797,7 +904,36 @@ impl Chat {
             }
         }
 
-        let (body, foot) = inner.split_bottom(FOOT);
+        // What a half-typed command could still become, offered above the
+        // field: near what is being typed, and out of the transcript's way.
+        let hints = completions(self.draft.trim_end());
+        if ui.input.key_pressed(Key::Tab) {
+            if let Some(finished) = complete(self.draft.trim_end()) {
+                self.draft = finished;
+                self.retype = true;
+            }
+        }
+        let strip = if hints.is_empty() {
+            0
+        } else {
+            hints.len() as i32 * line_h + 4
+        };
+        let (body, foot) = inner.split_bottom(FOOT + strip);
+        let (menu, foot) = foot.split_top(strip);
+        if strip > 0 {
+            ui.canvas.box_chamfer(menu, th.well, th.well_border, 1);
+            for (i, hit) in hints.iter().enumerate() {
+                let row = Rect::new(
+                    menu.x + 3,
+                    menu.y + 2 + i as i32 * line_h,
+                    menu.w - 6,
+                    line_h,
+                );
+                let head = format!("/{}{}", hit.name, hit.takes);
+                font::draw_text_styled(ui.canvas, row.x, row.y, &head, th.accent.hi, true);
+                ui.draw_text_in(row, hit.what, th.ink_soft, Align::Right);
+            }
+        }
 
         // ---- the transcript ------------------------------------------------
         let width = body.w - Ui::SCROLL_GUTTER - 8;
@@ -874,8 +1010,12 @@ impl Chat {
             }
             if let Some(said) = &self.notice {
                 ui.space(3);
-                let row = ui.alloc(line_h);
-                ui.draw_text_in(row, &said.to_uppercase(), th.info.hi, Align::Left);
+                // A line at a time, because `/help` is a listing and a listing
+                // squeezed onto one row is a listing nobody reads.
+                for line in said.lines() {
+                    let row = ui.alloc(line_h);
+                    ui.draw_text_in(row, &line.to_uppercase(), th.info.hi, Align::Left);
+                }
             }
             // A little air under the last turn, so the newest thing said is not
             // flush against the field you say the next one into.
@@ -901,7 +1041,10 @@ impl Chat {
             "ASK SOMETHING"
         };
         let mut draft = std::mem::take(&mut self.draft);
-        ui.text_field_grab_at(field, "chat-field", &mut draft, hint, self.grab);
+        // `grab` also puts the caret after the text, which is what a field
+        // whose contents were just completed for it needs.
+        let take = self.grab || std::mem::take(&mut self.retype);
+        ui.text_field_grab_at(field, "chat-field", &mut draft, hint, take);
         self.draft = draft;
         self.grab = false;
 
@@ -909,7 +1052,7 @@ impl Chat {
         ui.draw_text_in(
             legend,
             &format!(
-                "ABOUT {} - /RENAME NAMES THIS CHAT",
+                "ABOUT {} - /HELP LISTS THE COMMANDS",
                 self.note.to_uppercase()
             ),
             th.ink_soft,
@@ -929,6 +1072,21 @@ impl Chat {
             }
             None => outcome,
         }
+    }
+
+    /// How much context this conversation is carrying, said in tokens.
+    ///
+    /// Measured once there is something to measure: the worker counts the
+    /// prompt on its way in and says so, and that number is exact. Before the
+    /// first question there is nothing to have counted, so what is shown is an
+    /// estimate off the characters, marked as one.
+    fn weight(&self, note: &[String]) -> String {
+        if self.progress.prompt > 0 {
+            return format!("{} TOKENS", round(self.progress.prompt));
+        }
+        let said: usize = self.turns.iter().map(|t| t.text.len()).sum();
+        let here: usize = note.iter().map(|l| l.len() + 1).sum();
+        format!("~{} TOKENS", round(self.overhead + (said + here) / 4))
     }
 
     /// One proposed change, with what it would do to the note as it is now.
