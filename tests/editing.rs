@@ -4401,3 +4401,166 @@ fn a_new_project_arrives_with_a_note_so_it_can_be_seen() {
     assert_ne!(again, made, "a second one does not land on the first");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ------------------------------------------------------------------- the web
+
+use notes::web;
+
+#[test]
+fn a_header_is_not_the_head() {
+    // The bug this exists for: `<head` is the beginning of `<header` too, so
+    // stripping the document head took everything down to the end of the first
+    // header with it - which on an encyclopaedia page is the article.
+    let page = "<html><head><title>t</title></head><body><header>menu</header>\
+                <main><h1>The Title</h1><p>The first paragraph.</p></main></body></html>";
+    let text = web::readable(page);
+    assert!(
+        text.contains("The first paragraph."),
+        "the article survives: {text:?}"
+    );
+    assert!(text.contains("# The Title"), "and its heading is a heading");
+    assert!(
+        !text.contains("<title>t</title>"),
+        "the document head is gone"
+    );
+}
+
+#[test]
+fn a_page_comes_back_as_something_worth_reading() {
+    let page = "<html><body><nav>Home About</nav><main>\
+                <h2>Beds</h2><p>Four raised beds.</p>\
+                <ul><li>legumes</li><li>brassicas</li></ul>\
+                <script>var junk = 1;</script></main><footer>copyright</footer></body></html>";
+    let text = web::readable(page);
+    assert!(
+        text.contains("## Beds"),
+        "headings keep their level: {text:?}"
+    );
+    assert!(
+        text.contains("- legumes") && text.contains("- brassicas"),
+        "list items are a list"
+    );
+    assert!(!text.contains("var junk"), "script is not prose");
+    assert!(!text.contains("copyright"), "nor is the footer");
+    assert!(!text.contains('<'), "and no markup survives");
+}
+
+#[test]
+fn the_article_is_preferred_when_the_page_says_where_it_is() {
+    let page = "<html><body><div>chrome everywhere</div>\
+                <article><p>the actual thing</p></article><div>more chrome</div></body></html>";
+    let text = web::readable(page);
+    assert!(text.contains("the actual thing"));
+    assert!(
+        !text.contains("chrome"),
+        "half a page is furniture: {text:?}"
+    );
+}
+
+#[test]
+fn blank_lines_are_not_paid_for_twice() {
+    let text = web::readable("<p>one</p><p></p><p></p><p></p><p>two</p>");
+    assert!(
+        !text.contains("\n\n\n"),
+        "every blank line is a token: {text:?}"
+    );
+}
+
+#[test]
+fn something_that_is_not_a_web_address_is_refused_before_it_is_fetched() {
+    assert!(web::fetch("notes/water.md").is_err());
+    assert!(web::fetch("file:///etc/passwd").is_err());
+    assert!(
+        web::release("llama.cpp").is_err(),
+        "a repo is owner and name"
+    );
+}
+
+#[test]
+fn a_tool_that_fails_says_so_rather_than_saying_nothing() {
+    // The one answer that reliably makes a model invent is no answer at all:
+    // handed an empty result it fills the gap, and it filled one with a
+    // llama.cpp version that has never existed.
+    let said = web::run("no-such-tool", "anything");
+    assert!(!said.trim().is_empty());
+    assert!(said.contains("no tool called"), "{said}");
+}
+
+#[test]
+fn every_tool_says_when_it_is_for_and_not_only_what_it_is() {
+    // Measured: a tool described as what it does was reached for once in four
+    // questions that needed it; the same tool described in terms of when it is
+    // needed was reached for four times in four.
+    for tool in web::tools() {
+        assert!(
+            tool.about.contains("Use ") || tool.about.contains("use it"),
+            "/{} never says when to use it",
+            tool.name
+        );
+        assert!(
+            tool.about.len() > 120,
+            "/{} is described too thinly",
+            tool.name
+        );
+        assert!(
+            !tool.takes.1.is_empty(),
+            "/{} does not say what its argument is",
+            tool.name
+        );
+    }
+}
+
+#[test]
+fn tools_are_declared_the_way_the_model_was_trained_to_read_them() {
+    let declared = notes::llm::declare(&web::tools());
+    // Lifted from the chat template baked into the weights, not invented: the
+    // model obeys this shape and argues with any other.
+    assert!(declared.starts_with("# Tools\n\nYou have access to the following functions:"));
+    assert!(declared.contains("<tools>") && declared.contains("</tools>"));
+    assert!(declared.contains("<tool_call>\n<function=example_function_name>"));
+    assert!(declared.contains("\"name\": \"weather\""));
+    assert!(declared.contains("\"required\": [\"place\"]"));
+}
+
+#[test]
+fn a_conversation_is_told_about_its_tools_and_an_edit_is_not() {
+    let editing = "rewrite the passage and nothing else";
+    let chat = notes::llm::Ask {
+        turns: vec![notes::llm::Turn {
+            mine: true,
+            text: "hello".into(),
+        }],
+        tools: web::tools(),
+        ..Default::default()
+    };
+    assert!(
+        chat.system(editing).starts_with("# Tools"),
+        "tools come first, as the template puts them"
+    );
+    assert!(chat
+        .system(editing)
+        .contains("You are talking with somebody"));
+
+    let quiet = notes::llm::Ask {
+        turns: vec![notes::llm::Turn {
+            mine: true,
+            text: "hello".into(),
+        }],
+        ..Default::default()
+    };
+    assert!(
+        !quiet.system(editing).contains("# Tools"),
+        "no tools, no mention of tools"
+    );
+
+    let rewrite = notes::llm::Ask {
+        source: "a line".into(),
+        tools: web::tools(),
+        ..Default::default()
+    };
+    assert_eq!(
+        rewrite.system(editing),
+        editing,
+        "an edit is not a conversation and does not browse"
+    );
+}

@@ -33,6 +33,7 @@ pub mod showcase;
 pub mod syntax;
 pub mod text;
 pub mod vim;
+pub mod web;
 
 use std::path::{Path, PathBuf};
 

@@ -46,6 +46,10 @@ pub struct Ask {
     pub file: String,
     /// One line per note in the vault, the same for every request.
     pub vault: String,
+    /// What the model may reach for. Empty means it is told about none, which
+    /// is not the same as being told it has none: a tool it was never offered
+    /// is one it cannot mention.
+    pub tools: Vec<Tool>,
 }
 
 impl Ask {
@@ -53,6 +57,68 @@ impl Ask {
     pub fn talking(&self) -> bool {
         !self.turns.is_empty()
     }
+
+    /// What the model is told it is doing.
+    ///
+    /// Assembled rather than looked up, because a conversation's system message
+    /// has more than one thing in it: what the situation is, and - when there
+    /// are any - what it can reach for. The tools go first, because that is
+    /// where the model's own chat template puts them, and a prompt in the shape
+    /// the model was trained on is obeyed and one in another shape is argued
+    /// with.
+    pub fn system(&self, editing: &str) -> String {
+        if !self.talking() {
+            return editing.to_string();
+        }
+        match self.tools.is_empty() {
+            true => CHAT_PROMPT.to_string(),
+            false => format!("{}\n\n{}", declare(&self.tools), CHAT_PROMPT),
+        }
+    }
+}
+
+/// One thing the model can reach for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tool {
+    pub name: &'static str,
+    /// What it does and *when to use it*, which is the part that decides
+    /// whether the model reaches for it at all: the same model asked the same
+    /// four questions called a tool described as "search the web and return a
+    /// list of results" once, and one described in terms of when it is needed
+    /// four times out of four.
+    pub about: &'static str,
+    /// The one argument it takes: its name, and what to put in it.
+    pub takes: (&'static str, &'static str),
+}
+
+/// The tools, written out the way the model's own chat template writes them.
+///
+/// Copied from the template baked into the weights rather than invented. The
+/// template cannot be handed a tool list through the interface this app has -
+/// that lives in a part of llama.cpp the bindings do not expose - but it merges
+/// the tool block and the system message into one turn, so writing the block
+/// out by hand renders exactly what passing tools would have.
+pub fn declare(tools: &[Tool]) -> String {
+    let mut out = String::from("# Tools\n\nYou have access to the following functions:\n\n<tools>");
+    for tool in tools {
+        out.push_str(&format!(
+            "\n{{\"type\": \"function\", \"function\": {{\"name\": \"{}\", \"description\": \"{}\", \
+             \"parameters\": {{\"type\": \"object\", \"properties\": {{\"{}\": {{\"type\": \"string\", \
+             \"description\": \"{}\"}}}}, \"required\": [\"{}\"]}}}}}}",
+            tool.name, tool.about, tool.takes.0, tool.takes.1, tool.takes.0
+        ));
+    }
+    out.push_str(
+        "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO \
+         suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\n\
+         value_1\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls \
+         MUST follow the specified format: an inner <function=...></function> block must be nested \
+         within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may \
+         provide optional reasoning for your function call in natural language BEFORE the function \
+         call, but NOT after\n- If there is no function call available, answer the question like \
+         normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>",
+    );
+    out
 }
 
 /// What the model is told it is doing when it is being talked to rather than

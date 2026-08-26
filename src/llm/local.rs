@@ -314,12 +314,9 @@ impl Backend for Local {
         let thinks = self.thinks;
         // A conversation is not an edit, and the editing prompt - which is all
         // about handing a passage back and nothing else - makes a poor one for
-        // it. The setting stays what it says on the tin.
-        let system = if ask.talking() {
-            super::CHAT_PROMPT.to_string()
-        } else {
-            self.system.clone()
-        };
+        // it. The setting stays what it says on the tin; the question says what
+        // else belongs in front of it.
+        let system = ask.system(&self.system);
         let (backend, model) = self.loaded.as_ref().expect("loaded above");
         // How far this model was trained to read. Asked of the model rather
         // than set by hand: it is the model's own number, the same on every
