@@ -18,6 +18,7 @@
 pub mod assist;
 pub mod calc;
 pub mod chat;
+pub mod clock;
 pub mod dialog;
 pub mod diff;
 pub mod digest;

@@ -15,7 +15,7 @@
 //! false alarms on the two questions that did not need it.
 
 use crate::llm::Tool;
-use crate::{calc, web};
+use crate::{calc, clock, web};
 
 /// Working something out, which needs nothing outside this machine.
 fn arithmetic() -> Tool {
@@ -33,9 +33,27 @@ fn arithmetic() -> Tool {
     }
 }
 
+/// What day it is, which is on the machine and not on the network.
+fn calendar() -> Tool {
+    Tool {
+        name: "date",
+        about: "Call this before you say what the date is, what year it is, what day of the week \
+                it is, or how long until anything. You do not know any of those and you cannot \
+                work them out: asked the date you gave one three weeks out, and asked how long \
+                until Christmas you used a year that had already gone. It also says how far off \
+                another day is, so do not count days yourself - give it the date and read the \
+                answer. A day with no year, like 12-25, means the next one there is.",
+        takes: (
+            "when",
+            "Leave it as today for the date now, 2026-12-25 for a particular day, or 12-25 for \
+             the next time that day comes round.",
+        ),
+    }
+}
+
 /// Everything on offer, given whether the network has been allowed.
 pub fn available(web_allowed: bool) -> Vec<Tool> {
-    let mut out = vec![arithmetic()];
+    let mut out = vec![arithmetic(), calendar()];
     if web_allowed {
         out.extend(web::tools());
     }
@@ -51,6 +69,7 @@ pub fn available(web_allowed: bool) -> Vec<Tool> {
 pub fn run(name: &str, arg: &str) -> String {
     let done = match name {
         "calc" => calc::evaluate(arg),
+        "date" => clock::about(arg),
         "weather" => web::weather(arg),
         "wikipedia" => web::wikipedia(arg),
         "release" => web::release(arg),

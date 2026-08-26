@@ -4510,7 +4510,9 @@ fn every_tool_says_when_it_is_for_and_not_only_what_it_is() {
     // needed was reached for four times in four.
     for tool in notes::tools::available(true) {
         assert!(
-            tool.about.contains("Use ") || tool.about.contains("use it"),
+            ["Use ", "use it", "Call this"]
+                .iter()
+                .any(|said| tool.about.contains(said)),
             "/{} never says when to use it",
             tool.name
         );
@@ -4759,10 +4761,13 @@ fn working_a_sum_out_needs_no_permission_to_leave_the_machine() {
         .iter()
         .map(|t| t.name)
         .collect();
-    assert_eq!(
-        offline,
-        vec!["calc"],
-        "with the network off, one tool and it is this one"
+    assert!(
+        offline.contains(&"calc"),
+        "with the network off it is still there: {offline:?}"
+    );
+    assert!(
+        !offline.iter().any(|t| *t == "weather" || *t == "fetch"),
+        "and nothing that would leave the machine is"
     );
 
     let online: Vec<&str> = notes::tools::available(true)
@@ -5074,4 +5079,114 @@ fn a_question_can_be_given_up_on() {
     }
     .expect("an answer");
     assert!(again.ends_with("word199"), "the flag was put down again");
+}
+
+// ----------------------------------------------------------------- the clock
+
+#[test]
+fn a_date_says_what_day_it_falls_on() {
+    use notes::clock;
+    // Checkable against the world: the moon landing was a Sunday, and the
+    // first day of 2000 was a Saturday.
+    let moon = clock::about("1969-07-20").unwrap();
+    assert!(moon.contains("20 July 1969 is a Sunday"), "{moon}");
+    assert!(moon.contains("days ago"), "and it says how long ago");
+    let y2k = clock::about("2000-01-01").unwrap();
+    assert!(y2k.contains("1 January 2000 is a Saturday"), "{y2k}");
+    // A leap day is a real day, and 2000 was a leap year while 1900 was not.
+    assert!(clock::about("2000-02-29")
+        .unwrap()
+        .contains("29 February 2000 is a Tuesday"));
+}
+
+#[test]
+fn today_is_answered_without_being_asked_which_day_it_is() {
+    let now = notes::clock::about("today").unwrap();
+    assert_eq!(
+        notes::clock::about("").unwrap(),
+        now,
+        "an empty question means today"
+    );
+    assert_eq!(
+        notes::clock::about("NOW").unwrap(),
+        now,
+        "however it is spelled"
+    );
+    assert!(
+        now.contains("the time is"),
+        "and it says the time as well: {now}"
+    );
+    for day in [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ] {
+        if now.starts_with(day) {
+            return;
+        }
+    }
+    panic!("it should begin with a day of the week: {now}");
+}
+
+#[test]
+fn a_day_with_no_year_means_the_next_one_there_is() {
+    // Which is what somebody asking how long until Christmas means by it, and
+    // what stopped the model reaching for a year out of its training.
+    let said = notes::clock::about("12-25").unwrap();
+    assert!(said.contains("25 December"), "{said}");
+    assert!(
+        !said.contains("days ago"),
+        "the next one, not the last one: {said}"
+    );
+}
+
+#[test]
+fn a_year_that_has_gone_is_answered_and_corrected() {
+    // The mistake it kept making: asked how long until Christmas it named a
+    // year already past. The answer says where to look instead rather than
+    // leaving it to work that out.
+    let said = notes::clock::about("2020-12-25").unwrap();
+    assert!(
+        said.contains("days ago"),
+        "it answers what was asked: {said}"
+    );
+    assert!(
+        said.contains("If you meant the next one"),
+        "and points at the next one"
+    );
+    assert!(said.contains("-12-25"), "by name");
+}
+
+#[test]
+fn something_that_is_not_a_date_is_not_guessed_at() {
+    // A date written any other way is ambiguous about which number is the
+    // month, and guessing is how a note ends up dated wrongly.
+    assert!(notes::clock::about("next tuesday").is_err());
+    assert!(
+        notes::clock::about("25/12/2026").is_err(),
+        "day-first or month-first?"
+    );
+    assert!(
+        notes::clock::about("2026-13-01").is_err(),
+        "there is no thirteenth month"
+    );
+    assert!(notes::clock::about("2026-12-32").is_err());
+}
+
+#[test]
+fn knowing_the_day_needs_no_permission_to_leave_the_machine() {
+    let offline: Vec<&str> = notes::tools::available(false)
+        .iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(
+        offline.contains(&"date"),
+        "the clock is here, not out there: {offline:?}"
+    );
+    assert!(offline.contains(&"calc"));
+    assert_eq!(offline.len(), 2, "and those are the two that are always on");
 }
