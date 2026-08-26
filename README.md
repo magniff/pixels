@@ -42,6 +42,8 @@ it at a real vault.
 - Both views carry the same gutter and the same scrollbar, numbered with the
   same source lines
 - `/` searches the preview and lights up every hit
+- A note is written down a moment after you stop typing, so `:w` is what you
+  press to be sure rather than what stands between you and losing an afternoon
 - The clipboard is the system's: `y` and `d` put text on it, `p` takes whatever
   is on it, and `Cmd-c`/`Cmd-x`/`Cmd-v` are the same three for the hand that
   reaches for those instead

@@ -139,6 +139,12 @@ pub enum Renaming {
     Project(String),
 }
 
+/// How long a pause has to be before a note is written down, in seconds.
+///
+/// Long enough that it is a pause rather than a gap between two words, short
+/// enough that what you lose to a power cut is a sentence.
+const SETTLED: f32 = 1.5;
+
 /// The selection travelling between two notes.
 ///
 /// It does not slide: the highlight lets go of the note it was on and takes
@@ -246,6 +252,10 @@ pub struct Notes {
     pub chat: Option<chat::Chat>,
     /// Open while somebody is choosing which conversation to carry on.
     pub picker: Option<chat::Picker>,
+    /// Seconds since anything was typed, for the save that happens by itself.
+    /// Counted from the last change rather than on a timer, so a save lands in
+    /// a pause and never in the middle of a sentence.
+    pub still: f32,
     /// Projects whose notes are folded away in the sidebar.
     pub folded: std::collections::HashSet<String>,
     /// The menu the other mouse button opened, and what it is about.
@@ -404,6 +414,7 @@ impl Notes {
             assist_wanted: false,
             chat: None,
             picker: None,
+            still: 0.0,
             folded: std::collections::HashSet::new(),
             context: None,
             assist_lift: 0,
@@ -437,6 +448,32 @@ impl Notes {
     fn note_mut(&mut self) -> &mut Note {
         let i = self.current.min(self.notes.len() - 1);
         &mut self.notes[i]
+    }
+
+    /// Write down anything that has changed and has somewhere to go.
+    ///
+    /// A note editor that loses a note is not a note editor, and `:w` is a
+    /// thing people forget - which is the whole argument. Quietly: no status
+    /// line, because a save that happened on its own is not news, and a message
+    /// every few seconds would be.
+    ///
+    /// Only notes with a name. One that has never been saved has nowhere to go
+    /// and choosing a name for somebody is not this function's business.
+    pub fn keep_up(&mut self) -> usize {
+        let mut written = 0;
+        for note in &mut self.notes {
+            if !note.buffer.dirty {
+                continue;
+            }
+            let Some(path) = note.path.clone() else {
+                continue;
+            };
+            if std::fs::write(&path, note.buffer.to_text()).is_ok() {
+                note.buffer.mark_saved();
+                written += 1;
+            }
+        }
+        written
     }
 
     fn save_to(&mut self, path: &Path) {
@@ -1456,6 +1493,26 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         || app.picker.is_some();
     let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
+
+    // ---- the save nobody asked for ---------------------------------------
+    // A pause in the typing is when a note goes to disk. Anything at all that
+    // arrived this frame resets the clock, so the write lands between
+    // sentences rather than inside one, and `:w` becomes the thing you do when
+    // you want to be sure rather than the thing between you and losing work.
+    let busy = !ui.input.keys.is_empty() || ui.input.mouse_pressed || ui.input.wheel != 0.0;
+    app.still = if busy { 0.0 } else { app.still + ui.input.dt };
+    if app.notes.iter().any(|n| n.buffer.dirty) {
+        if app.still > SETTLED {
+            app.still = 0.0;
+            app.keep_up();
+        } else {
+            // Frames are drawn when there is a reason to draw one, so a clock
+            // that is running is a reason. Without this the app stops
+            // redrawing the moment you stop typing, which is exactly when the
+            // save was due.
+            ui.request_repaint();
+        }
+    }
     app.step_pick(ui.input.dt);
     app.ask_for_frames(ui);
 

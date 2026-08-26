@@ -4761,3 +4761,51 @@ fn working_a_sum_out_needs_no_permission_to_leave_the_machine() {
     );
     assert!(online.contains(&"weather") && online.contains(&"fetch"));
 }
+
+// ------------------------------------------------------------------ keeping up
+
+#[test]
+fn a_note_that_changed_is_written_down_without_being_asked() {
+    let dir = std::env::temp_dir().join(format!("pixui-keep-{}", std::process::id()));
+    vault_with(&dir, &[("aquarium/water.md", "# Water\n\nas it was\n")]);
+    let mut app = notes::Notes::open(dir.clone());
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/water.md")
+        .unwrap();
+
+    app.notes[i].buffer.checkpoint();
+    app.notes[i].buffer.insert_str_at(2, 0, "changed: ");
+    app.notes[i].buffer.dirty = true;
+
+    assert_eq!(app.keep_up(), 1, "one note had something to say");
+    let on_disk = std::fs::read_to_string(dir.join("aquarium").join("water.md")).unwrap();
+    assert!(
+        on_disk.contains("changed: as it was"),
+        "and it is on the disk: {on_disk:?}"
+    );
+    assert!(
+        !app.notes[i].buffer.dirty,
+        "and is not still waiting to be written"
+    );
+    assert_eq!(app.keep_up(), 0, "nothing to do the second time");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_note_with_no_name_yet_is_left_alone() {
+    // It has nowhere to go, and choosing a filename for somebody is not a
+    // thing to do behind their back.
+    let dir = std::env::temp_dir().join(format!("pixui-noname-{}", std::process::id()));
+    vault_with(&dir, &[("aquarium/water.md", "# Water\n")]);
+    let mut app = notes::Notes::open(dir.clone());
+    let at = app.insert_note(notes::Note::blank("aquarium".into()));
+    app.notes[at].buffer.dirty = true;
+    assert_eq!(app.keep_up(), 0, "nothing was written");
+    assert!(
+        app.notes[at].buffer.dirty,
+        "and it still knows it is unsaved"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
