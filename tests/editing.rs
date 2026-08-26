@@ -543,10 +543,10 @@ fn a_title_comes_from_the_first_heading() {
         .lines()
         .map(str::to_owned)
         .collect();
-    assert_eq!(markdown::derive_title(&lines), "Real Title");
+    assert_eq!(markdown::derive_title(&lines, 24), "Real Title");
 
     let lines: Vec<String> = vec!["just prose".into()];
-    assert_eq!(markdown::derive_title(&lines), "just prose");
+    assert_eq!(markdown::derive_title(&lines, 24), "just prose");
 }
 
 #[test]
@@ -1330,6 +1330,7 @@ fn the_rehearsal_backend_fixes_what_it_claims_to() {
             &Ask {
                 source: "  - teh  quick  fox\n  - adn a second".into(),
                 request: "fix it".into(),
+                ..Default::default()
             },
             &mut |_| {},
         )
@@ -1593,6 +1594,7 @@ fn a_question_in_flight_reports_where_it_has_got_to() {
         &Ask {
             source: "teh quick fox".into(),
             request: "fix it".into(),
+            ..Default::default()
         },
         &mut |p| seen.push(p),
     );
@@ -1626,6 +1628,7 @@ fn the_rehearsal_backend_always_leaves_something_to_review() {
             &Ask {
                 source: "nothing to fix here".into(),
                 request: "Improve It".into(),
+                ..Default::default()
             },
             &mut |_| {},
         )
@@ -2542,7 +2545,7 @@ fn a_title_may_be_underlined_rather_than_hashed() {
         .lines()
         .map(str::to_owned)
         .collect();
-    assert_eq!(notes::markdown::derive_title(&lines), "Underlined");
+    assert_eq!(notes::markdown::derive_title(&lines, 24), "Underlined");
 }
 
 // ------------------------------------------------------- the reference note
@@ -3049,5 +3052,125 @@ fn a_setting_that_no_longer_exists_is_read_past() {
     assert!(
         !config.to_text().contains("context"),
         "and it is not written back out"
+    );
+}
+
+// -------------------------------------------------------------------- digest
+
+use notes::digest;
+
+fn vault_of(notes: &[(&str, &str)]) -> Vec<notes::Note> {
+    notes
+        .iter()
+        .map(|(file, text)| notes::Note {
+            path: Some(std::path::PathBuf::from(file)),
+            buffer: Buffer::from_text(text),
+        })
+        .collect()
+}
+
+#[test]
+fn every_note_gets_a_line_saying_what_it_is() {
+    let vault = vault_of(&[
+        (
+            "welcome.md",
+            "# Welcome\n\nThis is the editor.\n\n## Try it\n\nPress i.",
+        ),
+        ("ideas.md", "# Ideas\n\n- [ ] An export to HTML"),
+    ]);
+    let text = digest::vault(&vault);
+    assert_eq!(
+        text.lines().count(),
+        2,
+        "one line per note, whatever is in it"
+    );
+    assert!(
+        text.contains("`ideas.md`"),
+        "the file, so the model can name it"
+    );
+    assert!(
+        text.contains("\"Welcome\""),
+        "and what the note calls itself, in its own case rather than the sidebar's shout"
+    );
+    assert!(
+        text.contains("This is the editor."),
+        "and the first thing it says"
+    );
+    assert!(text.contains("sections: Try it"), "and the shape of it");
+}
+
+#[test]
+fn the_digest_is_the_same_whichever_note_is_open() {
+    // The whole point of the ordering: it is a stable prefix, so it can one day
+    // be read once and kept rather than re-read on every question.
+    let a = vault_of(&[("b.md", "# Bee\n\nBuzz."), ("a.md", "# Ay\n\nAlpha.")]);
+    let b = vault_of(&[("a.md", "# Ay\n\nAlpha."), ("b.md", "# Bee\n\nBuzz.")]);
+    assert_eq!(digest::vault(&a), digest::vault(&b));
+    assert!(
+        digest::vault(&a).starts_with("- `a.md`"),
+        "in filename order, not the order the directory was read in"
+    );
+}
+
+#[test]
+fn a_notes_first_line_is_prose_rather_than_punctuation() {
+    let vault = vault_of(&[(
+        "showcase.md",
+        "Markdown showcase\n=================\n\n```rust\nfn main() {}\n```\n\nThe real first line.",
+    )]);
+    let text = digest::vault(&vault);
+    assert!(
+        text.contains("The real first line."),
+        "the underline and the code block are not what the note says: {text}"
+    );
+    assert!(!text.contains("fn main"), "code is not a gist");
+}
+
+#[test]
+fn the_passage_is_marked_where_it_sits_in_the_note() {
+    let whole = "# Heading\n\nBefore it.\n\nThe passage.\n\nAfter it.\n";
+    let at = whole.find("The passage.").unwrap();
+    let marked =
+        digest::marked(whole, at, at + "The passage.".len()).expect("there is a note around it");
+    assert!(
+        marked.contains("# Heading"),
+        "the model sees what it is under"
+    );
+    assert!(marked.contains("After it."), "and what comes next");
+    assert_eq!(
+        marked,
+        format!(
+            "# Heading\n\nBefore it.\n\n{}The passage.{}\n\nAfter it.\n",
+            digest::OPEN,
+            digest::CLOSE
+        )
+    );
+}
+
+#[test]
+fn a_passage_that_is_the_whole_note_is_not_sent_twice() {
+    let whole = "All of it.";
+    assert!(
+        digest::marked(whole, 0, whole.len()).is_none(),
+        "there is nothing around it, and a second copy only invites a wrong answer"
+    );
+}
+
+#[test]
+fn the_note_is_marked_at_the_cursors_the_selection_gave() {
+    // The editor has a selection as two cursors; the digest works in byte
+    // offsets. This is the conversion, and it is the one part of the path the
+    // command line never exercises.
+    let buf = Buffer::from_text("# Title\n\nfirst line\nsecond line\nthird line\n");
+    let marked = digest::around(&buf, Cursor::new(2, 6), Cursor::new(3, 6))
+        .expect("there is a note around it");
+    assert_eq!(
+        marked,
+        format!(
+            "# Title\n\nfirst {}line\nsecond{} line\nthird line\n",
+            digest::OPEN,
+            digest::CLOSE
+        ),
+        "the markers land on the columns the selection ended on"
     );
 }

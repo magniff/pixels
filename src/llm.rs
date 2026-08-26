@@ -14,11 +14,23 @@ pub mod local;
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 
-/// A request: the text to change, and what to do to it.
-#[derive(Clone, Debug)]
+/// A request: the text to change, what to do to it, and what it is part of.
+///
+/// The last two are context rather than instruction. They are what makes the
+/// difference between rewriting a sentence and rewriting a sentence *in a
+/// note* - the model can see the heading above it, the paragraph after it, and
+/// that a note about the same thing exists two files away.
+#[derive(Clone, Debug, Default)]
 pub struct Ask {
     pub source: String,
     pub request: String,
+    /// The note the passage was taken from, with the passage marked in place.
+    /// None when the passage is the whole note and there is nothing around it.
+    pub within: Option<String>,
+    /// Which file that note is, so the vault line and the note agree.
+    pub file: String,
+    /// One line per note in the vault, the same for every request.
+    pub vault: String,
 }
 
 /// What came back, or why nothing did.

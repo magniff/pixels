@@ -1,7 +1,5 @@
 //! Entry point. See `lib.rs` for the application itself.
 
-use std::path::PathBuf;
-
 use notes::{config, frame, shots, Notes};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,7 +37,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 p.elapsed.as_secs_f32()
             );
         };
-        let reply = backend.edit(&notes::llm::Ask { source, request }, &mut tick);
+        // The same surroundings the editor sends: every note in the vault as
+        // one line each, and - when the passage can be found in one of them -
+        // that note with the passage marked where it sits. Found rather than
+        // named, so a run from the shell asks exactly what a selection asks.
+        let vault_dir = notes::notes_dir();
+        let library = notes::read_vault(&vault_dir);
+        let mut ask = notes::llm::Ask {
+            request,
+            vault: notes::digest::vault(&library),
+            ..Default::default()
+        };
+        let needle = source.trim();
+        for note in &library {
+            let whole = note.buffer.to_text();
+            if let Some(at) = whole.find(needle).filter(|_| !needle.is_empty()) {
+                ask.file = note.filename();
+                ask.within = notes::digest::marked(&whole, at, at + needle.len());
+                break;
+            }
+        }
+        ask.source = source;
+        eprintln!(
+            "[{} notes in the vault{}]",
+            library.len(),
+            match &ask.file {
+                f if f.is_empty() => String::new(),
+                f => format!(", the passage is in {f}"),
+            }
+        );
+        let reply = backend.edit(&ask, &mut tick);
         eprintln!();
         match reply {
             // Folded the same way the editor folds it, so this prints what a
@@ -51,11 +78,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // Notes live in ./notes by default; point PIXUI_NOTES_DIR somewhere else to
-    // use a real vault.
-    let dir = std::env::var("PIXUI_NOTES_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("notes"));
-
-    pixui::run(config(), Notes::open(dir), frame)
+    pixui::run(config(), Notes::open(notes::notes_dir()), frame)
 }

@@ -365,9 +365,13 @@ impl Assist {
         let source = self.source.clone();
         self.asked = std::mem::take(&mut self.request);
         self.phase = Phase::Thinking;
+        // The surroundings are filled in by the application, which is the
+        // thing that owns the vault. The block knows about a passage and a
+        // question and deliberately nothing else.
         Ask {
             source,
             request: self.asked.clone(),
+            ..Ask::default()
         }
     }
 }

@@ -622,25 +622,25 @@ fn find(chars: &[char], from: usize, target: char) -> Option<usize> {
 }
 
 /// A title for a note: its first heading, else its first non-empty line.
-pub fn derive_title(lines: &[String]) -> String {
+pub fn derive_title(lines: &[String], room: usize) -> String {
     for (i, line) in lines.iter().enumerate() {
         let t = line.trim();
         if let Some(rest) = t.strip_prefix('#') {
             let title = rest.trim_start_matches('#').trim();
             if !title.is_empty() {
-                return truncate(title, 24);
+                return truncate(title, room);
             }
         }
         // A heading may also be written as a line with a rule under it, and
         // that form is usually the one at the very top of a file.
         if !t.is_empty() && lines.get(i + 1).is_some_and(|n| setext_level(n).is_some()) {
-            return truncate(t, 24);
+            return truncate(t, room);
         }
     }
     for line in lines {
         let t = line.trim();
         if !t.is_empty() {
-            return truncate(t, 24);
+            return truncate(t, room);
         }
     }
     "UNTITLED".to_string()

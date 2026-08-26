@@ -172,12 +172,58 @@ fn render(model: &LlamaModel, system: &str, user: &str, thinks: bool) -> Result<
 }
 
 /// What to ask the model to do, which is the same whichever model it is.
+///
+/// The surroundings go in the user turn rather than in the system prompt, and
+/// that is on purpose: the system prompt is a setting, and a setting somebody
+/// edited two months ago would not know to mention any of this. Everything the
+/// context needs to explain itself travels with the context.
+///
+/// The order is deliberate too. What never changes goes first - the vault - and
+/// what changes every time goes last, so the prompt is a stable prefix with a
+/// short tail, which is the shape a key/value cache can eventually be kept
+/// across.
 fn instruction(ask: &Ask) -> String {
-    format!(
+    let mut out = String::new();
+    if !ask.vault.is_empty() {
+        out.push_str("These are the notes in this vault, one line each:\n\n");
+        out.push_str(&ask.vault);
+        out.push_str("\n\n");
+    }
+    if let Some(within) = &ask.within {
+        if ask.file.is_empty() {
+            out.push_str("Here is the note being edited");
+        } else {
+            out.push_str(&format!("Here is `{}`, the note being edited", ask.file));
+        }
+        out.push_str(&format!(
+            ", with the passage in question marked between {} and {}:\n\n{}\n\n",
+            crate::digest::OPEN,
+            crate::digest::CLOSE,
+            within
+        ));
+    }
+    out.push_str(&format!(
         "Text:\n{}\n\nInstruction: {}",
         ask.source,
         ask.request.trim()
-    )
+    ));
+    if ask.within.is_some() || !ask.vault.is_empty() {
+        // Without this the model rewrites what it was shown rather than what
+        // it was asked about - it has just been handed a whole note and told
+        // to improve something, and the note is the more interesting target.
+        // Both halves, because either one alone is wrong. Without the first
+        // the model has been handed a note and told only what it may not do
+        // with it, and it answers as if the note were not there. Without the
+        // second it rewrites the note, which is the more interesting target.
+        out.push_str(
+            "\n\nEverything above the instruction is context. Use it: the names, numbers \
+             and facts in the note and in the vault list are there to be drawn on, and \
+             the passage should read as part of what surrounds it. But rewrite only the \
+             passage under Text - do not rewrite or repeat the rest of the note, and do \
+             not include the markers.",
+        );
+    }
+    out
 }
 
 /// Arrange to leave without running the rest of the C++ teardown.

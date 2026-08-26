@@ -18,6 +18,7 @@
 pub mod assist;
 pub mod dialog;
 pub mod diff;
+pub mod digest;
 pub mod fetch;
 pub mod finder;
 pub mod indent;
@@ -68,7 +69,7 @@ pub struct Note {
 impl Note {
     /// The note's display name: its first heading, else its file stem.
     pub fn title(&self) -> String {
-        let derived = markdown::derive_title(self.buffer.lines());
+        let derived = markdown::derive_title(self.buffer.lines(), 24);
         if derived == "UNTITLED" {
             if let Some(p) = &self.path {
                 return p
@@ -234,6 +235,40 @@ pub struct Notes {
     pub sidebar_w: Option<i32>,
 }
 
+/// Where the vault is: `./notes`, or wherever `PIXUI_NOTES_DIR` says.
+pub fn notes_dir() -> PathBuf {
+    std::env::var_os("PIXUI_NOTES_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("notes"))
+}
+
+/// Every note in a directory, in filename order.
+///
+/// Separate from opening the vault because a vault can be read without being
+/// entered: `--ask` wants the notes to tell the model about, and has no
+/// business seeding a directory or installing a reference note to do it.
+pub fn read_vault(dir: &Path) -> Vec<Note> {
+    let mut notes = Vec::new();
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return notes;
+    };
+    let mut paths: Vec<PathBuf> = read
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .collect();
+    paths.sort();
+    for path in paths {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            notes.push(Note {
+                path: Some(path),
+                buffer: Buffer::from_text(&text),
+            });
+        }
+    }
+    notes
+}
+
 impl Notes {
     /// Open the vault, seeding it with a few notes the first time so the app
     /// does not open onto nothing.
@@ -242,23 +277,7 @@ impl Notes {
         seed_if_empty(&notes_dir);
         install_reference(&notes_dir);
 
-        let mut notes = Vec::new();
-        if let Ok(read) = std::fs::read_dir(&notes_dir) {
-            let mut paths: Vec<PathBuf> = read
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "md"))
-                .collect();
-            paths.sort();
-            for path in paths {
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    notes.push(Note {
-                        path: Some(path),
-                        buffer: Buffer::from_text(&text),
-                    });
-                }
-            }
-        }
+        let mut notes = read_vault(&notes_dir);
         if notes.is_empty() {
             notes.push(Note {
                 path: None,
@@ -636,6 +655,21 @@ impl Notes {
         let open = assist::Assist::new(from, to, source);
         self.status = open.headline();
         self.assist = Some(open);
+    }
+
+    /// Tell the question what it is part of: the note, and the vault.
+    ///
+    /// Done here rather than where the question was raised because this is
+    /// where the notes are. The block knows a passage and a request; the model
+    /// gets those plus everything around them.
+    fn surround(&self, ask: &mut llm::Ask) {
+        ask.vault = digest::vault(&self.notes);
+        let Some(open) = self.assist.as_ref() else {
+            return;
+        };
+        let i = self.current.min(self.notes.len() - 1);
+        ask.file = self.notes[i].filename();
+        ask.within = digest::around(&self.notes[i].buffer, open.from, open.to);
     }
 
     /// Put a suggestion in place of the range it was asked about.
@@ -2151,7 +2185,11 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     app.assist = open;
     match outcome {
         assist::Outcome::None => {}
-        assist::Outcome::Ask(ask) => {
+        assist::Outcome::Ask(mut ask) => {
+            // Where the passage's surroundings are attached. The block that
+            // raised the question does not know about the vault, and the model
+            // does not know about either until here.
+            app.surround(&mut ask);
             if !app.helper.ask(ask) {
                 if let Some(a) = app.assist.as_mut() {
                     a.phase = assist::Phase::Failed("still busy with the last one".into());
