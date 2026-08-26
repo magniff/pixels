@@ -113,6 +113,14 @@ pub struct Settings {
     pub scheme: String,
     /// The face, likewise.
     pub font: String,
+    /// Whether a conversation may reach the network.
+    ///
+    /// Off by default, and it is the one setting here that is about something
+    /// other than taste: with it on, a question can send a place name or a
+    /// search term to somebody else's server. Everything else this program does
+    /// happens on the machine it is running on, and that should not stop being
+    /// true without somebody saying so.
+    pub web: bool,
     /// Whether the editing assistant is offered at all. With this off there is
     /// no mark beside a selection and nothing to ask — the app is a text editor
     /// and nothing else, which is a perfectly good thing for it to be.
@@ -130,6 +138,7 @@ impl Default for Settings {
             // hour, which is what a note editor is for.
             scheme: "GRUVBOX DARK".to_string(),
             font: "PIXUI 5X7".to_string(),
+            web: false,
             // On, because a feature nobody can see is a feature nobody finds.
             assist: true,
             model: None,
@@ -177,6 +186,7 @@ impl Settings {
                 "scheme" if !value.is_empty() => out.scheme = value.to_string(),
                 "font" if !value.is_empty() => out.font = value.to_string(),
                 "assist" => out.assist = value != "off",
+                "web" => out.web = value == "on",
                 "model" if !value.is_empty() => out.model = Some(value.to_string()),
                 "prompt" if !value.is_empty() => out.prompt = unescape(value),
                 _ => {}
@@ -193,6 +203,7 @@ impl Settings {
             "assist = {}\n",
             if self.assist { "on" } else { "off" }
         ));
+        out.push_str(&format!("web = {}\n", if self.web { "on" } else { "off" }));
         if let Some(model) = &self.model {
             out.push_str(&format!("model = {model}\n"));
         }

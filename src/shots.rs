@@ -418,6 +418,32 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             // A change the model offered, with the diff it would make.
+            name: "chat-web",
+            right_click: None,
+            seed: &[
+                ("aquarium/water.md", "# Water\n\nNitrate under 20, nitrite zero, ammonia zero.\n"),
+                (".chats/aquarium/is-it-warm-enough.md", "# is it warm enough\n\n## you\n\nis it warm enough outside to do the water change today?\n\n## assistant\n\n<used tool=\"weather\" arg=\"Berlin\">\nBerlin right now: 23C, Overcast, feels like 19C, wind 16 km/h, humidity 37%\n</used>\n\nYes - 23C and overcast, so the fresh water will not be far off tank temperature. Overcast is better than sun for it: standing water in a bucket in direct sun climbs faster than you would think.\n"),
+            ],
+            script: [
+                keys(":e water.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 14,
+            canvas: (768, 470),
+        },
+        Scene {
             name: "chat-merge",
             seed: &[
                 ("reading/queue.md", "# Queue\n\n- [ ] Invisible Cities - Calvino\n- [x] A Pattern Language - Alexander\n"),

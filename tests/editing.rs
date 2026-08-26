@@ -1580,6 +1580,7 @@ fn the_status_line_says_what_the_model_is_doing() {
         elapsed: std::time::Duration::from_secs(4),
         generating: std::time::Duration::from_secs(3),
         deliberating: true,
+        ..Progress::default()
     };
     assert_eq!(block.headline(), "THINKING - 90 TOKENS AT 30/S");
 
@@ -1617,6 +1618,7 @@ fn a_question_in_flight_reports_where_it_has_got_to() {
         elapsed: std::time::Duration::from_secs(6),
         generating: std::time::Duration::from_secs(3),
         deliberating: false,
+        ..Progress::default()
     };
     assert_eq!(along.rate(), 20.0);
 }
@@ -2837,12 +2839,13 @@ fn settings_survive_a_round_trip_through_a_file() {
         scheme: "NORD".into(),
         font: "COZETTE".into(),
         assist: false,
+        web: true,
         model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
         // A prompt has newlines in it, and the format is one line per setting.
         prompt: "first line\nsecond line\nand a backslash \\ too".into(),
     };
     let text = config.to_text();
-    assert_eq!(text.lines().count(), 5, "one line per setting");
+    assert_eq!(text.lines().count(), 6, "one line per setting");
     assert_eq!(Settings::parse(&text), config);
 }
 
@@ -4562,5 +4565,83 @@ fn a_conversation_is_told_about_its_tools_and_an_edit_is_not() {
         rewrite.system(editing),
         editing,
         "an edit is not a conversation and does not browse"
+    );
+}
+
+#[test]
+fn a_tool_call_is_read_out_of_a_reply() {
+    let said = "Let me check.\n\n<tool_call>\n<function=weather>\n<parameter=place>\nBerlin\n</parameter>\n</function>\n</tool_call>";
+    assert_eq!(
+        notes::llm::called(said),
+        Some(("weather".to_string(), "Berlin".to_string()))
+    );
+    // The trap that cost an afternoon: splitting on `>` first eats the `>` of
+    // `</parameter>` and leaves the tag on the end of the value, which fed the
+    // tool a broken argument, got nothing back, and had the model inventing a
+    // llama.cpp version to fill the gap.
+    let (_, arg) = notes::llm::called(said).unwrap();
+    assert!(
+        !arg.contains("</parameter"),
+        "the closing tag is not part of the value"
+    );
+
+    assert_eq!(notes::llm::called("just an answer, no call"), None);
+    assert_eq!(
+        notes::llm::called("<function=weather></function>"),
+        None,
+        "no argument is no call"
+    );
+}
+
+#[test]
+fn what_was_looked_up_travels_with_the_answer() {
+    let used = notes::llm::Used {
+        tool: "weather".into(),
+        arg: "Berlin".into(),
+        result: "Berlin right now: 23C, Overcast".into(),
+    };
+    let reply = format!("{}It is 23C and overcast in Berlin.", used.written());
+    let (prose, looked) = chat::lookups(&reply);
+    assert_eq!(
+        prose, "It is 23C and overcast in Berlin.",
+        "the answer reads as an answer"
+    );
+    assert_eq!(looked.len(), 1);
+    assert_eq!(looked[0].tool, "weather");
+    assert_eq!(looked[0].arg, "Berlin");
+    assert!(
+        looked[0].result.contains("23C"),
+        "and what it found is kept with it"
+    );
+}
+
+#[test]
+fn a_reply_can_have_looked_something_up_and_still_propose_a_change() {
+    let reply = "<used tool=\"weather\" arg=\"Berlin\">\nBerlin right now: 23C\n</used>\n\nI put it in the note.\n\n<edit file=\"today.md\" lines=\"3-3\">\nBerlin, 23C and overcast.\n</edit>";
+    let (rest, looked) = chat::lookups(reply);
+    assert_eq!(looked.len(), 1);
+    let (prose, changes) = chat::proposals(&rest);
+    assert_eq!(prose, "I put it in the note.");
+    assert_eq!(changes.len(), 1, "and the change is still a change");
+    assert_eq!(changes[0].file.as_deref(), Some("today.md"));
+}
+
+#[test]
+fn nothing_is_looked_up_in_a_reply_that_looked_nothing_up() {
+    let (prose, looked) = chat::lookups("A plain answer with no tools in it.");
+    assert!(looked.is_empty());
+    assert_eq!(prose, "A plain answer with no tools in it.");
+}
+
+#[test]
+fn the_web_is_off_until_it_is_turned_on() {
+    // The one setting here that is not about taste: with it on, a question can
+    // send a place name to somebody else's server.
+    assert!(!Settings::default().web, "off by default");
+    assert!(Settings::parse("web = on\n").web);
+    assert!(!Settings::parse("web = off\n").web);
+    assert!(
+        !Settings::parse("scheme = NORD\n").web,
+        "and a settings file that predates it does not turn it on"
     );
 }

@@ -381,6 +381,7 @@ impl Backend for Local {
             // block above is an argument for not using it.
             deliberating: false,
             generating: std::time::Duration::ZERO,
+            ..super::Progress::default()
         };
         tick(report);
         // The clock the rate is measured on starts here, once the weights are

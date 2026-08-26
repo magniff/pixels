@@ -189,6 +189,12 @@ pub struct Progress {
     pub generating: std::time::Duration,
     /// Whether those tokens are the model thinking rather than answering.
     pub deliberating: bool,
+    /// Whether the wait is a tool being run rather than the model writing.
+    /// Somebody watching a panel should be told which of the two it is: one is
+    /// the machine working and the other is the network.
+    pub looking: bool,
+    /// How many tools have been run for this one question.
+    pub steps: u8,
 }
 
 impl Progress {
@@ -202,6 +208,56 @@ impl Progress {
     }
 }
 
+/// The most tools one question may run before it has to answer.
+///
+/// A cap rather than a hope. A model that cannot find what it wants will search
+/// for it again, and again, and there is somebody waiting at the end of it.
+const STEPS: u8 = 5;
+
+/// A call the model made and what came back.
+///
+/// Kept with the answer rather than reported separately: it goes into the
+/// transcript, so what a conversation looked up is still visible tomorrow, and
+/// an answer that came from somewhere can be told from one that did not.
+pub struct Used {
+    pub tool: String,
+    pub arg: String,
+    pub result: String,
+}
+
+impl Used {
+    /// The block that carries it in a reply.
+    pub fn written(&self) -> String {
+        format!(
+            "<used tool=\"{}\" arg=\"{}\">\n{}\n</used>\n\n",
+            self.tool.replace('"', "'"),
+            self.arg.replace('"', "'"),
+            self.result
+        )
+    }
+}
+
+/// The tool call a reply is making, if it is making one.
+///
+/// The model's own format, which is why the parsing is this short: the tag and
+/// one parameter, exactly as the chat template told it to write them.
+pub fn called(reply: &str) -> Option<(String, String)> {
+    let after = reply.split("<function=").nth(1)?;
+    let name = after.split('>').next()?.trim().to_string();
+    let param = after.split("<parameter=").nth(1)?;
+    // Everything past the parameter's own `>`, up to its closing tag. Splitting
+    // on `>` first would eat the `>` of `</parameter>` and leave the tag in the
+    // value - which fed the tools an argument with a tag on the end, got an
+    // empty result back, and had the model inventing to fill the gap.
+    let value = param
+        .split_once('>')?
+        .1
+        .split("</parameter>")
+        .next()?
+        .trim();
+    (!name.is_empty() && !value.is_empty()).then(|| (name, value.to_string()))
+}
+
 /// Something that can rewrite a piece of text on request.
 pub trait Backend: Send + 'static {
     /// Shown in the status bar, so it is never a mystery which one answered.
@@ -211,6 +267,68 @@ pub trait Backend: Send + 'static {
     /// Let go of whatever was being held for speed. Called when nothing has
     /// been asked for a while; the next question loads it again.
     fn release(&mut self) {}
+}
+
+/// Answer one question, running whatever tools it asks for on the way.
+///
+/// The loop lives here rather than in a backend, because it is not about
+/// language models: it is about a question that took a few steps. The stub
+/// answers in one and never notices there is a loop around it.
+fn answer(backend: &mut dyn Backend, ask: Ask, beat: &Sender<Progress>) -> Reply {
+    let mut turns = ask.turns.clone();
+    let mut used: Vec<Used> = Vec::new();
+    let mut step = 0u8;
+    loop {
+        let mut at = Progress {
+            steps: step,
+            ..Progress::default()
+        };
+        let mut tick = |p: Progress| {
+            // A closed channel means the application has gone; the answer
+            // itself will notice on the way out.
+            at = Progress { steps: step, ..p };
+            let _ = beat.send(at);
+        };
+        let asked = Ask {
+            turns: turns.clone(),
+            ..ask.clone()
+        };
+        let said = to_ascii(&backend.edit(&asked, &mut tick)?);
+
+        let Some((tool, arg)) = called(&said).filter(|_| !ask.tools.is_empty()) else {
+            // Whatever it looked up goes in front of what it said, so the
+            // answer arrives with its working.
+            let mut out: String = used.iter().map(Used::written).collect();
+            out.push_str(&said);
+            return Ok(out);
+        };
+        if step >= STEPS {
+            return Ok(format!(
+                "{}I looked several things up and did not get to an answer.",
+                used.iter().map(Used::written).collect::<String>()
+            ));
+        }
+        step += 1;
+        let _ = beat.send(Progress {
+            looking: true,
+            steps: step,
+            ..at
+        });
+        let result = crate::web::run(&tool, &arg);
+        // The call and its answer become two more turns, in the shapes the
+        // model's own template expects: what it said, then a user turn holding
+        // the response, which the template reads as a tool result rather than
+        // as somebody asking something new.
+        turns.push(Turn {
+            mine: false,
+            text: said,
+        });
+        turns.push(Turn {
+            mine: true,
+            text: format!("<tool_response>\n{result}\n</tool_response>"),
+        });
+        used.push(Used { tool, arg, result });
+    }
 }
 
 /// How long the weights stay resident after the last question.
@@ -246,12 +364,7 @@ impl Assistant {
             loop {
                 match asks.recv_timeout(IDLE) {
                     Ok(ask) => {
-                        let mut tick = |p: Progress| {
-                            // A closed channel means the application has gone;
-                            // the answer itself will notice on the way out.
-                            let _ = beat.send(p);
-                        };
-                        let reply = backend.edit(&ask, &mut tick).map(|text| to_ascii(&text));
+                        let reply = answer(&mut *backend, ask, &beat);
                         warm = true;
                         if replies.send(reply).is_err() {
                             break;

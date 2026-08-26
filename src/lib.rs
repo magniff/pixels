@@ -1101,6 +1101,14 @@ impl Notes {
             vault: digest::vault(&self.notes),
             file: self.note().slug(),
             within: Some(digest::project(&files)),
+            // Only when it has been turned on, and only for a conversation.
+            // A tool the model was never offered is one it cannot reach for
+            // and cannot mention.
+            tools: if self.settings.web {
+                web::tools()
+            } else {
+                Vec::new()
+            },
             ..llm::Ask::default()
         }
     }

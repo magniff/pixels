@@ -71,7 +71,12 @@ system's — they are built from the same widgets as everything else.
 ask for a change.
 
 - Qwen3, Qwen3.5 or GPT-OSS 20B through llama.cpp, on the GPU where there is
-  one; no key, no account, nothing leaves the machine
+  one; no key, no account, and nothing leaves the machine unless you switch the
+  next one on
+- **Looking things up**, off by default: the weather anywhere, an encyclopaedia,
+  the newest release of a project on GitHub, and any page you or it names. Real
+  APIs rather than a scraped search engine, so there is still no key and no
+  account. Every call it makes is written into the transcript beside the answer
 - Prompts are built from each model's own chat template, so a family that
   spells its turns differently is spoken to correctly
 - The window is sized per request, up to whatever the model was trained to

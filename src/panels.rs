@@ -614,6 +614,26 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
                     ui.draw_text_in(row, &chrome.notice, th.danger.face, Align::Left);
                 }
 
+                // ---- the network -------------------------------------
+                // The one switch here that is not about taste. With it on a
+                // conversation can send a place name or a search term to
+                // somebody else's server, and everything else this program
+                // does happens on the machine it is running on.
+                ui.space(3);
+                let row = ui.alloc(15);
+                ui.toggle_at(row, "LOOK THINGS UP ON THE WEB", &mut config.web);
+                let note = ui.alloc(9);
+                ui.draw_text_in(
+                    note,
+                    if config.web {
+                        "  WEATHER, WIKIPEDIA, RELEASES, AND ANY PAGE IT IS GIVEN"
+                    } else {
+                        "  OFF: NOTHING LEAVES THIS MACHINE"
+                    },
+                    th.ink_soft,
+                    Align::Left,
+                );
+
                 ui.space(3);
                 let head = ui.alloc(8);
                 ui.draw_text_in(head, "SYSTEM PROMPT", th.accent.face, Align::Left);

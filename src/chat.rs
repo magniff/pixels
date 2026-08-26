@@ -183,6 +183,42 @@ pub enum Outcome {
     Close,
 }
 
+/// Something the conversation looked up, and what came back.
+pub struct Lookup {
+    pub tool: String,
+    pub arg: String,
+    pub result: String,
+}
+
+/// Lift the record of what was looked up out of a reply.
+///
+/// Kept in the transcript rather than reported and forgotten: an answer that
+/// came from somewhere should still say where tomorrow, and one that came from
+/// nowhere should still be telling you that.
+pub fn lookups(reply: &str) -> (String, Vec<Lookup>) {
+    let mut prose = String::new();
+    let mut used = Vec::new();
+    let mut rest = reply;
+    while let Some(at) = rest.find("<used ") {
+        let Some(open) = rest[at..].find('>').map(|i| at + i + 1) else {
+            break;
+        };
+        let Some(close) = rest[open..].find("</used>").map(|i| open + i) else {
+            break;
+        };
+        let tag = &rest[at..open];
+        prose.push_str(&rest[..at]);
+        used.push(Lookup {
+            tool: attr(tag, "tool").unwrap_or_default(),
+            arg: attr(tag, "arg").unwrap_or_default(),
+            result: rest[open..close].trim().to_string(),
+        });
+        rest = &rest[close + 7..];
+    }
+    prose.push_str(rest);
+    (prose.trim().to_string(), used)
+}
+
 /// The files a conversation is about, as they are now.
 ///
 /// Borrowed for the frame rather than copied: a project is every note in a
@@ -1216,11 +1252,35 @@ impl Chat {
                 // What it said, and separately what it offered to do. The
                 // blocks are lifted out so the reply reads as a sentence
                 // rather than as a sentence with machinery in the middle.
-                let (prose, edits) = if turn.mine {
+                let (said, looked) = if turn.mine {
                     (turn.text.clone(), Vec::new())
                 } else {
-                    proposals(&turn.text)
+                    lookups(&turn.text)
                 };
+                let (prose, edits) = if turn.mine {
+                    (said, Vec::new())
+                } else {
+                    proposals(&said)
+                };
+                // What it went and found, before what it made of it.
+                for look in &looked {
+                    let row = ui.alloc(line_h);
+                    let head = format!("LOOKED UP  {}  {}", look.tool.to_uppercase(), look.arg);
+                    font::draw_text_styled(ui.canvas, row.x + 4, row.y, &head, th.info.hi, true);
+                    let line = ui.alloc(line_h);
+                    let got = look
+                        .result
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or("(nothing)");
+                    ui.draw_text_in(
+                        Rect::new(line.x + 8, line.y, line.w - 8, line.h),
+                        &one_line(got, ((line.w - 16) / font::advance()).max(8) as usize),
+                        th.ink_soft,
+                        Align::Left,
+                    );
+                    ui.space(2);
+                }
                 let lines: Vec<String> = prose.lines().map(str::to_string).collect();
                 let blocks = markdown::parse_located(&lines);
                 render::draw_document(
@@ -1243,7 +1303,9 @@ impl Chat {
                 ui.space(3);
                 let row = ui.alloc(line_h);
                 let p = self.progress;
-                let said = if p.deliberating {
+                let said = if p.looking {
+                    format!("LOOKING SOMETHING UP... ({} SO FAR)", p.steps)
+                } else if p.deliberating {
                     format!("THINKING... {} TOKENS", p.written)
                 } else if p.written > 0 {
                     format!("WRITING... {} TOKENS, {:.0}/S", p.written, p.rate())
