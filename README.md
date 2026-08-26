@@ -38,7 +38,9 @@ it at a real vault.
   lists including tasks, quotes holding anything, fenced and indented code,
   tables with per-column alignment, rules, hard breaks
 - Fenced code gets real syntax highlighting, from Sublime grammars
-- Links in the preview are clickable; one naming another note opens it
+- Links in the preview are clickable; one naming another note opens it, and the
+  foot of the page says which notes link *here* — the question a folder of files
+  cannot answer
 - Both views carry the same gutter and the same scrollbar, numbered with the
   same source lines
 - `/` searches the preview and lights up every hit

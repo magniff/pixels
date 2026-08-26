@@ -4809,3 +4809,146 @@ fn a_note_with_no_name_yet_is_left_alone() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ------------------------------------------------------------------- backlinks
+
+#[test]
+fn a_note_knows_what_points_at_it() {
+    let dir = std::env::temp_dir().join(format!("pixui-back-{}", std::process::id()));
+    vault_with(
+        &dir,
+        &[
+            ("aquarium/water.md", "# Water\n\nTest on Sundays.\n"),
+            (
+                "aquarium/stock.md",
+                "# Stock\n\nThe shrimp keep dying. See [the water](water.md).\n",
+            ),
+            (
+                "aquarium/plants.md",
+                "# Plants\n\nFerts twice a week. Nothing about the other note.\n",
+            ),
+            (
+                "aquarium/notes.md",
+                "# Notes\n\nA wiki link to [[water]] as well.\n",
+            ),
+            (
+                "bicycle/routes.md",
+                "# Routes\n\nA bare water.md here means this project's own.\n",
+            ),
+        ],
+    );
+    let app = notes::Notes::open(dir.clone());
+    let water = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/water.md")
+        .unwrap();
+
+    let names: Vec<String> = app
+        .linked_from(water)
+        .iter()
+        .map(|&i| app.notes[i].slug())
+        .collect();
+    assert!(
+        names.contains(&"aquarium/stock.md".to_string()),
+        "a markdown link counts: {names:?}"
+    );
+    assert!(
+        names.contains(&"aquarium/notes.md".to_string()),
+        "and a wiki link counts"
+    );
+    assert!(
+        !names.contains(&"aquarium/plants.md".to_string()),
+        "a note that says nothing does not"
+    );
+    assert!(
+        !names.contains(&"bicycle/routes.md".to_string()),
+        "and a bare name from another project points at that project's own file"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_link_across_projects_needs_the_path() {
+    let dir = std::env::temp_dir().join(format!("pixui-across-{}", std::process::id()));
+    vault_with(
+        &dir,
+        &[
+            ("aquarium/water.md", "# Water\n"),
+            (
+                "bicycle/routes.md",
+                "# Routes\n\nSee [the water note](aquarium/water.md).\n",
+            ),
+        ],
+    );
+    let app = notes::Notes::open(dir.clone());
+    let water = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/water.md")
+        .unwrap();
+    let names: Vec<String> = app
+        .linked_from(water)
+        .iter()
+        .map(|&i| app.notes[i].slug())
+        .collect();
+    assert_eq!(names, vec!["bicycle/routes.md"], "spelled out, it counts");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_longer_name_is_not_this_name() {
+    let dir = std::env::temp_dir().join(format!("pixui-longer-{}", std::process::id()));
+    vault_with(
+        &dir,
+        &[
+            ("aquarium/water.md", "# Water\n"),
+            ("aquarium/rainwater.md", "# Rainwater\n"),
+            (
+                "aquarium/stock.md",
+                "# Stock\n\nSee [rain](rainwater.md).\n",
+            ),
+        ],
+    );
+    let app = notes::Notes::open(dir.clone());
+    let water = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/water.md")
+        .unwrap();
+    assert!(
+        app.linked_from(water).is_empty(),
+        "rainwater.md ends in water.md and is not water.md"
+    );
+    let rain = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/rainwater.md")
+        .unwrap();
+    assert_eq!(
+        app.linked_from(rain).len(),
+        1,
+        "and the note it does point at knows"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_note_does_not_point_at_itself() {
+    let dir = std::env::temp_dir().join(format!("pixui-self-{}", std::process::id()));
+    vault_with(
+        &dir,
+        &[(
+            "aquarium/water.md",
+            "# Water\n\nA note about water.md itself.\n",
+        )],
+    );
+    let app = notes::Notes::open(dir.clone());
+    let water = app
+        .notes
+        .iter()
+        .position(|n| n.slug() == "aquarium/water.md")
+        .unwrap();
+    assert!(app.linked_from(water).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

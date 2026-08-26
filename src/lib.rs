@@ -139,6 +139,36 @@ pub enum Renaming {
     Project(String),
 }
 
+/// Whether one line of markdown links to a note.
+///
+/// The two spellings a vault uses: an ordinary markdown link whose target is a
+/// file, and a wiki link in double brackets. Matched on the name rather than by
+/// parsing the line, because a link is the only thing that ever ends in `.md)`
+/// or sits inside `[[ ]]`, and a backlink list that missed half of them would
+/// be worse than none.
+fn points_at(line: &str, stem: &str, project: &str, near: bool) -> bool {
+    let lower = line.to_lowercase();
+    let mut targets = vec![format!("{stem}.md"), format!("[[{stem}]]")];
+    if !project.is_empty() {
+        targets.push(format!("{}/{stem}.md", project.to_lowercase()));
+    }
+    for want in targets {
+        let Some(at) = lower.find(&want) else {
+            continue;
+        };
+        // A bare name only counts from a note beside it; from another project
+        // it would be a link to that project's own file of the same name.
+        if want.contains('/') || want.starts_with("[[") || near {
+            // Not part of a longer name: `water.md` is not `rainwater.md`.
+            let before = lower[..at].chars().next_back();
+            if before.is_none_or(|c| !c.is_alphanumeric() && c != '-' && c != '_') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// How long a pause has to be before a note is written down, in seconds.
 ///
 /// Long enough that it is a pause rather than a gap between two words, short
@@ -1239,6 +1269,41 @@ impl Notes {
     /// vault, a fragment inside this one, or somewhere outside. Only the last
     /// leaves the program, and it leaves by asking the desktop to open it
     /// rather than by knowing anything about browsers.
+    /// The notes that point at this one.
+    ///
+    /// The thing that makes a vault a vault rather than a folder: a note is
+    /// worth as much for what refers to it as for what is in it, and nothing
+    /// else in the app answers "where did I mention this".
+    ///
+    /// Read out of the notes themselves rather than kept in an index. A vault
+    /// is a few hundred notes held in memory already, and an index is a second
+    /// copy of the truth that has to be told every time the first one changes.
+    pub fn linked_from(&self, to: usize) -> Vec<usize> {
+        let Some(target) = self.notes.get(to) else {
+            return Vec::new();
+        };
+        let name = target.filename();
+        let stem = name.strip_suffix(".md").unwrap_or(&name).to_lowercase();
+        let mut out = Vec::new();
+        for (i, note) in self.notes.iter().enumerate() {
+            if i == to {
+                continue;
+            }
+            // A note in another project may only be reached by a path, so a
+            // bare name is a link to a neighbour and nothing else.
+            let near = note.project == target.project;
+            if note
+                .buffer
+                .lines()
+                .iter()
+                .any(|line| points_at(line, &stem, &target.project, near))
+            {
+                out.push(i);
+            }
+        }
+        out
+    }
+
     fn follow_link(&mut self, href: &str) {
         let href = href.trim();
         if href.is_empty() {
@@ -2544,10 +2609,77 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
         search: app.vim.search_pattern().map(str::to_owned),
         reveal: app.preview_reveal.take(),
     };
+    // Worked out before the closure, which cannot hold a borrow of the notes
+    // while it draws into them.
+    let back: Vec<(usize, String)> = app
+        .linked_from(app.current.min(app.notes.len() - 1))
+        .into_iter()
+        .map(|i| (i, app.notes[i].filename()))
+        .collect();
     let mut drawn = render::Drawn::default();
+    let mut go_to = None;
     ui.scroll_area_with(inner, "preview", &mut scroll, |ui| {
         drawn = render::draw_document(ui, &blocks, req);
+        if back.is_empty() {
+            return;
+        }
+        // What points here, under what is here. A note is worth as much for
+        // what refers to it as for what is in it, and this is the only place
+        // the app answers "where did I mention this".
+        let th = *ui.theme;
+        let line = pixui::font::line_h();
+        ui.space(line);
+        let rule = ui.alloc(line);
+        ui.canvas
+            .hline(rule.x, rule.y + line / 2, rule.w, th.well_border);
+        let head = ui.alloc(line);
+        pixui::font::draw_text_styled(
+            ui.canvas,
+            head.x + crate::gutter(),
+            head.y,
+            &match back.len() {
+                1 => "LINKED FROM 1 NOTE".to_string(),
+                n => format!("LINKED FROM {n} NOTES"),
+            },
+            th.ink_soft,
+            true,
+        );
+        for (i, name) in &back {
+            let row = ui.alloc(line + 2);
+            let at = Rect::new(
+                row.x + crate::gutter(),
+                row.y + 1,
+                row.w - crate::gutter(),
+                line,
+            );
+            let id = ui.id(&format!("back{i}"));
+            let resp = ui.interact(id, at);
+            if resp.hovered {
+                ui.request_cursor(pixui::Cursor::Pointer);
+            }
+            if resp.clicked {
+                go_to = Some(*i);
+            }
+            let ink = if resp.hovered {
+                th.info.hi
+            } else {
+                th.info.face
+            };
+            pixui::font::draw_text(ui.canvas, at.x, at.y, name, ink);
+            if resp.hovered {
+                ui.canvas.hline(
+                    at.x,
+                    at.y + pixui::font::glyph_h() + 1,
+                    pixui::font::text_width(name),
+                    ink,
+                );
+            }
+        }
+        ui.space(line);
     });
+    if let Some(i) = go_to {
+        app.go_to_note(i);
+    }
     if let Some(y) = drawn.reveal {
         // A couple of rows of lead-in, so the hit lands inside the page rather
         // than jammed against its top edge.

@@ -418,6 +418,26 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             // A change the model offered, with the diff it would make.
+            name: "backlinks",
+            right_click: None,
+            seed: &[
+                ("aquarium/water.md", "# Water\n\nNitrate under 20, nitrite zero, ammonia zero. Test on Sundays before the\nwater change so the numbers are always from the same point in the week.\n\nTwenty five percent out every week, replaced with water that has stood for a\nday.\n"),
+                ("aquarium/stock.md", "# Stock\n\nThe amano shrimp keep dying, and I think it is the change rather than\nanything in the tank. See [the water note](water.md).\n"),
+                ("aquarium/plants.md", "# Plants\n\nFerts twice a week, half dose. Full dose grew algae faster than plants.\nStanding [[water]] is warmer than it looks.\n"),
+            ],
+            script: [keys(":e water.md"), keys("\n"), keys(":preview"), keys("\n"), keys("G")].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 30,
+            canvas: (768, 470),
+        },
+        Scene {
             name: "chat-web",
             right_click: None,
             seed: &[
