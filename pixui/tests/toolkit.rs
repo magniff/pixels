@@ -1885,8 +1885,10 @@ fn a_frame_can_say_the_gpu_is_wanted_elsewhere() {
     });
     assert!(out.sharing_gpu);
 
-    // And it lasts one frame, like asking for a repaint does: the frame that
-    // stops saying it is the frame the GPU comes back.
+    // And it lasts one frame, like asking for a repaint does. What the
+    // presenter makes of a frame that stops saying it is its own business:
+    // the default one cannot take the GPU back, because a window that has
+    // been drawn on by the CPU presenter never accepts it again.
     let (_, out) = h.out(|ui| ui.label("DONE"));
     assert!(!out.sharing_gpu);
 }

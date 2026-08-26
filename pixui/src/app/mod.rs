@@ -108,11 +108,24 @@ pub trait Presenter: Sized {
 /// held 111-119 with a worst frame of 9.7ms - through the same work. Nothing
 /// about the CPU presenter got faster; it simply was not in the queue.
 ///
-/// So neither is the answer on its own, and this holds both. They are kept
-/// rather than built per swap: tearing the window's surface down and putting
-/// it back cost a second of stall at each end, and the window came back at 216
-/// frames a second where it had been at 120, which is the display's rate.
-/// Keeping both, a swap is a choice and nothing is reconfigured.
+/// So neither is the answer on its own, and this holds both - but it swaps one
+/// way only, and that is not a simplification. Once softbuffer has presented
+/// to a window, wgpu's surface on that window is finished: every acquire from
+/// then on comes back `Occluded` - 867 of them in a row, in the run that
+/// settled it - so the GPU presenter draws nothing and the window sits showing
+/// the last frame the CPU drew. It reads as a hang, because it is one. Nothing
+/// brings it back: not reconfiguring the swapchain, not building an entirely
+/// new presenter on the same window. Both were tried and both stayed occluded,
+/// and the free-running frame rate that came with it - 216 a second on a 120Hz
+/// display - was not lost vsync but a presenter doing nothing at full speed.
+///
+/// So the GPU is given up once and for good. An application that never does
+/// anything else on it keeps the GPU presenter for its whole run; one that
+/// does, spends the rest of the run on the CPU at 11ms a frame. That is the
+/// honest price and it is worth paying: with frames drawn only when something
+/// moves, it costs nothing at all to sit still, and 88 frames a second while
+/// typing is not something anybody notices. Two hundred millisecond stalls
+/// are.
 #[cfg(all(feature = "gpu", feature = "soft"))]
 struct Either {
     gpu: gpu::GpuPresenter,
@@ -154,36 +167,28 @@ impl Presenter for Either {
         }
     }
 
-    /// False from the moment the CPU one has drawn, even back on the GPU.
-    ///
-    /// Once softbuffer has presented to the window, wgpu's vsync stops
-    /// blocking on it and does not start again - not after reconfiguring the
-    /// swapchain with the same present mode, and not after building a whole
-    /// new presenter; both were tried. So the window came back from a swap
-    /// running at 216 frames a second on a 120Hz display: no more picture,
-    /// just the work of one. On macOS the compositor owns the vblank, so
-    /// nothing tears - it is heat and battery and nothing else.
-    ///
-    /// Saying it is no longer paced is exactly right, then: it is not, and it
-    /// hands the pacing back to the frame timer, which caps at the display's
-    /// rate whether or not anything blocks.
     fn paces_frames(&self) -> bool {
-        self.on_gpu && self.soft.is_none()
+        if self.on_gpu {
+            self.gpu.paces_frames()
+        } else {
+            self.soft.as_ref().is_some_and(|p| p.paces_frames())
+        }
     }
 
     fn suit_gpu(&mut self, _window: &Arc<Window>, _vsync: bool, gpu_wanted: bool) -> bool {
-        if self.on_gpu == gpu_wanted {
+        // Asking for it back is not refused so much as unavailable: see above.
+        // Better a window that carries on drawing a little more expensively
+        // than one that stops drawing altogether.
+        if !self.on_gpu || self.on_gpu == gpu_wanted {
             return false;
         }
-        if !gpu_wanted && self.soft.is_none() {
-            match soft::SoftPresenter::new(self.window.clone(), self.vsync) {
-                Ok(p) => self.soft = Some(p),
-                // Nothing to fall back to but carrying on as we are, which is
-                // stuttery rather than broken.
-                Err(_) => return false,
-            }
+        match soft::SoftPresenter::new(self.window.clone(), self.vsync) {
+            Ok(p) => self.soft = Some(p),
+            // Nothing to fall back to but carrying on as we are, which is
+            // stuttery rather than broken.
+            Err(_) => return false,
         }
-        self.on_gpu = gpu_wanted;
+        self.on_gpu = false;
         true
     }
 }
