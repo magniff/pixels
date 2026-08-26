@@ -350,14 +350,10 @@ fn clip(text: &str) -> String {
 
 // ------------------------------------------------------------------- the tools
 
-/// What the model is told it can reach for.
+/// What the model is told it can reach for out on the network.
 ///
-/// The wording of `about` is the whole of it. Measured on the model this ships
-/// against: a search tool described as "search the web and return a list of
-/// results" was reached for once in four questions that needed it, and the same
-/// tool described in terms of *when* it is needed - and saying plainly that the
-/// model's own memory of such things is wrong - was reached for four times in
-/// four, with no false alarms on the two that did not need it.
+/// Offered only when looking things up has been switched on. The wording of
+/// `about` is the whole of whether it is ever reached for - see `tools.rs`.
 pub fn tools() -> Vec<crate::llm::Tool> {
     use crate::llm::Tool;
     vec![
@@ -394,24 +390,4 @@ pub fn tools() -> Vec<crate::llm::Tool> {
             takes: ("url", "The full address, starting with https://"),
         },
     ]
-}
-
-/// Run one call, and say what came back.
-///
-/// A tool that fails says so in a sentence rather than returning nothing.
-/// Nothing at all is the one answer that reliably makes a model invent: handed
-/// an empty result it fills the gap, and handed "that page could not be read"
-/// it says so.
-pub fn run(name: &str, arg: &str) -> String {
-    let done = match name {
-        "weather" => weather(arg),
-        "wikipedia" => wikipedia(arg),
-        "release" => release(arg),
-        "fetch" => fetch(arg),
-        other => Err(format!("there is no tool called {other}")),
-    };
-    match done {
-        Ok(text) => text,
-        Err(why) => format!("That did not work: {why}."),
-    }
 }

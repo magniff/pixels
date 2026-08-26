@@ -4484,7 +4484,7 @@ fn a_tool_that_fails_says_so_rather_than_saying_nothing() {
     // The one answer that reliably makes a model invent is no answer at all:
     // handed an empty result it fills the gap, and it filled one with a
     // llama.cpp version that has never existed.
-    let said = web::run("no-such-tool", "anything");
+    let said = notes::tools::run("no-such-tool", "anything");
     assert!(!said.trim().is_empty());
     assert!(said.contains("no tool called"), "{said}");
 }
@@ -4494,7 +4494,7 @@ fn every_tool_says_when_it_is_for_and_not_only_what_it_is() {
     // Measured: a tool described as what it does was reached for once in four
     // questions that needed it; the same tool described in terms of when it is
     // needed was reached for four times in four.
-    for tool in web::tools() {
+    for tool in notes::tools::available(true) {
         assert!(
             tool.about.contains("Use ") || tool.about.contains("use it"),
             "/{} never says when to use it",
@@ -4515,7 +4515,7 @@ fn every_tool_says_when_it_is_for_and_not_only_what_it_is() {
 
 #[test]
 fn tools_are_declared_the_way_the_model_was_trained_to_read_them() {
-    let declared = notes::llm::declare(&web::tools());
+    let declared = notes::llm::declare(&notes::tools::available(true));
     // Lifted from the chat template baked into the weights, not invented: the
     // model obeys this shape and argues with any other.
     assert!(declared.starts_with("# Tools\n\nYou have access to the following functions:"));
@@ -4533,7 +4533,7 @@ fn a_conversation_is_told_about_its_tools_and_an_edit_is_not() {
             mine: true,
             text: "hello".into(),
         }],
-        tools: web::tools(),
+        tools: notes::tools::available(true),
         ..Default::default()
     };
     assert!(
@@ -4558,7 +4558,7 @@ fn a_conversation_is_told_about_its_tools_and_an_edit_is_not() {
 
     let rewrite = notes::llm::Ask {
         source: "a line".into(),
-        tools: web::tools(),
+        tools: notes::tools::available(true),
         ..Default::default()
     };
     assert_eq!(
@@ -4644,4 +4644,120 @@ fn the_web_is_off_until_it_is_turned_on() {
         !Settings::parse("scheme = NORD\n").web,
         "and a settings file that predates it does not turn it on"
     );
+}
+
+// ------------------------------------------------------------------- the sums
+
+use notes::calc;
+
+fn sum(text: &str) -> String {
+    calc::evaluate(text).unwrap_or_else(|why| format!("!{why}"))
+}
+
+#[test]
+fn arithmetic_is_worked_out_rather_than_remembered() {
+    // The one the model gets confidently and nearly right.
+    assert_eq!(sum("384 * 517"), "198528");
+    assert_eq!(sum("2 + 3 * 4"), "14", "times binds tighter than plus");
+    assert_eq!(sum("(2 + 3) * 4"), "20");
+    assert_eq!(sum("10 / 4"), "2.5");
+    assert_eq!(sum("10 % 3"), "1");
+    assert_eq!(sum("-5 + 2"), "-3");
+    assert_eq!(sum("- -5"), "5");
+}
+
+#[test]
+fn powers_bind_to_the_right() {
+    assert_eq!(sum("2^3^2"), "512", "two to the ninth, not eight squared");
+    assert_eq!(sum("2^10"), "1024");
+    assert_eq!(
+        sum("-2^2"),
+        "-4",
+        "the minus is applied after, as everyone writes it"
+    );
+    assert_eq!(sum("2^-1"), "0.5");
+}
+
+#[test]
+fn a_tenth_and_a_fifth_come_out_as_people_write_them() {
+    // Binary floating point cannot hold a tenth; handing somebody
+    // 0.30000000000000004 is answering a question they did not ask.
+    assert_eq!(sum("0.1 + 0.2"), "0.3");
+    assert_eq!(sum("1 / 3"), "0.333333333333");
+    assert_eq!(sum("2.5 * 4"), "10", "and a whole number is a whole number");
+}
+
+#[test]
+fn the_functions_and_constants_it_claims_to_have() {
+    assert_eq!(sum("sqrt(144)"), "12");
+    assert_eq!(sum("abs(-7)"), "7");
+    assert_eq!(sum("round(2.6)"), "3");
+    assert_eq!(sum("floor(2.9)"), "2");
+    assert_eq!(sum("ceil(2.1)"), "3");
+    assert_eq!(sum("min(3, 1, 2)"), "1");
+    assert_eq!(sum("max(3, 1, 2)"), "3");
+    assert_eq!(sum("log(1000)"), "3");
+    assert_eq!(sum("log(8, 2)"), "3");
+    assert_eq!(sum("pow(2, 8)"), "256");
+    assert!(sum("pi").starts_with("3.14159"));
+    assert_eq!(sum("round(sin(0))"), "0");
+}
+
+#[test]
+fn a_sum_written_the_way_somebody_would_write_it() {
+    assert_eq!(
+        sum("1_250 * 2"),
+        "2500",
+        "a number can be grouped for reading"
+    );
+    assert_eq!(
+        sum("min(3,1)"),
+        "1",
+        "and a comma is the separator between arguments, not inside a number - \
+         there is no telling `1,250` from `min(3,1)` and this is the one that has to work"
+    );
+    assert_eq!(sum("3 × 4"), "12", "the other signs for times and divide");
+    assert_eq!(sum("12 ÷ 4"), "3");
+    assert_eq!(sum("[2 + 3] * 2"), "10", "and the other brackets");
+    assert_eq!(sum("  7  +  1  "), "8");
+}
+
+#[test]
+fn a_sum_that_does_not_work_says_why() {
+    assert_eq!(sum("1 / 0"), "!that divides by zero");
+    assert!(sum("2 +").starts_with('!'), "half a sum is not a sum");
+    assert!(sum("(2 + 3").contains("not closed"));
+    assert!(sum("sqrt(-1)").contains("no square root"));
+    assert!(sum("frobnicate(2)").contains("not something this knows"));
+    assert!(sum("").contains("nothing here"));
+    assert!(sum("2 & 3").contains("not something this can work out"));
+    assert!(
+        sum("2 3").contains("left over"),
+        "two numbers side by side is a typo"
+    );
+}
+
+#[test]
+fn working_a_sum_out_needs_no_permission_to_leave_the_machine() {
+    // The web switch is about sending a place name to somebody else's server.
+    // Arithmetic happens here, so it is offered either way.
+    let offline: Vec<&str> = notes::tools::available(false)
+        .iter()
+        .map(|t| t.name)
+        .collect();
+    assert_eq!(
+        offline,
+        vec!["calc"],
+        "with the network off, one tool and it is this one"
+    );
+
+    let online: Vec<&str> = notes::tools::available(true)
+        .iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(
+        online.starts_with(&["calc"]),
+        "and it is still there with the network on"
+    );
+    assert!(online.contains(&"weather") && online.contains(&"fetch"));
 }

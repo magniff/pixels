@@ -73,6 +73,9 @@ ask for a change.
 - Qwen3, Qwen3.5 or GPT-OSS 20B through llama.cpp, on the GPU where there is
   one; no key, no account, and nothing leaves the machine unless you switch the
   next one on
+- **Working sums out** rather than remembering them, which is the one thing a
+  language model is reliably bad at: it hands the arithmetic to a calculator and
+  reads back the answer. Needs nothing outside the machine, so it is always on
 - **Looking things up**, off by default: the weather anywhere, an encyclopaedia,
   the newest release of a project on GitHub, and any page you or it names. Real
   APIs rather than a scraped search engine, so there is still no key and no

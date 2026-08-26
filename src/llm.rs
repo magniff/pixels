@@ -314,7 +314,7 @@ fn answer(backend: &mut dyn Backend, ask: Ask, beat: &Sender<Progress>) -> Reply
             steps: step,
             ..at
         });
-        let result = crate::web::run(&tool, &arg);
+        let result = crate::tools::run(&tool, &arg);
         // The call and its answer become two more turns, in the shapes the
         // model's own template expects: what it said, then a user turn holding
         // the response, which the template reads as a tool result rather than

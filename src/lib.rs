@@ -16,6 +16,7 @@
 //! `std::fs` appears in `dialog.rs` and nowhere in `pixui`.
 
 pub mod assist;
+pub mod calc;
 pub mod chat;
 pub mod dialog;
 pub mod diff;
@@ -32,6 +33,7 @@ pub mod shots;
 pub mod showcase;
 pub mod syntax;
 pub mod text;
+pub mod tools;
 pub mod vim;
 pub mod web;
 
@@ -1104,11 +1106,9 @@ impl Notes {
             // Only when it has been turned on, and only for a conversation.
             // A tool the model was never offered is one it cannot reach for
             // and cannot mention.
-            tools: if self.settings.web {
-                web::tools()
-            } else {
-                Vec::new()
-            },
+            // Working a sum out happens here and is always on offer; looking
+            // something up goes to somebody else's server and is not.
+            tools: tools::available(self.settings.web),
             ..llm::Ask::default()
         }
     }
