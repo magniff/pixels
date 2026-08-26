@@ -1566,12 +1566,20 @@ fn the_status_line_says_what_the_model_is_doing() {
     let mut block = Assist::new(Cursor::new(0, 0), Cursor::new(0, 8), "the text".into());
     block.phase = Phase::Thinking;
 
-    // Before a word has come back, what there is to report is the question.
+    // Before a word has come back, what there is to report is the question,
+    // and how much of it has been read. Reading a long one is the slowest part
+    // of answering it: a line that sat unchanged through eight seconds of it
+    // was indistinguishable from one that had stopped being drawn.
     block.progress = Progress {
         prompt: 412,
+        read: 256,
         ..Progress::default()
     };
-    assert_eq!(block.headline(), "READING 412 TOKENS");
+    assert_eq!(block.headline(), "READING 256/412 TOKENS");
+
+    // And once it is all in, the two agree.
+    block.progress.read = 412;
+    assert_eq!(block.headline(), "READING 412/412 TOKENS");
 
     // A reasoning model is thinking, and says so rather than looking slow.
     block.progress = Progress {

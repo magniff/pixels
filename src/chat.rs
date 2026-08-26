@@ -1331,6 +1331,11 @@ impl Chat {
                     format!("THINKING... {} TOKENS", p.written)
                 } else if p.written > 0 {
                     format!("WRITING... {} TOKENS, {:.0}/S", p.written, p.rate())
+                } else if p.prompt > 0 {
+                    // A share rather than a count: the number of tokens in a
+                    // vault is not something anybody has a feel for, and how
+                    // near the end it is, is the only part being watched.
+                    format!("READING THE NOTES... {}%", 100 * p.read / p.prompt.max(1))
                 } else {
                     "READING THE NOTES...".to_string()
                 };

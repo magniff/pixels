@@ -145,7 +145,10 @@ impl Assist {
             Phase::Thinking => {
                 let p = self.progress;
                 if p.written == 0 {
-                    format!("READING {} TOKENS", p.prompt)
+                    // While it is still reading, the count climbs; the moment
+                    // it has finished, the two are equal and it reads as the
+                    // total it always did.
+                    format!("READING {}/{} TOKENS", p.read, p.prompt)
                 } else {
                     format!(
                         "{} - {} TOKENS AT {:.0}/S",

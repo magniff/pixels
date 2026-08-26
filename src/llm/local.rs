@@ -23,6 +23,31 @@ use super::{Ask, Backend, Reply};
 /// Leave this much of the window for the answer, deliberation included.
 const RESERVE: usize = 2048;
 
+/// The most of the question to read in one go, in tokens.
+///
+/// Reading it is one call into llama.cpp that does not come back until it is
+/// done, and on a Mac it is the GPU doing the reading - the same GPU the window
+/// is drawn on. A whole batch at once is a single dispatch long enough to hold
+/// every frame behind it: measured on the 9B this ships against, 2,048 tokens
+/// took 3.8 seconds, which is 3.8 seconds of a window that does not repaint,
+/// does not highlight what the pointer is over, and cannot be told to stop.
+///
+/// Smaller is not slower. Reading the same 2,835-token question, twice each:
+///
+/// | tokens per read | whole question | longest single read |
+/// | --- | --- | --- |
+/// | 2048 | 8.42 s | 3763 ms |
+/// | 256 | 7.99 s | 472 ms |
+/// | 128 | 8.55 s | 250 ms |
+/// | 64 | 13.60 s | 196 ms |
+///
+/// So this is not a trade of speed for smoothness - 256 is the fastest of the
+/// four as well as eight times the shortest stall, and the same shape holds on
+/// the 1.7B (2.35 s to 2.25 s). Below it the per-dispatch overhead starts to
+/// dominate and 64 falls off a cliff, which is why this is a measured number
+/// and not simply the smallest one.
+const MOUTHFUL: usize = 256;
+
 /// Where the weights are, unless `PIXUI_MODEL` says otherwise.
 pub fn default_path() -> PathBuf {
     std::env::var_os("PIXUI_MODEL")
@@ -352,14 +377,20 @@ impl Backend for Local {
         // llama.cpp asserts that a batch fits inside `n_batch` and *aborts the
         // process* when it does not - not an error, a SIGABRT - so a selection
         // of more than a couple of thousand tokens used to take the editor
-        // down with it. The size is asked of the context rather than picked:
-        // it is the same number the assertion is against, so it cannot drift
-        // out of step with whatever llama.cpp defaults to next.
-        let per = (ctx.n_batch() as usize).max(1);
+        // down with it. The ceiling is asked of the context rather than
+        // guessed: it is the same number the assertion is against, so it
+        // cannot drift out of step with whatever llama.cpp defaults to next.
+        let per = MOUTHFUL.min(ctx.n_batch() as usize).max(1);
         let mut batch = LlamaBatch::new(per, 1);
         let last = tokens.len() - 1;
         let mut at = 0usize;
         for chunk in tokens.chunks(per) {
+            // A stop asked for while the question is still being read is a
+            // stop: there is nothing written yet to hand back, and the reply
+            // below is the one an empty answer already produces.
+            if !watch.carry_on() {
+                break;
+            }
             batch.clear();
             for token in chunk {
                 // Only the very last token of the whole question is asked for
@@ -370,10 +401,24 @@ impl Backend for Local {
                 at += 1;
             }
             ctx.decode(&mut batch).map_err(no_room)?;
+            // Say how far in it has got. Before this the first word out of the
+            // worker was the first word of the answer, so the whole of reading
+            // a long question - eight seconds of it, on the model this ships
+            // against - looked from the outside like nothing happening.
+            watch.tick(
+                super::Progress {
+                    prompt: tokens.len(),
+                    read: at,
+                    elapsed: started.elapsed(),
+                    ..super::Progress::default()
+                },
+                "",
+            );
         }
         // The question has been read; from here the numbers move.
         let mut report = super::Progress {
             prompt: tokens.len(),
+            read: tokens.len(),
             written: 0,
             elapsed: started.elapsed(),
             // Read off what comes back rather than predicted: a model that
@@ -474,6 +519,15 @@ impl Backend for Local {
         }
         let text = super::clean_reply(&text);
         if text.is_empty() {
+            // Being stopped before it had said anything is not the same as
+            // having nothing to say, and the two used to come back identical.
+            // Handing the passage back means "this is already what you asked
+            // for" - a fair answer from a model that finished and a false one
+            // from a model that was interrupted, which since a stop can now
+            // land while the question is still being read is most of them.
+            if !watch.carry_on() {
+                return Err("stopped before it had written anything".into());
+            }
             // Nothing to say is an answer: the passage is already what the
             // instruction asked for. Handing back the source says that in the
             // one vocabulary the caller understands — a diff with nothing in it.

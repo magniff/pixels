@@ -195,6 +195,11 @@ pub type Reply = Result<String, String>;
 pub struct Progress {
     /// Tokens the question came to, known once it has been read.
     pub prompt: usize,
+    /// How many of those have been read so far. Reading a long question is the
+    /// slowest part of answering it and the part with nothing to show, so it
+    /// reports its own progress rather than leaving a panel to say "busy" for
+    /// eight seconds and hope.
+    pub read: usize,
     /// Tokens written back so far.
     pub written: usize,
     /// Since the question was sent, which is what somebody waiting is counting.
