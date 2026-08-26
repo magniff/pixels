@@ -526,7 +526,11 @@ pub fn filed(dir: &Path, note: &str) -> Vec<Filed> {
 /// in here is invisible to it without the loader having to know this exists.
 pub fn folder(dir: &Path, note: &str) -> PathBuf {
     let stem = note.strip_suffix(".md").unwrap_or(note);
-    dir.join("chats").join(stem)
+    // A dot in front, so the forest of projects does not grow one more tree
+    // that is not a project. The note is named by where it sits in the vault
+    // rather than by its filename: two projects may each have a `todo.md`, and
+    // their conversations are not the same conversations.
+    dir.join(".chats").join(stem)
 }
 
 /// A file name nothing else has taken.

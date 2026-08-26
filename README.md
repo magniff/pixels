@@ -54,7 +54,9 @@ it at a real vault.
 |---|---|---|
 | ![the chats about a note](screenshots/chat-picker.png) | ![a conversation](screenshots/chat-talk.png) | ![a proposed change](screenshots/chat-diff.png) |
 
-**Notes** — a drawer of them, filtered as you type, `Ctrl-n`/`Ctrl-p` to walk.
+**Notes** — a forest of projects. A project is a folder of notes, drawn as a
+tree with a heading you can fold, and a note lying loose at the top of the vault
+stays where it is. Filtered as you type, `Ctrl-n`/`Ctrl-p` to walk.
 `Cmd-p` opens the whole library to a fuzzy search: `mdsh` finds
 `markdown-showcase.md`, and the letters that answered are lit in the row.
 `cmd-e`, `cmd-n` and `cmd-s` put the keyboard in the editor, the list or the

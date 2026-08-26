@@ -274,11 +274,11 @@ pub fn run() -> std::io::Result<()> {
             name: "chat-picker",
             seed: &[
                 (
-                    "chats/welcome/what-the-toolkit-is.md",
+                    ".chats/welcome/what-the-toolkit-is.md",
                     "# what the toolkit is\n\n## you\n\nwhat is the toolkit called\n\n## assistant\n\nIt is called pixui.\n",
                 ),
                 (
-                    "chats/welcome/whether-to-wrap-long-lines.md",
+                    ".chats/welcome/whether-to-wrap-long-lines.md",
                     "# whether to wrap long lines\n\n## you\n\nshould long lines wrap or scroll\n\n## assistant\n\nWrap. A note is prose.\n\n## you\n\nwhat about code fences\n\n## assistant\n\nThose scroll.\n",
                 ),
             ],
@@ -298,7 +298,7 @@ pub fn run() -> std::io::Result<()> {
             // One of them opened, with an answer in it that has markdown in it.
             name: "chat-talk",
             seed: &[(
-                "chats/welcome/how-does-wrapping-work.md",
+                ".chats/welcome/how-does-wrapping-work.md",
                 "# how does wrapping work\n\n## you\n\nhow does wrapping work in the source view\n\n## assistant\n\nAt the width of the pane, on spaces, with two rules:\n\n- a word longer than the line is broken rather than pushed out\n- a wrapped row is marked in the gutter so it is not read as a new line\n\nThe wrapping is computed from the text and the styled runs are sliced to\nmatch, so `wrap_ranges` and the highlighter cannot disagree.\n\n## you\n\nand in the preview\n\n## assistant\n\nSame width, but per block: a paragraph is one block however many rows it\ntakes.\n",
             )],
             script: [
@@ -324,7 +324,7 @@ pub fn run() -> std::io::Result<()> {
             // A half-typed command, with what it could still become.
             name: "chat-command",
             seed: &[(
-                "chats/welcome/how-does-wrapping-work.md",
+                ".chats/welcome/how-does-wrapping-work.md",
                 "# how does wrapping work\n\n## you\n\nhow does wrapping work in the source view\n\n## assistant\n\nAt the width of the pane, on spaces. A word longer than the line is broken\nrather than pushed out.\n",
             )],
             script: [
@@ -351,7 +351,7 @@ pub fn run() -> std::io::Result<()> {
             // A change the model offered, with the diff it would make.
             name: "chat-settled",
             seed: &[(
-                "chats/welcome/tighten-the-opening.md",
+                ".chats/welcome/tighten-the-opening.md",
                 "# tighten the opening\n\n## you\n\nline 6 is doing too much, split it\n\n## assistant\n\nIt runs three claims together. Split at the colon and let the second half stand on its own.\n\n<edit lines=\"6-6\" state=\"applied\">\nEverything you can see is a pixel buffer.\nThe sidebar, the caret and the save dialog are all drawn the same way.\n</edit>\n\n## you\n\nand line 7\n\n## assistant\n\nThat one is fine as it stands.\n",
             )],
             script: [
@@ -377,7 +377,7 @@ pub fn run() -> std::io::Result<()> {
             // A change the model offered, with the diff it would make.
             name: "chat-diff",
             seed: &[(
-                "chats/welcome/tighten-the-opening.md",
+                ".chats/welcome/tighten-the-opening.md",
                 "# tighten the opening\n\n## you\n\nline 6 is doing too much, split it\n\n## assistant\n\nIt runs three claims together. Split at the colon and let the second half stand on its own.\n\n<edit lines=\"6-6\">\nEverything you can see is a pixel buffer.\nThe sidebar, the caret and the save dialog are all drawn the same way.\n</edit>\n",
             )],
             script: [
@@ -404,11 +404,11 @@ pub fn run() -> std::io::Result<()> {
             name: "chat-delete",
             seed: &[
                 (
-                    "chats/welcome/what-the-toolkit-is.md",
+                    ".chats/welcome/what-the-toolkit-is.md",
                     "# what the toolkit is\n\n## you\n\nwhat is the toolkit called\n\n## assistant\n\nIt is called pixui.\n",
                 ),
                 (
-                    "chats/welcome/whether-to-wrap-long-lines.md",
+                    ".chats/welcome/whether-to-wrap-long-lines.md",
                     "# whether to wrap long lines\n\n## you\n\nshould long lines wrap or scroll\n\n## assistant\n\nWrap. A note is prose.\n",
                 ),
             ],
@@ -451,6 +451,30 @@ pub fn run() -> std::io::Result<()> {
             clicks: vec![],
             then: vec![],
             settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
+            // The vault as a forest: a heading per project, its notes under it.
+            name: "projects",
+            seed: &[
+                ("pixel-editor/rendering.md", "# Rendering\n\nEverything is drawn by hand into a `Vec<u32>`. No GPU canvas underneath and no\nsystem widget anywhere.\n"),
+                ("pixel-editor/fonts.md", "# Fonts\n\nFive bitmap faces, chosen in settings. Four of them are set solid.\n"),
+                ("pixel-editor/assistant.md", "# Assistant\n\nA quantised model on this machine, through llama.cpp. Nothing leaves the laptop.\n"),
+                ("allotment/beds.md", "# Beds\n\nFour raised beds, one metre by three, on a four year rotation.\n"),
+                ("allotment/watering.md", "# Watering\n\nEarly morning, at the root, never the leaves.\n"),
+                ("reading/queue.md", "# Queue\n\n- [ ] Invisible Cities - Calvino\n- [x] A Pattern Language - Alexander\n"),
+                ("reading/patterns.md", "# Patterns\n\nNotes on A Pattern Language, which I finished in March.\n"),
+            ],
+            script: vec![],
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 14,
             canvas: (768, 470),
         },
         Scene {
@@ -1356,7 +1380,9 @@ pub fn run() -> std::io::Result<()> {
         // the next one's screenshot.
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_file(scratch.join("settings.conf"));
-        let mut app = Notes::open(dir.clone());
+        // Written before the vault opens, not after: a seeded note has to be
+        // there to be read, and a seeded project is what stops the vault
+        // seeding itself with the default ones instead.
         for (path, text) in scene.seed {
             let at = dir.join(path);
             if let Some(parent) = at.parent() {
@@ -1364,6 +1390,7 @@ pub fn run() -> std::io::Result<()> {
             }
             let _ = std::fs::write(at, text);
         }
+        let mut app = Notes::open(dir.clone());
         let mut canvas = Canvas::new(scene.canvas.0, scene.canvas.1);
         let mut ui_state = UiState::new();
         let mut theme: Theme = theme();

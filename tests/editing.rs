@@ -1078,6 +1078,7 @@ fn note(body: &str, path: Option<&str>) -> notes::Note {
     notes::Note {
         path: path.map(std::path::PathBuf::from),
         buffer: Buffer::from_text(body),
+        project: String::new(),
     }
 }
 
@@ -1182,6 +1183,7 @@ fn naming_a_note_that_was_never_saved_writes_it() {
     app.notes.push(notes::Note {
         path: None,
         buffer: Buffer::from_text("scratch"),
+        project: String::new(),
     });
     let i = app.notes.len() - 1;
 
@@ -3065,6 +3067,7 @@ fn vault_of(notes: &[(&str, &str)]) -> Vec<notes::Note> {
         .map(|(file, text)| notes::Note {
             path: Some(std::path::PathBuf::from(file)),
             buffer: Buffer::from_text(text),
+            project: String::new(),
         })
         .collect()
 }
@@ -3260,8 +3263,8 @@ fn conversations_are_filed_where_the_vault_cannot_see_them() {
 
     let path = talk.path.clone().expect("named on the way out");
     assert!(
-        path.starts_with(dir.join("chats").join("welcome")),
-        "filed under the note: {path:?}"
+        path.starts_with(dir.join(".chats").join("welcome")),
+        "filed under the note, in a folder the forest does not count: {path:?}"
     );
     assert_eq!(
         notes::read_vault(&dir).len(),
@@ -3644,4 +3647,60 @@ fn nothing_offered_means_nothing_to_answer() {
         !talk.pending(&note),
         "and neither does an answer with no change in it"
     );
+}
+
+// ------------------------------------------------------------------ projects
+
+#[test]
+fn a_vault_is_a_forest_of_projects() {
+    let dir = std::env::temp_dir().join(format!("pixui-forest-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("beta")).unwrap();
+    std::fs::create_dir_all(dir.join("alpha")).unwrap();
+    std::fs::create_dir_all(dir.join(".chats").join("loose")).unwrap();
+    std::fs::write(dir.join("loose.md"), "# Loose\n").unwrap();
+    std::fs::write(dir.join("alpha").join("two.md"), "# Two\n").unwrap();
+    std::fs::write(dir.join("alpha").join("one.md"), "# One\n").unwrap();
+    std::fs::write(dir.join("beta").join("only.md"), "# Only\n").unwrap();
+    std::fs::write(dir.join(".chats").join("loose").join("a.md"), "# a\n").unwrap();
+
+    let vault = notes::read_vault(&dir);
+    let slugs: Vec<String> = vault.iter().map(|n| n.slug()).collect();
+    assert_eq!(
+        slugs,
+        vec!["loose.md", "alpha/one.md", "alpha/two.md", "beta/only.md"],
+        "loose notes first, then projects in order, then their notes in order"
+    );
+    assert_eq!(
+        notes::projects(&vault),
+        vec!["".to_string(), "alpha".into(), "beta".into()]
+    );
+    assert!(
+        !slugs.iter().any(|s| s.contains("chats")),
+        "a dot folder is the program's own and is not a project"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn two_projects_can_hold_the_same_filename() {
+    // Which is the whole reason a note is known by where it sits rather than by
+    // what it is called: `todo.md` is not one note.
+    let dir = std::env::temp_dir().join(format!("pixui-same-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("work")).unwrap();
+    std::fs::create_dir_all(dir.join("home")).unwrap();
+    std::fs::write(dir.join("work").join("todo.md"), "# Work\n").unwrap();
+    std::fs::write(dir.join("home").join("todo.md"), "# Home\n").unwrap();
+
+    let vault = notes::read_vault(&dir);
+    assert_eq!(vault.len(), 2);
+    assert_eq!(vault[0].filename(), vault[1].filename(), "same name");
+    assert_ne!(vault[0].slug(), vault[1].slug(), "different notes");
+    assert_ne!(
+        notes::chat::folder(&dir, &vault[0].slug()),
+        notes::chat::folder(&dir, &vault[1].slug()),
+        "and their conversations are not the same conversations"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

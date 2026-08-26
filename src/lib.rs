@@ -65,9 +65,32 @@ fn sidebar_width(canvas_w: i32) -> i32 {
 pub struct Note {
     pub path: Option<PathBuf>,
     pub buffer: Buffer,
+    /// The project it belongs to: the folder it sits in, under the vault.
+    /// Empty for a note lying loose at the top of the vault, which is where
+    /// one that has never been saved starts out.
+    pub project: String,
 }
 
 impl Note {
+    /// A note that has never been on disk.
+    pub fn blank(project: String) -> Self {
+        Self {
+            path: None,
+            buffer: Buffer::new(),
+            project,
+        }
+    }
+
+    /// Where it sits in the vault: `project/file.md`, or just the file when it
+    /// is loose. Unique across the vault, which its filename alone is not -
+    /// two projects may each have a `todo.md`.
+    pub fn slug(&self) -> String {
+        if self.project.is_empty() {
+            return self.filename();
+        }
+        format!("{}/{}", self.project, self.filename())
+    }
+
     /// The note's display name: its first heading, else its file stem.
     pub fn title(&self) -> String {
         let derived = markdown::derive_title(self.buffer.lines(), 24);
@@ -200,6 +223,8 @@ pub struct Notes {
     pub chat: Option<chat::Chat>,
     /// Open while somebody is choosing which conversation to carry on.
     pub picker: Option<chat::Picker>,
+    /// Projects whose notes are folded away in the sidebar.
+    pub folded: std::collections::HashSet<String>,
     /// The model on its thread, whichever one this build has.
     pub helper: llm::Assistant,
     /// What the assistant is and what it is told, kept between runs.
@@ -253,6 +278,27 @@ pub fn notes_dir() -> PathBuf {
 /// entered: `--ask` wants the notes to tell the model about, and has no
 /// business seeding a directory or installing a reference note to do it.
 pub fn read_vault(dir: &Path) -> Vec<Note> {
+    let mut notes = markdown_in(dir, "");
+    let mut projects: Vec<String> = Vec::new();
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // A folder whose name begins with a dot is the program's own -
+            // conversations live in one - and is not a project.
+            if entry.path().is_dir() && !name.starts_with('.') {
+                projects.push(name);
+            }
+        }
+    }
+    projects.sort();
+    for project in projects {
+        notes.extend(markdown_in(&dir.join(&project), &project));
+    }
+    notes
+}
+
+/// The `.md` files directly inside one directory, in filename order.
+fn markdown_in(dir: &Path, project: &str) -> Vec<Note> {
     let mut notes = Vec::new();
     let Ok(read) = std::fs::read_dir(dir) else {
         return notes;
@@ -268,10 +314,22 @@ pub fn read_vault(dir: &Path) -> Vec<Note> {
             notes.push(Note {
                 path: Some(path),
                 buffer: Buffer::from_text(&text),
+                project: project.to_string(),
             });
         }
     }
     notes
+}
+
+/// Every project in the vault, in the order the sidebar shows them.
+pub fn projects(notes: &[Note]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for note in notes {
+        if !out.contains(&note.project) {
+            out.push(note.project.clone());
+        }
+    }
+    out
 }
 
 impl Notes {
@@ -284,10 +342,7 @@ impl Notes {
 
         let mut notes = read_vault(&notes_dir);
         if notes.is_empty() {
-            notes.push(Note {
-                path: None,
-                buffer: Buffer::new(),
-            });
+            notes.push(Note::blank(String::new()));
         }
 
         // Open on the welcome note when there is one, rather than whatever
@@ -324,6 +379,7 @@ impl Notes {
             assist_wanted: false,
             chat: None,
             picker: None,
+            folded: std::collections::HashSet::new(),
             assist_lift: 0,
             helper: llm::Assistant::spawn(assistant(&config)),
             settings: config,
@@ -336,6 +392,16 @@ impl Notes {
             focus_rename: false,
             sidebar_w: None,
         }
+    }
+
+    /// Which project a path on disk belongs to: the folder under the vault it
+    /// sits in, or nothing when it lies loose at the top.
+    fn project_of(&self, path: &Path) -> String {
+        path.parent()
+            .filter(|p| *p != self.notes_dir)
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
     }
 
     fn note(&self) -> &Note {
@@ -379,6 +445,7 @@ impl Notes {
         match std::fs::read_to_string(path) {
             Ok(text) => {
                 self.notes.push(Note {
+                    project: self.project_of(path),
                     path: Some(path.to_path_buf()),
                     buffer: Buffer::from_text(&text),
                 });
@@ -442,10 +509,10 @@ impl Notes {
             "q" | "close" => self.close_current(),
             "qa" | "quit" => ui.request_quit(),
             "new" => {
-                self.notes.push(Note {
-                    path: None,
-                    buffer: Buffer::new(),
-                });
+                // Into whichever project is being read, which is nearly always
+                // the one the new note belongs beside.
+                let here = self.note().project.clone();
+                self.notes.push(Note::blank(here));
                 self.current = self.notes.len() - 1;
                 self.scroll = 0;
                 self.status = "NEW NOTE".into();
@@ -654,7 +721,7 @@ impl Notes {
     /// when there are not: a list with one row saying "new" is a step that
     /// exists only to be walked past.
     fn open_chat(&mut self) {
-        let note = self.notes[self.current.min(self.notes.len() - 1)].filename();
+        let note = self.notes[self.current.min(self.notes.len() - 1)].slug();
         if chat::filed(&self.notes_dir, &note).is_empty() {
             let fresh = self.begin_chat(chat::Chat::new(note));
             self.chat = Some(fresh);
@@ -858,10 +925,7 @@ impl Notes {
         }
         self.notes.remove(self.current.min(self.notes.len() - 1));
         if self.notes.is_empty() {
-            self.notes.push(Note {
-                path: None,
-                buffer: Buffer::new(),
-            });
+            self.notes.push(Note::blank(String::new()));
         }
         self.current = self.current.min(self.notes.len() - 1);
         self.scroll = 0;
@@ -1182,7 +1246,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     // The list first: choosing from it is what opens the other one, so the
     // frame it is chosen on is the frame the conversation appears.
     if let Some(mut picker) = app.picker.take() {
-        let note = app.notes[app.current.min(app.notes.len() - 1)].filename();
+        let note = app.notes[app.current.min(app.notes.len() - 1)].slug();
         let chats = chat::filed(&app.notes_dir, &note);
         match picker.show(ui, &note, &chats) {
             chat::Picked::None => app.picker = Some(picker),
@@ -1668,12 +1732,27 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
     let shown: Vec<usize> = (0..app.notes.len())
         .filter(|&i| note_matches(&app.notes[i], &needle))
         .collect();
+    // The vault is a forest, so the list is drawn as one: a heading per
+    // project and its notes indented under it. A project folded away keeps its
+    // heading - a tree you cannot see the shape of is a list again - and the
+    // note being edited is never hidden by a fold.
+    let mut folded: Vec<String> = Vec::new();
+    for project in projects(&app.notes) {
+        let holds_current = app
+            .notes
+            .get(app.current)
+            .is_some_and(|n| n.project == project);
+        if app.folded.contains(&project) && !holds_current {
+            folded.push(project);
+        }
+    }
 
     // Fit the preview text to whatever width the sidebar ended up, allowing for
     // the scrollbar gutter and the row's own padding.
     let cols = ((list.w - 20) / pixui::font::advance()).max(8) as usize;
 
     let mut select = None;
+    let mut toggle = None;
     let mut begin_rename = None;
     let mut commit_rename = None;
     let mut cancel_rename = false;
@@ -1683,7 +1762,59 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             ui.label_dim("  NO MATCHES");
             return;
         }
+        let mut last = None;
         for &i in &shown {
+            // A heading wherever the project changes, which is where the shown
+            // notes are already grouped: they come out of the vault in project
+            // order, so this needs no sorting of its own.
+            let project = app.notes[i].project.clone();
+            if last.as_ref() != Some(&project) {
+                if !project.is_empty() {
+                    let head = ui.alloc(pixui::font::line_h() + 3);
+                    let id = ui.id(&format!("proj{project}"));
+                    let resp = ui.interact(id, head);
+                    if resp.clicked {
+                        toggle = Some(project.clone());
+                    }
+                    let shut = folded.contains(&project);
+                    let ink = if resp.hovered {
+                        th.accent.hi
+                    } else {
+                        th.accent.face
+                    };
+                    // A caret that turns, which is the one part of a tree that
+                    // says it is a tree rather than an indented list.
+                    let mark = Rect::new(head.x + 3, head.y + 2, 7, 7);
+                    pixui::icon::draw_centered(
+                        ui.canvas,
+                        mark,
+                        if shut {
+                            pixui::icon::CHEVRON
+                        } else {
+                            pixui::icon::CARET_DOWN
+                        },
+                        ink,
+                    );
+                    let at = Rect::new(head.x + 13, head.y + 2, head.w - 17, pixui::font::line_h());
+                    pixui::font::draw_text_styled(
+                        ui.canvas,
+                        at.x,
+                        at.y,
+                        &project.to_uppercase(),
+                        ink,
+                        true,
+                    );
+                    let count = shown
+                        .iter()
+                        .filter(|&&j| app.notes[j].project == project)
+                        .count();
+                    ui.draw_text_in(at, &count.to_string(), th.ink_soft, Align::Right);
+                }
+                last = Some(project.clone());
+            }
+            if folded.contains(&project) {
+                continue;
+            }
             // Copy what the row needs before drawing, so nothing holds a
             // borrow of the note list while the rename field mutates state.
             let title = app.notes[i].title();
@@ -1697,6 +1828,13 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             let line = pixui::font::line_h();
             let h = line + 4 + preview.len() as i32 * line;
             let row = ui.alloc(h);
+            // Notes in a project are stepped in under its heading, and a loose
+            // one is not: the indent is what says which of the two it is.
+            let row = if project.is_empty() {
+                row
+            } else {
+                Rect::new(row.x + 9, row.y, row.w - 9, row.h)
+            };
             let id = ui.id(&format!("note{i}"));
             let resp = ui.interact(id, row);
             if resp.clicked {
@@ -1818,16 +1956,19 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
         app.current = i;
         app.scroll = 0;
     }
+    if let Some(project) = toggle {
+        if !app.folded.remove(&project) {
+            app.folded.insert(project);
+        }
+    }
 
     ui.column(footer, 3, |ui| {
         ui.row_h(14, 4, |ui| {
             let w = (footer.w - 4) / 2;
             let cell = ui.alloc(w);
             if ui.button_at(cell, "NEW", Tone::Neutral).clicked {
-                app.notes.push(Note {
-                    path: None,
-                    buffer: Buffer::new(),
-                });
+                let here = app.note().project.clone();
+                app.notes.push(Note::blank(here));
                 app.current = app.notes.len() - 1;
                 app.scroll = 0;
                 app.filter.clear();
@@ -2463,13 +2604,9 @@ fn install_reference(dir: &Path) {
 }
 
 fn seed_if_empty(dir: &Path) {
-    let has_notes = std::fs::read_dir(dir)
-        .map(|r| {
-            r.flatten()
-                .any(|e| e.path().extension().is_some_and(|x| x == "md"))
-        })
-        .unwrap_or(false);
-    if has_notes {
+    // A vault with projects in it is not an empty vault, even though there is
+    // nothing lying loose at the top of it.
+    if !read_vault(dir).is_empty() {
         return;
     }
 
