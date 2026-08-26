@@ -50,6 +50,10 @@ it at a real vault.
 |---|---|---|
 | ![the finder](screenshots/finder.png) | ![source](screenshots/showcase-source.png) | ![preview](screenshots/showcase-preview.png) |
 
+| the chats about a note | one of them |
+|---|---|
+| ![the chats about a note](screenshots/chat-picker.png) | ![a conversation](screenshots/chat-talk.png) |
+
 **Notes** — a drawer of them, filtered as you type, `Ctrl-n`/`Ctrl-p` to walk.
 `Cmd-p` opens the whole library to a fuzzy search: `mdsh` finds
 `markdown-showcase.md`, and the letters that answered are lit in the row.
@@ -66,6 +70,9 @@ ask for a change.
   spells its turns differently is spoken to correctly
 - The window is sized per request, up to whatever the model was trained to
   read; the weights are put down again after a few minutes' quiet
+- `Cmd-Enter` with nothing selected opens a conversation instead: the same
+  context, no passage, and every chat is filed under the note it was had about
+  so it can be picked up again later
 - The question opens *in* the text, between the lines
 - The answer arrives as a word-level diff, and the note is not touched until
   you keep it — `Cmd-Enter` again, or **APPLY**

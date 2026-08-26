@@ -3174,3 +3174,122 @@ fn the_note_is_marked_at_the_cursors_the_selection_gave() {
         "the markers land on the columns the selection ended on"
     );
 }
+
+// ---------------------------------------------------------------------- chat
+
+use notes::chat;
+use notes::llm::Turn;
+
+#[test]
+fn a_conversation_survives_being_written_down_and_read_back() {
+    let mut talk = chat::Chat::new("welcome.md".into());
+    talk.turns = vec![
+        Turn {
+            mine: true,
+            text: "what does this note say".into(),
+        },
+        Turn {
+            mine: false,
+            text: "That it is a markdown editor.\n\n- with vim keys\n- drawn by hand".into(),
+        },
+        Turn {
+            mine: true,
+            text: "and the toolkit".into(),
+        },
+    ];
+    let filed = talk.to_text();
+    assert_eq!(
+        chat::parse(&filed),
+        talk.turns,
+        "every turn, in order, on both sides"
+    );
+    assert!(
+        filed.starts_with("# what does this note say"),
+        "titled by what was first asked"
+    );
+}
+
+#[test]
+fn a_marker_inside_a_code_fence_is_code() {
+    // A conversation about this very format is the obvious thing to have, and
+    // the obvious thing to break it.
+    let filed = "# t\n\n## you\n\nhow are turns marked\n\n## assistant\n\nLike this:\n\n```\n## you\n## assistant\n```\n\nAt the top level only.\n";
+    let turns = chat::parse(filed);
+    assert_eq!(turns.len(), 2, "two turns, not four: {turns:?}");
+    assert!(
+        turns[1].text.contains("## you"),
+        "the sample survives inside the answer"
+    );
+}
+
+#[test]
+fn an_answer_that_writes_a_marker_cannot_split_itself() {
+    let mut talk = chat::Chat::new("n.md".into());
+    talk.turns = vec![
+        Turn {
+            mine: true,
+            text: "write the marker on its own line".into(),
+        },
+        Turn {
+            mine: false,
+            text: "Sure:\n\n## assistant\n\nThat is it.".into(),
+        },
+    ];
+    let read = chat::parse(&talk.to_text());
+    assert_eq!(
+        read.len(),
+        2,
+        "still two turns after a round trip: {read:?}"
+    );
+    assert!(!read[1].mine, "and the second is still the model's");
+}
+
+#[test]
+fn conversations_are_filed_where_the_vault_cannot_see_them() {
+    let dir = std::env::temp_dir().join(format!("pixui-chat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("welcome.md"), "# Welcome\n\nHello.\n").unwrap();
+
+    let mut talk = chat::Chat::new("welcome.md".into());
+    talk.turns = vec![Turn {
+        mine: true,
+        text: "anything at all".into(),
+    }];
+    talk.save(&dir).expect("it saves");
+
+    let path = talk.path.clone().expect("named on the way out");
+    assert!(
+        path.starts_with(dir.join("chats").join("welcome")),
+        "filed under the note: {path:?}"
+    );
+    assert_eq!(
+        notes::read_vault(&dir).len(),
+        1,
+        "the vault is still one note - a conversation is not one of them"
+    );
+    let listed = chat::filed(&dir, "welcome.md");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].turns, 1);
+    assert_eq!(listed[0].title, "anything at all");
+    assert!(
+        chat::filed(&dir, "other.md").is_empty(),
+        "and they belong to one note"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_empty_conversation_is_not_filed_at_all() {
+    let dir = std::env::temp_dir().join(format!("pixui-chat-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut talk = chat::Chat::new("welcome.md".into());
+    talk.save(&dir).expect("saving nothing is not an error");
+    assert!(
+        talk.path.is_none(),
+        "nothing was said, so there is nothing to keep"
+    );
+    assert!(!dir.join("chats").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

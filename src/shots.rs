@@ -17,6 +17,10 @@ use pixui::{Canvas, Input, Key, Mods, Point, Theme, Ui, UiState};
 /// One capture: a name, keys to type, and how long to let things settle.
 struct Scene {
     name: &'static str,
+    /// Files written into the vault before the frames run, by path relative to
+    /// it. For the parts of the app that draw what is on disk rather than what
+    /// was typed - a conversation had yesterday has to have been had.
+    seed: &'static [(&'static str, &'static str)],
     /// Typed one per frame, so vim's pending-key parsing runs for real.
     script: Vec<Press>,
     mouse: Point,
@@ -121,6 +125,7 @@ pub fn run() -> std::io::Result<()> {
     let scenes = vec![
         Scene {
             name: "editor",
+            seed: &[],
             script: vec![],
             mouse: Point::new(430, 120),
             click_first: false,
@@ -135,6 +140,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "insert",
+            seed: &[],
             script: [keys("Go"), keys("A new thought, typed in insert mode.")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -149,6 +155,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "visual",
+            seed: &[],
             script: keys("jjjvwwwl"),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -163,6 +170,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "command",
+            seed: &[],
             script: keys(":w notes-are-files"),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -177,6 +185,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "dialog-open",
+            seed: &[],
             script: [keys(":e"), keys("\n"), keys("jj")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -191,6 +200,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "dialog-save",
+            seed: &[],
             script: [keys(":new"), keys("\n"), keys(":w"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -207,6 +217,7 @@ pub fn run() -> std::io::Result<()> {
         // produces exactly this: the same pixel size, with more room in it.
         Scene {
             name: "resized",
+            seed: &[],
             script: vec![],
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -223,6 +234,7 @@ pub fn run() -> std::io::Result<()> {
         Scene {
             // Cmd-P, and a few letters of the note wanted.
             name: "finder",
+            seed: &[],
             script: [
                 keys(":e welcome.md"),
                 keys("\n"),
@@ -244,6 +256,7 @@ pub fn run() -> std::io::Result<()> {
         Scene {
             // A pattern half typed: vim lights the hits before you commit.
             name: "incsearch",
+            seed: &[],
             script: [keys(":e markdown-showcase.md"), keys("\n"), keys("/ital")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -257,7 +270,81 @@ pub fn run() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
+            // The conversations already had about this note, when there are any.
+            name: "chat-picker",
+            seed: &[
+                (
+                    "chats/welcome/what-the-toolkit-is.md",
+                    "# what the toolkit is\n\n## you\n\nwhat is the toolkit called\n\n## assistant\n\nIt is called pixui.\n",
+                ),
+                (
+                    "chats/welcome/whether-to-wrap-long-lines.md",
+                    "# whether to wrap long lines\n\n## you\n\nshould long lines wrap or scroll\n\n## assistant\n\nWrap. A note is prose.\n\n## you\n\nwhat about code fences\n\n## assistant\n\nThose scroll.\n",
+                ),
+            ],
+            script: [keys(":e welcome.md"), keys("\n"), cmd_key(Key::Enter)].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
+            // One of them opened, with an answer in it that has markdown in it.
+            name: "chat-talk",
+            seed: &[(
+                "chats/welcome/how-does-wrapping-work.md",
+                "# how does wrapping work\n\n## you\n\nhow does wrapping work in the source view\n\n## assistant\n\nAt the width of the pane, on spaces, with two rules:\n\n- a word longer than the line is broken rather than pushed out\n- a wrapped row is marked in the gutter so it is not read as a new line\n\nThe wrapping is computed from the text and the styled runs are sliced to\nmatch, so `wrap_ranges` and the highlighter cannot disagree.\n\n## you\n\nand in the preview\n\n## assistant\n\nSame width, but per block: a paragraph is one block however many rows it\ntakes.\n",
+            )],
+            script: [
+                keys(":e welcome.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 14,
+            canvas: (768, 470),
+        },
+        Scene {
+            // A conversation about the note, opened on nothing selected.
+            name: "chat",
+            seed: &[],
+            script: [
+                keys(":e welcome.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("what does this note say the toolkit is"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
             name: "search",
+            seed: &[],
             script: keys("/pixui\n"),
             mouse: Point::new(153, 200),
             click_first: false,
@@ -273,6 +360,7 @@ pub fn run() -> std::io::Result<()> {
         // Typing in the sidebar filter narrows the list live.
         Scene {
             name: "filter",
+            seed: &[],
             script: keys("export"),
             mouse: Point::new(80, 44),
             click_first: true,
@@ -288,6 +376,7 @@ pub fn run() -> std::io::Result<()> {
         // The rendered view of the welcome note.
         Scene {
             name: "preview",
+            seed: &[],
             script: [keys(":preview"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -304,6 +393,7 @@ pub fn run() -> std::io::Result<()> {
         // turns, because clicking it goes somewhere.
         Scene {
             name: "link-hover",
+            seed: &[],
             script: [keys(":preview"), keys("\n")].concat(),
             mouse: Point::new(220, 197),
             click_first: false,
@@ -320,6 +410,7 @@ pub fn run() -> std::io::Result<()> {
         // the keyboard, on its way out again.
         Scene {
             name: "pane-flare",
+            seed: &[],
             script: cmd('n'),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -336,6 +427,7 @@ pub fn run() -> std::io::Result<()> {
         // marching ring on the row j and k will move.
         Scene {
             name: "pane-notes",
+            seed: &[],
             script: [cmd('n'), keys("jj")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -352,6 +444,7 @@ pub fn run() -> std::io::Result<()> {
         // takes it a level in.
         Scene {
             name: "auto-indent",
+            seed: &[],
             script: [
                 keys(":e ideas.md"),
                 keys("\n"),
@@ -374,6 +467,7 @@ pub fn run() -> std::io::Result<()> {
         // The mark that appears beside a selection: the assistant, offering.
         Scene {
             name: "assist-mark",
+            seed: &[],
             script: [keys(":e ideas.md"), keys("\n"), keys("jjVj")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -389,6 +483,7 @@ pub fn run() -> std::io::Result<()> {
         // Clicking the mark, which is how the assistant is usually reached.
         Scene {
             name: "assist-open",
+            seed: &[],
             script: [keys(":e ideas.md"), keys("\n"), keys("jjVj")].concat(),
             mouse: Point::new(745, 72),
             click_first: false,
@@ -409,6 +504,7 @@ pub fn run() -> std::io::Result<()> {
             // line, and the last line is the foot of the pane. It has to end
             // up somewhere you can read it.
             name: "assist-bottom",
+            seed: &[],
             script: [
                 keys(":e markdown-showcase.md"),
                 keys("\n"),
@@ -431,6 +527,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "assist-diff",
+            seed: &[],
             script: [
                 keys(":e ideas.md"),
                 keys("\n"),
@@ -458,6 +555,7 @@ pub fn run() -> std::io::Result<()> {
         // Line 17 is the answer, and the block has closed behind it.
         Scene {
             name: "assist-applied",
+            seed: &[],
             script: [
                 keys(":e ideas.md"),
                 keys("\n"),
@@ -485,6 +583,7 @@ pub fn run() -> std::io::Result<()> {
         // springing open under it.
         Scene {
             name: "note-pick",
+            seed: &[],
             script: [cmd('n'), keys("j")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -500,6 +599,7 @@ pub fn run() -> std::io::Result<()> {
         // The application menu, open.
         Scene {
             name: "menu",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -515,6 +615,7 @@ pub fn run() -> std::io::Result<()> {
         // What the app is, and which build this is.
         Scene {
             name: "about",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -530,6 +631,7 @@ pub fn run() -> std::io::Result<()> {
         // Which weights to run, and what to tell them.
         Scene {
             name: "settings",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -548,6 +650,7 @@ pub fn run() -> std::io::Result<()> {
             // The wheel over the system prompt. It used to chase the caret
             // straight back to the top; the view should stay where it was put.
             name: "settings-scroll",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -565,6 +668,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "settings-vim",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -580,6 +684,7 @@ pub fn run() -> std::io::Result<()> {
         // The colour schemes, each with a strip of its own colours.
         Scene {
             name: "appearance",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -595,6 +700,7 @@ pub fn run() -> std::io::Result<()> {
         // Walking the list with j, which wears each scheme as it goes.
         Scene {
             name: "appearance-walk",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -611,6 +717,7 @@ pub fn run() -> std::io::Result<()> {
         // is sized from the line height, so this is the layout answering.
         Scene {
             name: "font-gohu",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -630,6 +737,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "font-creep",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -649,6 +757,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "font-tamzen",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -668,6 +777,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "font-cozette",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -688,6 +798,7 @@ pub fn run() -> std::io::Result<()> {
         // Worn: the whole app in somebody else's colours, dark and light.
         Scene {
             name: "scheme-nord",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -707,6 +818,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "scheme-latte",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -727,6 +839,7 @@ pub fn run() -> std::io::Result<()> {
         // The settings, as they open: a list of what can be set.
         Scene {
             name: "settings-index",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -743,6 +856,7 @@ pub fn run() -> std::io::Result<()> {
         // answering the pointer.
         Scene {
             name: "settings-off",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -763,6 +877,7 @@ pub fn run() -> std::io::Result<()> {
         // offering to rewrite it.
         Scene {
             name: "assist-off",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -784,6 +899,7 @@ pub fn run() -> std::io::Result<()> {
         // reach a panel drawn over everything else.
         Scene {
             name: "settings-closed",
+            seed: &[],
             script: vec![],
             mouse: Point::new(30, 6),
             click_first: true,
@@ -799,6 +915,7 @@ pub fn run() -> std::io::Result<()> {
         // Keeping the suggestion without reaching for the mouse.
         Scene {
             name: "assist-kept",
+            seed: &[],
             script: [
                 keys(":e ideas.md"),
                 keys("\n"),
@@ -827,6 +944,7 @@ pub fn run() -> std::io::Result<()> {
         // first of them.
         Scene {
             name: "search-enter",
+            seed: &[],
             script: [cmd('s'), keys("vim"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -842,6 +960,7 @@ pub fn run() -> std::io::Result<()> {
         // Caught mid-transition: the two views dissolving into each other.
         Scene {
             name: "tab-fade",
+            seed: &[],
             script: vec![],
             mouse: Point::new(300, 25),
             click_first: true,
@@ -857,6 +976,7 @@ pub fn run() -> std::io::Result<()> {
         // The showcase note, in both views.
         Scene {
             name: "showcase-source",
+            seed: &[],
             script: [keys(":e markdown-showcase.md"), keys("\n")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -871,6 +991,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "showcase-preview",
+            seed: &[],
             script: [
                 keys(":e markdown-showcase.md"),
                 keys("\n"),
@@ -895,6 +1016,7 @@ pub fn run() -> std::io::Result<()> {
             // Rolled far past the end: the last line of the note should be
             // sitting on the last row of the pane, not fifteen rows above it.
             name: "source-bottom",
+            seed: &[],
             script: [keys(":e markdown-showcase.md"), keys("\n")].concat(),
             mouse: Point::new(600, 300),
             click_first: false,
@@ -911,6 +1033,7 @@ pub fn run() -> std::io::Result<()> {
             // Rolled far past the end of the rendered page, which should leave
             // its last line on the last row rather than somewhere above it.
             name: "preview-bottom",
+            seed: &[],
             script: [
                 keys(":e markdown-showcase.md"),
                 keys("\n"),
@@ -931,6 +1054,7 @@ pub fn run() -> std::io::Result<()> {
         },
         Scene {
             name: "wheel-scroll",
+            seed: &[],
             script: [keys(":e markdown-showcase.md"), keys("\n")].concat(),
             mouse: Point::new(600, 300),
             click_first: false,
@@ -948,6 +1072,7 @@ pub fn run() -> std::io::Result<()> {
         // hit in the rendered text.
         Scene {
             name: "preview-search",
+            seed: &[],
             script: [
                 keys(":e markdown-showcase.md"),
                 keys("\n"),
@@ -973,6 +1098,7 @@ pub fn run() -> std::io::Result<()> {
         // the blocks down there came from.
         Scene {
             name: "preview-scroll",
+            seed: &[],
             script: [
                 keys(":e markdown-showcase.md"),
                 keys("\n"),
@@ -995,6 +1121,7 @@ pub fn run() -> std::io::Result<()> {
         // The rendered view of the note with a table and a code block.
         Scene {
             name: "preview-table",
+            seed: &[],
             script: [
                 keys(":e vim-keys.md"),
                 keys("\n"),
@@ -1016,6 +1143,7 @@ pub fn run() -> std::io::Result<()> {
         // Task list items and a fenced code block.
         Scene {
             name: "preview-tasks",
+            seed: &[],
             script: [
                 keys(":e ideas.md"),
                 keys("\n"),
@@ -1037,6 +1165,7 @@ pub fn run() -> std::io::Result<()> {
         // Double-clicking a note in the drawer renames it in place.
         Scene {
             name: "rename",
+            seed: &[],
             script: keys("about-the-toolkit"),
             mouse: Point::new(80, 118),
             click_first: true,
@@ -1052,6 +1181,7 @@ pub fn run() -> std::io::Result<()> {
         // Dragging in the editor selects, as a mouse-driven visual mode.
         Scene {
             name: "drag-select",
+            seed: &[],
             script: vec![],
             mouse: Point::new(340, 43),
             click_first: false,
@@ -1067,6 +1197,7 @@ pub fn run() -> std::io::Result<()> {
         // A blockwise selection over the list items.
         Scene {
             name: "visual-block",
+            seed: &[],
             script: [keys("11G"), ctrl('v'), keys("jjj"), keys("llllllll")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -1082,6 +1213,7 @@ pub fn run() -> std::io::Result<()> {
         // A text object mid-flight: `ci"` inside a quoted span.
         Scene {
             name: "text-object",
+            seed: &[],
             script: [keys("GA \"quoted words\" here\x1b"), keys("hhhhhhci\"")].concat(),
             mouse: Point::new(-9, -9),
             click_first: false,
@@ -1114,6 +1246,13 @@ pub fn run() -> std::io::Result<()> {
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_file(scratch.join("settings.conf"));
         let mut app = Notes::open(dir.clone());
+        for (path, text) in scene.seed {
+            let at = dir.join(path);
+            if let Some(parent) = at.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(at, text);
+        }
         let mut canvas = Canvas::new(scene.canvas.0, scene.canvas.1);
         let mut ui_state = UiState::new();
         let mut theme: Theme = theme();

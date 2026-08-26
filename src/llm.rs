@@ -14,16 +14,31 @@ pub mod local;
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 
+/// One side of a conversation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Turn {
+    /// Whose turn it was. The person asking, or the model answering.
+    pub mine: bool,
+    pub text: String,
+}
+
 /// A request: the text to change, what to do to it, and what it is part of.
 ///
 /// The last two are context rather than instruction. They are what makes the
 /// difference between rewriting a sentence and rewriting a sentence *in a
 /// note* - the model can see the heading above it, the paragraph after it, and
 /// that a note about the same thing exists two files away.
+///
+/// A conversation is the same request with `turns` filled in instead of a
+/// passage: one path through the backend, because the part that assembles the
+/// context is the part worth having once.
 #[derive(Clone, Debug, Default)]
 pub struct Ask {
     pub source: String,
     pub request: String,
+    /// The conversation so far, ending with what was just asked. Empty for an
+    /// edit, which is a question about a passage rather than a conversation.
+    pub turns: Vec<Turn>,
     /// The note the passage was taken from, with the passage marked in place.
     /// None when the passage is the whole note and there is nothing around it.
     pub within: Option<String>,
@@ -32,6 +47,26 @@ pub struct Ask {
     /// One line per note in the vault, the same for every request.
     pub vault: String,
 }
+
+impl Ask {
+    /// Whether this is a conversation rather than an edit.
+    pub fn talking(&self) -> bool {
+        !self.turns.is_empty()
+    }
+}
+
+/// What the model is told it is doing when it is being talked to rather than
+/// asked to rewrite something.
+///
+/// Not a setting, unlike the editing prompt. That one is worth exposing because
+/// how you want your prose handled is personal; this one only has to describe
+/// the situation, and a situation is not a preference.
+pub const CHAT_PROMPT: &str = "You are talking with somebody about their own notes, \
+inside the markdown editor they keep them in. You can see a one-line summary of every \
+note in the vault and the whole of the one they are looking at. Answer about those when \
+the question is about those, and answer normally when it is not. Be direct and brief - \
+this is a conversation in a side panel, not an essay. Markdown where it helps, plain \
+sentences where it does not, and no preamble.";
 
 /// What came back, or why nothing did.
 pub type Reply = Result<String, String>;

@@ -89,6 +89,8 @@ fn heading_style(th: &Theme, level: u8) -> Heading {
 /// Everything the layout needs that does not change between blocks.
 struct Ctx {
     th: Theme,
+    /// Whether blocks number themselves down the left.
+    numbered: bool,
     /// Left edge of the column the source lines are numbered down. Blocks draw
     /// their own numbers into it, because only a block knows which of its rows
     /// are rows somebody typed: a list item is one, a wrapped line is not.
@@ -135,8 +137,20 @@ impl Ctx {
     }
 }
 
+/// Room reserved down the left for the numbers, when there are numbers.
+fn pad(numbered: bool) -> i32 {
+    if numbered {
+        crate::gutter()
+    } else {
+        0
+    }
+}
+
 /// Number one row in the gutter.
 fn number(ui: &mut Ui, ctx: &Ctx, y: i32, line: usize) {
+    if !ctx.numbered {
+        return;
+    }
     let num = format!("{:>3}", line + 1);
     font::draw_text(
         ui.canvas,
@@ -347,7 +361,8 @@ pub fn draw_document(ui: &mut Ui, blocks: &[Located], req: Request) -> Drawn {
     let ctx = Ctx {
         th: *ui.theme,
         gutter: std::cell::Cell::new(0),
-        width: std::cell::Cell::new(req.width - crate::gutter()),
+        numbered: req.numbered,
+        width: std::cell::Cell::new(req.width - pad(req.numbered)),
         quoted: std::cell::Cell::new(false),
         search: req.search,
         reveal: req.reveal,
@@ -367,7 +382,8 @@ pub fn draw_document(ui: &mut Ui, blocks: &[Located], req: Request) -> Drawn {
         let row = ui.alloc(h);
         let top = *top.get_or_insert(row.y);
         ctx.gutter.set(row.x);
-        let body = Rect::new(row.x + crate::gutter(), row.y, row.w - crate::gutter(), h);
+        let indent = pad(ctx.numbered);
+        let body = Rect::new(row.x + indent, row.y, row.w - indent, h);
         // The block holding a line is the last one that starts at or above it.
         if ctx.reveal.is_some_and(|want| *line <= want) {
             ctx.reveal_y.set(Some(row.y - top));
@@ -384,6 +400,12 @@ pub fn draw_document(ui: &mut Ui, blocks: &[Located], req: Request) -> Drawn {
 pub struct Request {
     /// Width available to the document, gutter included.
     pub width: i32,
+    /// Whether to number the blocks down the left.
+    ///
+    /// A note is numbered because the number says which source line the block
+    /// was parsed from, which is the only number about a rendered document that
+    /// means anything. A transcript has no source to point at, so it gets none.
+    pub numbered: bool,
     /// A pattern to light up wherever it appears in the rendered text.
     pub search: Option<String>,
     /// A source line to report the position of, for scrolling to it.

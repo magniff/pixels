@@ -148,16 +148,36 @@ fn starts_with_gguf(path: &Path) -> bool {
 /// loud, because a template has no way to be told the thinking is already
 /// done, and several hundred tokens of deliberation about a comma is not what
 /// anybody asked for.
-fn render(model: &LlamaModel, system: &str, user: &str, thinks: bool) -> Result<String, String> {
+fn render(model: &LlamaModel, system: &str, ask: &Ask, thinks: bool) -> Result<String, String> {
     let template = model
         .chat_template(None)
         .map_err(|e| format!("this model has no chat template: {e}"))?;
-    let chat = [
+    let mut chat = vec![
         LlamaChatMessage::new("system".into(), system.trim().to_string())
             .map_err(|e| format!("system turn: {e}"))?,
-        LlamaChatMessage::new("user".into(), user.to_string())
-            .map_err(|e| format!("user turn: {e}"))?,
     ];
+    let said = |role: &str, text: String, chat: &mut Vec<LlamaChatMessage>| {
+        LlamaChatMessage::new(role.to_string(), text)
+            .map(|m| chat.push(m))
+            .map_err(|e| format!("{role} turn: {e}"))
+    };
+    if ask.talking() {
+        // The context is fixed to the front of the first thing asked rather
+        // than stored with the conversation: a chat resumed a week later is
+        // then told about the vault as it is now, not as it was when it began.
+        let context = surroundings(ask);
+        for (i, turn) in ask.turns.iter().enumerate() {
+            let role = if turn.mine { "user" } else { "assistant" };
+            let text = if i == 0 {
+                format!("{context}{}", turn.text)
+            } else {
+                turn.text.clone()
+            };
+            said(role, text, &mut chat)?;
+        }
+    } else {
+        said("user", instruction(ask), &mut chat)?;
+    }
     let mut out = model
         .apply_chat_template(&template, &chat, true)
         .map_err(|e| format!("applying the chat template: {e}"))?;
@@ -183,34 +203,13 @@ fn render(model: &LlamaModel, system: &str, user: &str, thinks: bool) -> Result<
 /// short tail, which is the shape a key/value cache can eventually be kept
 /// across.
 fn instruction(ask: &Ask) -> String {
-    let mut out = String::new();
-    if !ask.vault.is_empty() {
-        out.push_str("These are the notes in this vault, one line each:\n\n");
-        out.push_str(&ask.vault);
-        out.push_str("\n\n");
-    }
-    if let Some(within) = &ask.within {
-        if ask.file.is_empty() {
-            out.push_str("Here is the note being edited");
-        } else {
-            out.push_str(&format!("Here is `{}`, the note being edited", ask.file));
-        }
-        out.push_str(&format!(
-            ", with the passage in question marked between {} and {}:\n\n{}\n\n",
-            crate::digest::OPEN,
-            crate::digest::CLOSE,
-            within
-        ));
-    }
+    let mut out = surroundings(ask);
     out.push_str(&format!(
         "Text:\n{}\n\nInstruction: {}",
         ask.source,
         ask.request.trim()
     ));
     if ask.within.is_some() || !ask.vault.is_empty() {
-        // Without this the model rewrites what it was shown rather than what
-        // it was asked about - it has just been handed a whole note and told
-        // to improve something, and the note is the more interesting target.
         // Both halves, because either one alone is wrong. Without the first
         // the model has been handed a note and told only what it may not do
         // with it, and it answers as if the note were not there. Without the
@@ -221,6 +220,43 @@ fn instruction(ask: &Ask) -> String {
              the passage should read as part of what surrounds it. But rewrite only the \
              passage under Text - do not rewrite or repeat the rest of the note, and do \
              not include the markers.",
+        );
+    }
+    out
+}
+
+/// The vault and the note, which both kinds of question start with.
+///
+/// What never changes goes first - the vault - and what changes every time
+/// goes after it, so the prompt is a stable prefix with a short tail, which is
+/// the shape a key/value cache can eventually be kept across.
+fn surroundings(ask: &Ask) -> String {
+    let mut out = String::new();
+    if !ask.vault.is_empty() {
+        out.push_str("These are the notes in this vault, one line each:\n\n");
+        out.push_str(&ask.vault);
+        out.push_str("\n\n");
+    }
+    if let Some(within) = &ask.within {
+        let named = if ask.file.is_empty() {
+            "the note open in the editor".to_string()
+        } else {
+            format!("`{}`, the note open in the editor", ask.file)
+        };
+        if ask.talking() {
+            out.push_str(&format!("Here is {named}:\n\n{within}\n\n"));
+        } else {
+            out.push_str(&format!(
+                "Here is {named}, with the passage in question marked between {} and {}:\n\n{within}\n\n",
+                crate::digest::OPEN,
+                crate::digest::CLOSE,
+            ));
+        }
+    }
+    if ask.talking() && !out.is_empty() {
+        out.push_str(
+            "That is context for what follows. Draw on it when the question is about \
+             these notes, and set it aside when the question is not.\n\n---\n\n",
         );
     }
     out
@@ -273,14 +309,21 @@ impl Backend for Local {
         let started = std::time::Instant::now();
         self.load()?;
         let thinks = self.thinks;
-        let system = self.system.clone();
+        // A conversation is not an edit, and the editing prompt - which is all
+        // about handing a passage back and nothing else - makes a poor one for
+        // it. The setting stays what it says on the tin.
+        let system = if ask.talking() {
+            super::CHAT_PROMPT.to_string()
+        } else {
+            self.system.clone()
+        };
         let (backend, model) = self.loaded.as_ref().expect("loaded above");
         // How far this model was trained to read. Asked of the model rather
         // than set by hand: it is the model's own number, the same on every
         // machine, and nobody sitting in front of a note editor is in a
         // position to pick a better one.
         let ceiling = model.n_ctx_train();
-        let text = render(model, &system, &instruction(ask), thinks)?;
+        let text = render(model, &system, ask, thinks)?;
         let tokens = model
             .str_to_token(&text, AddBos::Never)
             .map_err(|e| format!("tokenising: {e}"))?;

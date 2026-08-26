@@ -16,6 +16,7 @@
 //! `std::fs` appears in `dialog.rs` and nowhere in `pixui`.
 
 pub mod assist;
+pub mod chat;
 pub mod dialog;
 pub mod diff;
 pub mod digest;
@@ -195,6 +196,10 @@ pub struct Notes {
     pub pick: Pick,
     /// The assistant's panel, while one is open.
     pub assist: Option<assist::Assist>,
+    /// The conversation that is open, if one is.
+    pub chat: Option<chat::Chat>,
+    /// Open while somebody is choosing which conversation to carry on.
+    pub picker: Option<chat::Picker>,
     /// The model on its thread, whichever one this build has.
     pub helper: llm::Assistant,
     /// What the assistant is and what it is told, kept between runs.
@@ -317,6 +322,8 @@ impl Notes {
             pick: Pick::at(current),
             assist: None,
             assist_wanted: false,
+            chat: None,
+            picker: None,
             assist_lift: 0,
             helper: llm::Assistant::spawn(assistant(&config)),
             settings: config,
@@ -628,8 +635,44 @@ impl Notes {
     /// Only a flag: where the block opens depends on where the selection lands
     /// on screen, and that is not known until the editor has drawn.
     fn want_assist(&mut self) {
-        if self.settings.assist && self.vim.visual_kind().is_some() {
+        if !self.settings.assist {
+            return;
+        }
+        // The same key means two things, told apart by whether anything is
+        // selected. A selection is a passage you want changed; no selection is
+        // a question you want answered, and there is nothing to change.
+        if self.vim.visual_kind().is_some() {
             self.assist_wanted = true;
+        } else {
+            self.open_chat();
+        }
+    }
+
+    /// Open a conversation about the note being read.
+    ///
+    /// Onto the list of them when there are any, and straight into a new one
+    /// when there are not: a list with one row saying "new" is a step that
+    /// exists only to be walked past.
+    fn open_chat(&mut self) {
+        let note = self.notes[self.current.min(self.notes.len() - 1)].filename();
+        if chat::filed(&self.notes_dir, &note).is_empty() {
+            self.chat = Some(chat::Chat::new(note));
+            self.status = "CHAT - ASK SOMETHING".into();
+        } else {
+            self.picker = Some(chat::Picker::new());
+            self.status = "CHATS ABOUT THIS NOTE".into();
+        }
+    }
+
+    /// The conversation, told what it is about.
+    fn chat_ask(&self, talk: &chat::Chat) -> llm::Ask {
+        let i = self.current.min(self.notes.len() - 1);
+        llm::Ask {
+            turns: talk.turns.clone(),
+            vault: digest::vault(&self.notes),
+            file: self.notes[i].filename(),
+            within: Some(self.notes[i].buffer.to_text()),
+            ..llm::Ask::default()
         }
     }
 
@@ -940,10 +983,18 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.status = open.headline();
             }
         }
+        if let Some(talk) = app.chat.as_mut().filter(|c| c.waiting) {
+            talk.progress = p;
+        }
     }
     if let Some(reply) = app.helper.poll() {
+        // Whoever is waiting gets it, and only one thing ever is: the worker
+        // takes one question at a time and refuses a second while it is busy.
         let mut said = None;
-        if let Some(open) = app.assist.as_mut() {
+        if let Some(talk) = app.chat.as_mut().filter(|c| c.waiting) {
+            talk.answered(reply, &app.notes_dir);
+            said = Some("CHAT".to_string());
+        } else if let Some(open) = app.assist.as_mut() {
             open.answered(reply);
             said = Some(open.headline());
         }
@@ -960,7 +1011,11 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     // around it, and its own layer settles who gets a click that lands on it.
     // Both, though, take the keyboard away from vim entirely, because a model
     // rewriting the note behind you while you type at it is not a feature.
-    let modal = app.dialog.is_some() || app.chrome.panel.is_some() || app.finder.is_some();
+    let modal = app.dialog.is_some()
+        || app.chrome.panel.is_some()
+        || app.finder.is_some()
+        || app.chat.is_some()
+        || app.picker.is_some();
     let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
     app.step_pick(ui.input.dt);
@@ -1079,6 +1134,45 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             finder::Found::None => app.finder = Some(finder),
             finder::Found::Close => app.status = "EDITOR".into(),
             finder::Found::Open(i) => app.go_to_note(i),
+        }
+    }
+
+    // ---- conversations ---------------------------------------------------
+    // The list first: choosing from it is what opens the other one, so the
+    // frame it is chosen on is the frame the conversation appears.
+    if let Some(mut picker) = app.picker.take() {
+        let note = app.notes[app.current.min(app.notes.len() - 1)].filename();
+        let chats = chat::filed(&app.notes_dir, &note);
+        match picker.show(ui, &note, &chats) {
+            chat::Picked::None => app.picker = Some(picker),
+            chat::Picked::Close => app.status = "EDITOR".into(),
+            chat::Picked::Fresh => {
+                app.chat = Some(chat::Chat::new(note));
+                app.status = "CHAT - ASK SOMETHING".into();
+            }
+            chat::Picked::Open(path) => {
+                app.chat = Some(chat::Chat::open(&path, note));
+                app.status = "CHAT".into();
+            }
+        }
+    }
+    if let Some(mut talk) = app.chat.take() {
+        match talk.show(ui) {
+            chat::Outcome::None => app.chat = Some(talk),
+            chat::Outcome::Ask => {
+                let ask = app.chat_ask(&talk);
+                if !app.helper.ask(ask) {
+                    talk.waiting = false;
+                    talk.failed = Some("still busy with the last one".into());
+                }
+                app.chat = Some(talk);
+            }
+            chat::Outcome::Close => {
+                // Written down on the way out as well as after every answer: a
+                // question typed and abandoned is still what you were thinking.
+                let _ = talk.save(&app.notes_dir);
+                app.status = "EDITOR".into();
+            }
         }
     }
 
@@ -1725,6 +1819,7 @@ fn draw_preview(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
     // The app holds the scroll position, so it survives the tab being hidden.
     let mut scroll = app.preview_scroll;
     let req = render::Request {
+        numbered: true,
         width,
         // The same pattern the source view lights up, so a search made in
         // either view is answered in both.
