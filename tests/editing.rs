@@ -5243,3 +5243,29 @@ fn the_switch_can_be_thrown_from_the_conversation() {
         "so /help says it is there"
     );
 }
+
+#[test]
+fn nobody_is_shown_the_calling_out() {
+    use notes::llm::without_machinery;
+    // What leaked: while the answer was being watched as it was written, the
+    // first thing to arrive was the block of tags the model writes to reach
+    // for a tool, and the panel drew it.
+    let mid = "Let me check.\n\n<tool_call>\n<function=weather>\n<parameter=place>\nBerlin";
+    assert_eq!(
+        without_machinery(mid).trim(),
+        "Let me check.",
+        "what it said is kept, what it is doing is not"
+    );
+    // A block half written is a block still being written, so it takes the
+    // rest with it rather than being shown in pieces.
+    assert!(!without_machinery(mid).contains('<'));
+
+    let done = "Here you go.\n\n<tool_call>\n<function=weather>\n<parameter=place>\nBerlin\n</parameter>\n</function>\n</tool_call>";
+    assert_eq!(without_machinery(done).trim(), "Here you go.");
+
+    let plain = "It is 23C in Berlin, overcast.";
+    assert_eq!(without_machinery(plain), plain, "an answer is left alone");
+
+    // The other spelling, in case the outer tag never arrives.
+    assert_eq!(without_machinery("ok <function=calc>").trim(), "ok");
+}

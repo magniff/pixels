@@ -253,6 +253,24 @@ impl Used {
     }
 }
 
+/// A reply with the calling-out taken out of it.
+///
+/// What the model writes when it reaches for a tool is a block of tags, and
+/// nobody asked to see that. It matters most while the answer is being watched
+/// as it is written: the first thing to arrive is the machinery, and a panel
+/// that shows it is a panel showing somebody the inside of the thing they asked
+/// a question of.
+///
+/// Anything said *before* the call is kept - "let me check" is worth reading -
+/// and an unterminated block takes the rest with it, since a block half written
+/// is a block still being written.
+pub fn without_machinery(said: &str) -> &str {
+    let Some(at) = said.find("<tool_call").or_else(|| said.find("<function=")) else {
+        return said;
+    };
+    &said[..at]
+}
+
 /// The tool call a reply is making, if it is making one.
 ///
 /// The model's own format, which is why the parsing is this short: the tag and
@@ -347,6 +365,7 @@ impl Watcher for Watching<'_> {
         // been through the tidying that takes the model's markers off, and
         // that trims, so the text never ends in the space that would have said
         // a word had finished.
+        let said = without_machinery(said);
         let words = said.split_whitespace().count();
         if words > self.sent {
             self.sent = words;
@@ -392,15 +411,17 @@ fn answer(
         // you were looking at when you pressed the button.
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
             let mut out: String = used.iter().map(Used::written).collect();
-            out.push_str(said.trim());
+            out.push_str(without_machinery(&said).trim());
             return Ok(out);
         }
 
         let Some((tool, arg)) = called(&said).filter(|_| !ask.tools.is_empty()) else {
             // Whatever it looked up goes in front of what it said, so the
-            // answer arrives with its working.
+            // answer arrives with its working. Anything that looked like a
+            // call and was not one comes out here rather than being read as
+            // prose: a half-written block is not something to show anybody.
             let mut out: String = used.iter().map(Used::written).collect();
-            out.push_str(&said);
+            out.push_str(without_machinery(&said).trim());
             return Ok(out);
         };
         if step >= STEPS {
