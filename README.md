@@ -50,9 +50,9 @@ it at a real vault.
 |---|---|---|
 | ![the finder](screenshots/finder.png) | ![source](screenshots/showcase-source.png) | ![preview](screenshots/showcase-preview.png) |
 
-| the chats about a note | one of them |
-|---|---|
-| ![the chats about a note](screenshots/chat-picker.png) | ![a conversation](screenshots/chat-talk.png) |
+| the chats about a note | one of them | a change it offered |
+|---|---|---|
+| ![the chats about a note](screenshots/chat-picker.png) | ![a conversation](screenshots/chat-talk.png) | ![a proposed change](screenshots/chat-diff.png) |
 
 **Notes** — a drawer of them, filtered as you type, `Ctrl-n`/`Ctrl-p` to walk.
 `Cmd-p` opens the whole library to a fuzzy search: `mdsh` finds
@@ -72,7 +72,11 @@ ask for a change.
   read; the weights are put down again after a few minutes' quiet
 - `Cmd-Enter` with nothing selected opens a conversation instead: the same
   context, no passage, and every chat is filed under the note it was had about
-  so it can be picked up again later
+  so it can be picked up again later. `/rename` names one; the list throws one
+  away, after asking
+- Asked to change the note, it proposes rather than writes: the reply carries an
+  edit against numbered lines, and you get the diff with **ACCEPT** and
+  **REJECT** before anything moves
 - The question opens *in* the text, between the lines
 - The answer arrives as a word-level diff, and the note is not touched until
   you keep it — `Cmd-Enter` again, or **APPLY**

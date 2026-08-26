@@ -407,7 +407,7 @@ fn cols(width: i32) -> usize {
 }
 
 /// Break the diff into rows of words that fit the width.
-fn rows(pieces: &[Piece], cols: usize) -> Vec<Vec<(Change, String)>> {
+pub(crate) fn rows(pieces: &[Piece], cols: usize) -> Vec<Vec<(Change, String)>> {
     let mut rows: Vec<Vec<(Change, String)>> = vec![Vec::new()];
     let mut used = 0usize;
     for piece in pieces {
@@ -439,7 +439,7 @@ fn rows(pieces: &[Piece], cols: usize) -> Vec<Vec<(Change, String)>> {
 
 /// One row of the diff: kept words in the ordinary ink, removed ones struck
 /// through in red, added ones in green.
-fn draw_row(ui: &mut Ui, rect: Rect, row: &[(Change, String)]) {
+pub(crate) fn draw_row(ui: &mut Ui, rect: Rect, row: &[(Change, String)]) {
     let th = *ui.theme;
     let mut x = rect.x;
     for (change, text) in row {

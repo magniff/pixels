@@ -664,6 +664,36 @@ impl Notes {
         }
     }
 
+    /// Put a change the conversation proposed into the note.
+    ///
+    /// Through the buffer's own editing rather than by rewriting the lines
+    /// underneath it, so `u` takes it back like anything else and the caret
+    /// ends up somewhere sensible.
+    fn apply_edit(&mut self, edit: &chat::Edit) {
+        let i = self.current.min(self.notes.len() - 1);
+        let buf = &mut self.notes[i].buffer;
+        let Some(from) = edit.from.checked_sub(1).filter(|f| *f < buf.line_count()) else {
+            self.status = "THOSE LINES ARE NOT THERE".into();
+            return;
+        };
+        let to = edit.to.min(buf.line_count()).saturating_sub(1);
+        if to < from {
+            self.status = "THOSE LINES ARE NOT THERE".into();
+            return;
+        }
+        buf.checkpoint();
+        buf.delete_lines(from, to);
+        let fresh: Vec<String> = if edit.text.is_empty() {
+            Vec::new()
+        } else {
+            edit.text.split('\n').map(str::to_string).collect()
+        };
+        buf.insert_lines(from, &fresh);
+        buf.cursor = text::Cursor::new(from.min(buf.line_count().saturating_sub(1)), 0);
+        buf.clamp_cursor(false);
+        self.status = "APPLIED".into();
+    }
+
     /// The conversation, told what it is about.
     fn chat_ask(&self, talk: &chat::Chat) -> llm::Ask {
         let i = self.current.min(self.notes.len() - 1);
@@ -671,7 +701,7 @@ impl Notes {
             turns: talk.turns.clone(),
             vault: digest::vault(&self.notes),
             file: self.notes[i].filename(),
-            within: Some(self.notes[i].buffer.to_text()),
+            within: Some(digest::numbered(&self.notes[i].buffer.to_text())),
             ..llm::Ask::default()
         }
     }
@@ -1150,6 +1180,17 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.chat = Some(chat::Chat::new(note));
                 app.status = "CHAT - ASK SOMETHING".into();
             }
+            chat::Picked::Delete(path) => {
+                // Off the disk, and out of memory if it is the one that is
+                // open: a conversation you deleted while reading it should not
+                // still be there, and should not save itself on the way out.
+                let _ = std::fs::remove_file(&path);
+                if app.chat.as_ref().and_then(|c| c.path.clone()) == Some(path) {
+                    app.chat = None;
+                }
+                app.status = "CHAT DELETED".into();
+                app.picker = Some(picker);
+            }
             chat::Picked::Open(path) => {
                 app.chat = Some(chat::Chat::open(&path, note));
                 app.status = "CHAT".into();
@@ -1157,7 +1198,9 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         }
     }
     if let Some(mut talk) = app.chat.take() {
-        match talk.show(ui) {
+        let i = app.current.min(app.notes.len() - 1);
+        let note = app.notes[i].buffer.lines().to_vec();
+        match talk.show(ui, &note) {
             chat::Outcome::None => app.chat = Some(talk),
             chat::Outcome::Ask => {
                 let ask = app.chat_ask(&talk);
@@ -1165,6 +1208,15 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                     talk.waiting = false;
                     talk.failed = Some("still busy with the last one".into());
                 }
+                app.chat = Some(talk);
+            }
+            chat::Outcome::Save => {
+                let _ = talk.save(&app.notes_dir);
+                app.chat = Some(talk);
+            }
+            chat::Outcome::Apply(edit) => {
+                app.apply_edit(&edit);
+                talk.settled(&edit, true);
                 app.chat = Some(talk);
             }
             chat::Outcome::Close => {

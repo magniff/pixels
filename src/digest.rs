@@ -212,3 +212,18 @@ fn keep_first(text: &str, room: usize) -> String {
     let cut = text[..room].rfind('\n').unwrap_or(room);
     format!("{}\n[...later lines not shown...]", &text[..cut])
 }
+
+/// The note with its lines numbered, for a conversation that may be asked to
+/// change one of them.
+///
+/// Numbers rather than quoting the text back: a model asked to reproduce the
+/// exact line it means will get a space or a dash wrong eventually, and then
+/// the edit lands nowhere. A number is a number. It also gives the two sides
+/// something to point at - "line 14" is a thing both can say.
+pub fn numbered(text: &str) -> String {
+    let mut out = String::new();
+    for (i, line) in text.split('\n').enumerate() {
+        out.push_str(&format!("{:>4} | {line}\n", i + 1));
+    }
+    out
+}

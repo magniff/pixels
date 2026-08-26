@@ -3293,3 +3293,135 @@ fn an_empty_conversation_is_not_filed_at_all() {
     assert!(!dir.join("chats").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_chat_can_be_given_a_name_that_sticks() {
+    let dir = std::env::temp_dir().join(format!("pixui-rename-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut talk = chat::Chat::new("welcome.md".into());
+    talk.turns = vec![Turn {
+        mine: true,
+        text: "how does wrapping work".into(),
+    }];
+    assert_eq!(
+        talk.title(),
+        "how does wrapping work",
+        "named by what was asked"
+    );
+
+    assert!(
+        talk.command("/rename wrapping notes"),
+        "a slash line is a command"
+    );
+    assert_eq!(talk.title(), "wrapping notes");
+    talk.save(&dir).unwrap();
+
+    let back = chat::Chat::open(talk.path.as_ref().unwrap(), "welcome.md".into());
+    assert_eq!(
+        back.title(),
+        "wrapping notes",
+        "and it is still called that tomorrow"
+    );
+    assert_eq!(
+        chat::filed(&dir, "welcome.md")[0].title,
+        "wrapping notes",
+        "in the list too"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_line_that_is_not_a_command_is_a_question() {
+    let mut talk = chat::Chat::new("n.md".into());
+    assert!(
+        !talk.command("what does this note say"),
+        "prose is not a command"
+    );
+    assert!(
+        talk.command("/nonsense"),
+        "an unknown one is still a command, not a question"
+    );
+    assert!(
+        talk.notice
+            .as_deref()
+            .is_some_and(|n| n.contains("nonsense")),
+        "and it says so rather than sending it to the model"
+    );
+}
+
+#[test]
+fn a_reply_is_split_into_what_it_said_and_what_it_offered() {
+    let reply = "Splitting that line reads better.\n\n<edit lines=\"6-7\">\nfirst new line\nsecond new line\n</edit>\n\nSay the word.";
+    let (prose, edits) = chat::proposals(reply);
+    assert!(
+        !prose.contains("<edit"),
+        "the machinery does not belong in the reply: {prose}"
+    );
+    assert!(prose.starts_with("Splitting that line"));
+    assert!(prose.ends_with("Say the word."));
+    assert_eq!(
+        edits,
+        vec![chat::Edit {
+            from: 6,
+            to: 7,
+            text: "first new line\nsecond new line".into()
+        }]
+    );
+}
+
+#[test]
+fn a_single_line_and_a_deletion_are_both_edits() {
+    let (_, one) = chat::proposals("<edit lines=\"4\">just this</edit>");
+    assert_eq!(
+        one,
+        vec![chat::Edit {
+            from: 4,
+            to: 4,
+            text: "just this".into()
+        }]
+    );
+    let (_, gone) = chat::proposals("<edit lines=\"4-5\">\n</edit>");
+    assert_eq!(gone[0].text, "", "an empty block takes the lines away");
+}
+
+#[test]
+fn an_edit_block_inside_a_fence_is_being_talked_about() {
+    let reply = "You would write:\n\n```\n<edit lines=\"1-2\">\nnew text\n</edit>\n```\n\nThat is the shape of it.";
+    let (prose, edits) = chat::proposals(reply);
+    assert!(
+        edits.is_empty(),
+        "explaining the format is not proposing a change: {edits:?}"
+    );
+    assert!(
+        prose.contains("<edit lines=\"1-2\">"),
+        "and the sample survives"
+    );
+}
+
+#[test]
+fn a_change_to_lines_that_are_not_there_replaces_nothing() {
+    let note: Vec<String> = "one\ntwo\nthree".lines().map(str::to_string).collect();
+    let good = chat::Edit {
+        from: 2,
+        to: 3,
+        text: "x".into(),
+    };
+    assert_eq!(good.replacing(&note).as_deref(), Some("two\nthree"));
+    let past = chat::Edit {
+        from: 9,
+        to: 9,
+        text: "x".into(),
+    };
+    assert!(
+        past.replacing(&note).is_none(),
+        "so the panel can say so instead of guessing"
+    );
+    let backwards = chat::Edit {
+        from: 3,
+        to: 1,
+        text: "x".into(),
+    };
+    assert!(backwards.replacing(&note).is_none());
+}

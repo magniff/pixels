@@ -40,6 +40,9 @@ pub struct Chat {
     pub path: Option<PathBuf>,
     /// The note it belongs to, by filename.
     pub note: String,
+    /// What it has been called, if it has been given a name. Otherwise it is
+    /// known by the first thing that was asked in it.
+    pub name: Option<String>,
     pub turns: Vec<Turn>,
     /// What is being typed.
     pub draft: String,
@@ -49,11 +52,17 @@ pub struct Chat {
     pub progress: crate::llm::Progress,
     /// Why the last question failed, if it did.
     pub failed: Option<String>,
+    /// Something worth saying that is not a failure - what a command did.
+    pub notice: Option<String>,
     /// True on the frame it opens, so the field takes the keyboard.
     grab: bool,
     scroll: ScrollState,
     /// True when the view should be pinned to the newest turn.
     follow: bool,
+    /// Which proposals have been settled, and how, by turn and position in it.
+    /// A change is offered until it is answered, and then it says what happened
+    /// instead of asking again.
+    applied: std::collections::HashMap<(usize, usize), bool>,
 }
 
 /// A conversation on disk, as the picker lists it.
@@ -70,8 +79,107 @@ pub enum Outcome {
     None,
     /// Send the conversation as it stands.
     Ask,
+    /// Something changed that should be written down.
+    Save,
+    /// Put this change into the note.
+    Apply(Edit),
     /// Take it away.
     Close,
+}
+
+/// A change to the note, as the model proposed it.
+///
+/// Line numbers rather than text to find: the note is shown numbered, and a
+/// number cannot be misquoted. Both are one-based and inclusive, the way they
+/// are written in the margin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub from: usize,
+    pub to: usize,
+    /// What those lines should become. Empty means delete them.
+    pub text: String,
+}
+
+impl Edit {
+    /// The lines it would replace, as they are now.
+    pub fn replacing(&self, lines: &[String]) -> Option<String> {
+        let from = self.from.checked_sub(1)?;
+        if from >= lines.len() || self.to < self.from {
+            return None;
+        }
+        let to = self.to.min(lines.len());
+        Some(lines[from..to].join("\n"))
+    }
+}
+
+/// Split a reply into what it said and what it proposed.
+///
+/// The blocks are lifted out of the prose rather than left in it: a reply is
+/// read as a sentence and a change, and showing the raw block would be showing
+/// somebody the machinery instead of the change.
+pub fn proposals(reply: &str) -> (String, Vec<Edit>) {
+    let mut prose = String::new();
+    let mut edits = Vec::new();
+    let mut rest = reply;
+    let mut in_code = false;
+    while let Some(at) = rest.find("<edit") {
+        // A block inside a fence is a block being talked about, not one being
+        // made. Counting fences up to the marker is enough to tell which.
+        in_code ^= fences(&rest[..at]);
+        let head = &rest[..at];
+        if in_code {
+            prose.push_str(&rest[..at + 5]);
+            rest = &rest[at + 5..];
+            continue;
+        }
+        let Some(open) = rest[at..].find('>').map(|i| at + i + 1) else {
+            break;
+        };
+        let Some(close) = rest[open..].find("</edit>").map(|i| open + i) else {
+            break;
+        };
+        if let Some(range) = lines_attr(&rest[at..open]) {
+            edits.push(Edit {
+                from: range.0,
+                to: range.1,
+                text: rest[open..close].trim_matches('\n').to_string(),
+            });
+            prose.push_str(head);
+        } else {
+            // Not a range this understands. Left in the prose rather than
+            // swallowed, so a malformed block is visible instead of missing.
+            prose.push_str(&rest[..close + 7]);
+        }
+        rest = &rest[close + 7..];
+    }
+    prose.push_str(rest);
+    (prose.trim().to_string(), edits)
+}
+
+/// Whether an odd number of code fences opened in this text.
+fn fences(text: &str) -> bool {
+    text.lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            t.starts_with("```") || t.starts_with("~~~")
+        })
+        .count()
+        % 2
+        == 1
+}
+
+/// `lines="12-14"`, or `lines="12"` for a single one.
+fn lines_attr(tag: &str) -> Option<(usize, usize)> {
+    let at = tag.find("lines")?;
+    let value = tag[at..].split('"').nth(1)?;
+    let value = value.trim();
+    match value.split_once('-') {
+        Some((a, b)) => Some((a.trim().parse().ok()?, b.trim().parse().ok()?)),
+        None => {
+            let one = value.parse().ok()?;
+            Some((one, one))
+        }
+    }
 }
 
 impl Chat {
@@ -80,34 +188,72 @@ impl Chat {
         Self {
             path: None,
             note,
+            name: None,
             turns: Vec::new(),
             draft: String::new(),
             waiting: false,
             progress: crate::llm::Progress::default(),
             failed: None,
+            notice: None,
             grab: true,
             scroll: ScrollState::default(),
             follow: true,
+            applied: std::collections::HashMap::new(),
         }
     }
 
     /// A conversation read back off disk.
     pub fn open(path: &Path, note: String) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
+        // The heading is taken as the name rather than re-derived: a chat that
+        // was renamed keeps the name it was given, and one that never was gets
+        // back the same first-question title it was filed under.
+        let name = text
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("# "))
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
         Self {
             path: Some(path.to_path_buf()),
             turns: parse(&text),
+            name,
             ..Self::new(note)
         }
     }
 
     /// What it is called: the first thing that was asked, shortened.
     pub fn title(&self) -> String {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
         self.turns
             .iter()
             .find(|t| t.mine)
             .map(|t| one_line(&t.text, 46))
             .unwrap_or_else(|| "NEW CHAT".to_string())
+    }
+
+    /// Run a `/` command, and say whether it was one.
+    ///
+    /// Commands are typed into the same field as questions, told apart by the
+    /// leading slash - the same bargain the editor's own `:` line makes, and
+    /// one less thing on screen than a second box for them would be.
+    pub fn command(&mut self, line: &str) -> bool {
+        let Some(rest) = line.trim().strip_prefix('/') else {
+            return false;
+        };
+        let (word, arg) = rest.split_once(' ').unwrap_or((rest, ""));
+        let arg = arg.trim();
+        match word {
+            "rename" | "name" if !arg.is_empty() => {
+                self.name = Some(one_line(arg, 60));
+                self.notice = Some(format!("renamed to \"{}\"", self.title()));
+            }
+            "rename" | "name" => self.notice = Some("rename to what?".into()),
+            other => self.notice = Some(format!("no command called /{other}")),
+        }
+        self.draft.clear();
+        true
     }
 
     /// Take what is typed and make it a turn, ready to send.
@@ -141,6 +287,20 @@ impl Chat {
             // asked, and asking it again is a matter of pressing Enter rather
             // than typing it out a second time.
             Err(why) => self.failed = Some(why),
+        }
+    }
+
+    /// Remember what happened to a proposal, so it is not offered again.
+    pub fn settled(&mut self, edit: &Edit, taken: bool) {
+        for (i, turn) in self.turns.iter().enumerate() {
+            if turn.mine {
+                continue;
+            }
+            for (j, other) in proposals(&turn.text).1.iter().enumerate() {
+                if other == edit {
+                    self.applied.insert((i, j), taken);
+                }
+            }
         }
     }
 
@@ -338,6 +498,9 @@ pub fn ago(when: SystemTime) -> String {
 pub struct Picker {
     pub selected: usize,
     fresh: bool,
+    /// Which row has been asked about, while it is being asked about. Throwing
+    /// a conversation away is not undoable and not worth a single click.
+    confirming: Option<usize>,
 }
 
 /// What the picker decided.
@@ -347,6 +510,8 @@ pub enum Picked {
     Fresh,
     /// Carry on with this one.
     Open(PathBuf),
+    /// Throw this one away, for good.
+    Delete(PathBuf),
     Close,
 }
 
@@ -355,6 +520,7 @@ impl Picker {
         Self {
             selected: 0,
             fresh: true,
+            confirming: None,
         }
     }
 
@@ -371,7 +537,7 @@ impl Picker {
             .fill_rect_blend(screen, pixui::palette::VOID, 0.55);
 
         let rows = (chats.len() + 1).min(ROWS);
-        let rect = screen.centered(440, rows as i32 * line_h + 4 * line_h + 20);
+        let rect = screen.centered(440, rows as i32 * line_h + 4 * line_h + 26);
         let inner = ui.panel(rect, &format!("CHATS ABOUT {}", note.to_uppercase()));
         ui.capture_keyboard();
 
@@ -382,6 +548,20 @@ impl Picker {
         } else {
             let ctrl = ui.input.mods.ctrl;
             for key in ui.input.keys.clone() {
+                // While a row is asking, the keys belong to the question: Enter
+                // answers it and Escape takes it back, and neither reaches the
+                // list underneath.
+                if let Some(row) = self.confirming {
+                    match key {
+                        Key::Enter | Key::Char('y') => {
+                            picked = self.remove(chats, row);
+                            self.confirming = None;
+                        }
+                        Key::Escape | Key::Char('n') => self.confirming = None,
+                        _ => {}
+                    }
+                    continue;
+                }
                 match key {
                     Key::Escape => picked = Picked::Close,
                     Key::Enter => picked = self.choose(chats),
@@ -389,6 +569,10 @@ impl Picker {
                     Key::Up | Key::Char('k') => self.step(-1, count),
                     Key::Char('n') if ctrl => self.step(1, count),
                     Key::Char('p') if ctrl => self.step(-1, count),
+                    // The same key the file dialog throws things away with.
+                    Key::Char('d') | Key::Delete | Key::Backspace if self.selected > 0 => {
+                        self.confirming = Some(self.selected);
+                    }
                     _ => {}
                 }
             }
@@ -397,9 +581,16 @@ impl Picker {
             return picked;
         }
 
-        let (list, foot) = inner.split_bottom(line_h + 2);
+        // Room enough at the foot for a control, because the question about
+        // throwing a conversation away is asked down there rather than in the
+        // row: a row is nine pixels tall and the question needs a sentence and
+        // two answers.
+        let (list, foot) = inner.split_bottom(line_h + 8);
         ui.canvas.box_chamfer(list, th.well, th.well_border, 1);
         let mut clicked = None;
+        let mut asking = None;
+        let mut answered = None;
+        let mut kept = false;
         ui.clipped(list.inset(1), |ui| {
             for i in 0..count.min(ROWS) {
                 let y = list.y + i as i32 * line_h;
@@ -431,33 +622,108 @@ impl Picker {
                     continue;
                 }
                 let chat = &chats[i - 1];
-                ui.draw_text_in(at, &chat.title, ink, Align::Left);
+                // The one being asked about is marked where it sits, and the
+                // question itself is asked at the foot. What is about to be
+                // thrown away should stay visible while you decide.
+                if self.confirming == Some(i) {
+                    ui.canvas.fill_rect(row, th.danger.lo);
+                    ui.draw_text_in(at, &chat.title, th.danger.hi, Align::Left);
+                    continue;
+                }
+                // Room kept for the bin whether or not it is drawn, so the
+                // columns do not shuffle sideways as the pointer moves.
+                let text = Rect::new(at.x, at.y, at.w - 12, at.h);
+                ui.draw_text_in(text, &chat.title, ink, Align::Left);
                 let said = match chat.turns {
                     1 => "1 TURN".to_string(),
                     n => format!("{n} TURNS"),
                 };
                 ui.draw_text_in(
-                    at,
+                    text,
                     &format!("{}  {}", said, ago(chat.when)),
                     dim,
                     Align::Right,
                 );
+                let bin = Rect::new(row.right() - 11, y + 1, 9, 7);
+                let over = resp.hovered || picked_row;
+                let id = ui.id(&format!("bin{i}"));
+                let hit = ui.interact(id, Rect::new(bin.x - 2, y, 13, line_h));
+                if over || hit.hovered {
+                    let tint = if hit.hovered { th.danger.hi } else { dim };
+                    pixui::icon::draw(ui.canvas, bin.x, bin.y, pixui::icon::BIN, tint);
+                }
+                if hit.clicked {
+                    asking = Some(i);
+                }
             }
         });
 
-        let said = match chats.len() {
-            0 => "NOTHING YET".to_string(),
-            1 => "1 CHAT".to_string(),
-            n => format!("{n} CHATS"),
-        };
-        ui.draw_text_in(foot, &said, th.ink_soft, Align::Left);
-        ui.draw_text_in(foot, "ENTER OPENS, ESC LEAVES", th.ink_soft, Align::Right);
+        let target = self
+            .confirming
+            .and_then(|i| i.checked_sub(1))
+            .and_then(|i| chats.get(i));
+        match target {
+            Some(chat) => {
+                let line = Rect::new(foot.x, foot.y + 3, foot.w, line_h);
+                ui.draw_text_in(
+                    line,
+                    &format!("DELETE \"{}\" FOR GOOD?", chat.title.to_uppercase()),
+                    th.danger.face,
+                    Align::Left,
+                );
+                let no = Rect::new(foot.right() - 40, foot.y + 1, 40, 13);
+                let yes = Rect::new(no.x - 48, foot.y + 1, 46, 13);
+                if ui.button_at(yes, "DELETE", pixui::Tone::Danger).clicked {
+                    answered = Some(self.confirming.unwrap_or(0));
+                }
+                if ui.button_at(no, "KEEP", pixui::Tone::Neutral).clicked {
+                    kept = true;
+                }
+            }
+            None => {
+                let line = Rect::new(foot.x, foot.y + 3, foot.w, line_h);
+                let said = match chats.len() {
+                    0 => "NOTHING YET".to_string(),
+                    1 => "1 CHAT".to_string(),
+                    n => format!("{n} CHATS"),
+                };
+                ui.draw_text_in(line, &said, th.ink_soft, Align::Left);
+                ui.draw_text_in(
+                    line,
+                    "ENTER OPENS, D DELETES, ESC LEAVES",
+                    th.ink_soft,
+                    Align::Right,
+                );
+            }
+        }
 
+        if let Some(i) = asking {
+            self.selected = i;
+            self.confirming = Some(i);
+            return Picked::None;
+        }
+        if kept {
+            self.confirming = None;
+            return Picked::None;
+        }
+        if let Some(i) = answered {
+            self.confirming = None;
+            return self.remove(chats, i);
+        }
         match clicked {
-            Some(i) => {
+            // A click on the row that is asking is not a choice about the row.
+            Some(i) if self.confirming.is_none() => {
                 self.selected = i;
                 self.choose(chats)
             }
+            _ => Picked::None,
+        }
+    }
+
+    /// Throw away the conversation on row `i`.
+    fn remove(&self, chats: &[Filed], i: usize) -> Picked {
+        match i.checked_sub(1).and_then(|i| chats.get(i)) {
+            Some(chat) => Picked::Delete(chat.path.clone()),
             None => Picked::None,
         }
     }
@@ -497,7 +763,7 @@ impl Chat {
     ///
     /// Call this with the rest of the frame wrapped in [`Ui::input_blocked`],
     /// the way the dialogs are: a conversation has the keyboard while it is up.
-    pub fn show(&mut self, ui: &mut Ui) -> Outcome {
+    pub fn show(&mut self, ui: &mut Ui, note: &[String]) -> Outcome {
         let th = *ui.theme;
         let line_h = font::line_h();
         let screen = ui.canvas.bounds();
@@ -505,7 +771,10 @@ impl Chat {
             .fill_rect_blend(screen, pixui::palette::VOID, 0.55);
 
         let rect = screen.centered((screen.w - 60).min(620), screen.h - 40);
-        let inner = ui.panel(rect, &format!("CHAT - {}", self.note.to_uppercase()));
+        // Named after the conversation rather than the note, because the name
+        // is the thing `/rename` changes and a rename you cannot see happen is
+        // a rename you do twice.
+        let inner = ui.panel(rect, &self.title().to_uppercase());
         ui.capture_keyboard();
 
         let mut outcome = Outcome::None;
@@ -515,9 +784,17 @@ impl Chat {
         // Enter sends. A conversation is one question at a time, so the key
         // that ends a sentence is the key that asks it; a newline inside one
         // question is a thing to want later and not today.
-        if ui.input.key_pressed(Key::Enter) && !self.waiting && !self.draft.trim().is_empty() {
-            self.commit();
-            outcome = Outcome::Ask;
+        if ui.input.key_pressed(Key::Enter) && !self.draft.trim().is_empty() {
+            let typed = self.draft.clone();
+            if self.command(&typed) {
+                // A rename is worth writing down straight away: it is the kind
+                // of thing you do and then close the panel.
+                outcome = Outcome::Save;
+            } else if !self.waiting {
+                self.notice = None;
+                self.commit();
+                outcome = Outcome::Ask;
+            }
         }
 
         let (body, foot) = inner.split_bottom(FOOT);
@@ -525,6 +802,7 @@ impl Chat {
         // ---- the transcript ------------------------------------------------
         let width = body.w - Ui::SCROLL_GUTTER - 8;
         let mut state = self.scroll;
+        let mut answered = None;
         ui.scroll_area_with(body, "chat-scroll", &mut state, |ui| {
             if self.turns.is_empty() {
                 ui.space(4);
@@ -532,7 +810,7 @@ impl Chat {
                 ui.label_dim("  IT CAN SEE THIS NOTE AND A LINE ABOUT EVERY OTHER ONE.");
                 return;
             }
-            for turn in &self.turns {
+            for (i, turn) in self.turns.iter().enumerate() {
                 ui.space(3);
                 let head = ui.alloc(line_h);
                 let (who, tint) = if turn.mine {
@@ -550,7 +828,15 @@ impl Chat {
                     head.right() - from,
                     th.well_border,
                 );
-                let lines: Vec<String> = turn.text.lines().map(str::to_string).collect();
+                // What it said, and separately what it offered to do. The
+                // blocks are lifted out so the reply reads as a sentence
+                // rather than as a sentence with machinery in the middle.
+                let (prose, edits) = if turn.mine {
+                    (turn.text.clone(), Vec::new())
+                } else {
+                    proposals(&turn.text)
+                };
+                let lines: Vec<String> = prose.lines().map(str::to_string).collect();
                 let blocks = markdown::parse_located(&lines);
                 render::draw_document(
                     ui,
@@ -562,6 +848,11 @@ impl Chat {
                         reveal: None,
                     },
                 );
+                for (j, edit) in edits.iter().enumerate() {
+                    if let Some(taken) = self.offer(ui, width, note, edit, (i, j)) {
+                        answered = Some((edit.clone(), taken));
+                    }
+                }
             }
             if self.waiting {
                 ui.space(3);
@@ -580,6 +871,11 @@ impl Chat {
                 ui.space(3);
                 let row = ui.alloc(line_h);
                 ui.draw_text_in(row, &why.to_uppercase(), th.danger.face, Align::Left);
+            }
+            if let Some(said) = &self.notice {
+                ui.space(3);
+                let row = ui.alloc(line_h);
+                ui.draw_text_in(row, &said.to_uppercase(), th.info.hi, Align::Left);
             }
             // A little air under the last turn, so the newest thing said is not
             // flush against the field you say the next one into.
@@ -610,13 +906,95 @@ impl Chat {
         self.grab = false;
 
         let legend = Rect::new(foot.x, field.bottom() + 2, foot.w, line_h);
-        ui.draw_text_in(legend, "ENTER ASKS", th.ink_soft, Align::Left);
+        ui.draw_text_in(
+            legend,
+            &format!(
+                "ABOUT {} - /RENAME NAMES THIS CHAT",
+                self.note.to_uppercase()
+            ),
+            th.ink_soft,
+            Align::Left,
+        );
         ui.draw_text_in(
             legend,
             "ESC LEAVES - IT IS SAVED",
             th.ink_soft,
             Align::Right,
         );
-        outcome
+        match answered {
+            Some((edit, true)) => Outcome::Apply(edit),
+            Some((edit, false)) => {
+                self.settled(&edit, false);
+                Outcome::Save
+            }
+            None => outcome,
+        }
+    }
+
+    /// One proposed change, with what it would do to the note as it is now.
+    ///
+    /// The diff is against the *current* note rather than against the note the
+    /// model was shown, which is the whole safety of this: if the lines have
+    /// moved since it answered, what is drawn is the nonsense that would
+    /// actually happen, and nobody presses accept on nonsense.
+    fn offer(
+        &self,
+        ui: &mut Ui,
+        width: i32,
+        note: &[String],
+        edit: &Edit,
+        at: (usize, usize),
+    ) -> Option<bool> {
+        let th = *ui.theme;
+        let line_h = font::line_h();
+        ui.space(3);
+        let head = ui.alloc(line_h);
+        let settled = self.applied.get(&at).copied();
+        let Some(before) = edit.replacing(note) else {
+            ui.draw_text_in(
+                head,
+                &format!(
+                    "A CHANGE TO LINES {}-{}, WHICH ARE NOT THERE",
+                    edit.from, edit.to
+                ),
+                th.danger.face,
+                Align::Left,
+            );
+            return None;
+        };
+        let span = if edit.from == edit.to {
+            format!("LINE {}", edit.from)
+        } else {
+            format!("LINES {}-{}", edit.from, edit.to)
+        };
+        font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, th.info.hi, true);
+        // Both answers, side by side and equally reachable. A change offered
+        // with only a way to take it is a change you have to take.
+        let mut answer = None;
+        match settled {
+            Some(true) => ui.draw_text_in(head, "APPLIED", th.positive.face, Align::Right),
+            Some(false) => ui.draw_text_in(head, "REJECTED", th.ink_soft, Align::Right),
+            None => {
+                let no = Rect::new(head.right() - 42, head.y - 2, 42, 13);
+                let yes = Rect::new(no.x - 46, head.y - 2, 44, 13);
+                if ui.button_at(yes, "ACCEPT", pixui::Tone::Positive).clicked {
+                    answer = Some(true);
+                }
+                if ui.button_at(no, "REJECT", pixui::Tone::Neutral).clicked {
+                    answer = Some(false);
+                }
+            }
+        }
+
+        // The diff, drawn the way the assistant's own block draws one: this is
+        // the same question - what would this do to what is there - and two
+        // answers to it that looked different would be two things to learn.
+        let cols = ((width - 12) / font::advance()).max(8) as usize;
+        let pieces = crate::diff::words(&before, &edit.text);
+        for row in crate::assist::rows(&pieces, cols) {
+            let at = ui.alloc(line_h);
+            crate::assist::draw_row(ui, Rect::new(at.x + 8, at.y, at.w - 8, at.h), &row);
+        }
+        answer
     }
 }

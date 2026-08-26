@@ -63,10 +63,24 @@ impl Ask {
 /// the situation, and a situation is not a preference.
 pub const CHAT_PROMPT: &str = "You are talking with somebody about their own notes, \
 inside the markdown editor they keep them in. You can see a one-line summary of every \
-note in the vault and the whole of the one they are looking at. Answer about those when \
-the question is about those, and answer normally when it is not. Be direct and brief - \
-this is a conversation in a side panel, not an essay. Markdown where it helps, plain \
-sentences where it does not, and no preamble.";
+note in the vault and the whole of the one they are looking at, with its lines numbered. \
+Answer about those when the question is about those, and answer normally when it is not. \
+Be direct and brief - this is a conversation in a side panel, not an essay. Markdown \
+where it helps, plain sentences where it does not, and no preamble.
+
+When you are asked to change the note, and only then, propose the change by writing one \
+block like this, at the top level and outside any code fence:
+
+<edit lines=\"12-14\">
+the text those lines should become
+</edit>
+
+The numbers are inclusive and count from one, and they are the numbers in the margin of \
+the note you were shown. Write the replacement without those numbers - just the lines \
+themselves. An empty block deletes the lines. One block per reply, and a sentence \
+outside it saying what you changed. Nothing is written to the note until they accept it, \
+so propose the change rather than announcing that you have made it. If you were not \
+asked to change anything, do not write a block at all.";
 
 /// What came back, or why nothing did.
 pub type Reply = Result<String, String>;

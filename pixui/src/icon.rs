@@ -29,6 +29,18 @@ pub const CROSS: &[&str] = &[
     "#...#",
 ];
 
+/// A waste bin, for throwing something away for good.
+#[rustfmt::skip]
+pub const BIN: &[&str] = &[
+    "..###..",
+    "#######",
+    ".#####.",
+    ".#.#.#.",
+    ".#.#.#.",
+    ".#.#.#.",
+    "..###..",
+];
+
 /// A tick.
 #[rustfmt::skip]
 pub const CHECK: &[&str] = &[

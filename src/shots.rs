@@ -321,6 +321,64 @@ pub fn run() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
+            // A change the model offered, with the diff it would make.
+            name: "chat-diff",
+            seed: &[(
+                "chats/welcome/tighten-the-opening.md",
+                "# tighten the opening\n\n## you\n\nline 6 is doing too much, split it\n\n## assistant\n\nIt runs three claims together. Split at the colon and let the second half stand on its own.\n\n<edit lines=\"6-6\">\nEverything you can see is a pixel buffer.\nThe sidebar, the caret and the save dialog are all drawn the same way.\n</edit>\n",
+            )],
+            script: [
+                keys(":e welcome.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("\n"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 14,
+            canvas: (768, 470),
+        },
+        Scene {
+            // Throwing one away asks first.
+            name: "chat-delete",
+            seed: &[
+                (
+                    "chats/welcome/what-the-toolkit-is.md",
+                    "# what the toolkit is\n\n## you\n\nwhat is the toolkit called\n\n## assistant\n\nIt is called pixui.\n",
+                ),
+                (
+                    "chats/welcome/whether-to-wrap-long-lines.md",
+                    "# whether to wrap long lines\n\n## you\n\nshould long lines wrap or scroll\n\n## assistant\n\nWrap. A note is prose.\n",
+                ),
+            ],
+            script: [
+                keys(":e welcome.md"),
+                keys("\n"),
+                cmd_key(Key::Enter),
+                keys("j"),
+                keys("d"),
+            ]
+            .concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
             // A conversation about the note, opened on nothing selected.
             name: "chat",
             seed: &[],
