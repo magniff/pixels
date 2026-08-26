@@ -258,14 +258,29 @@ impl Backend for Local {
             .new_context(backend, params)
             .map_err(|e| format!("context: {e}"))?;
 
-        let mut batch = LlamaBatch::new(tokens.len().max(1), 1);
+        // The question is read a batch at a time rather than all at once.
+        // llama.cpp asserts that a batch fits inside `n_batch` and *aborts the
+        // process* when it does not - not an error, a SIGABRT - so a selection
+        // of more than a couple of thousand tokens used to take the editor
+        // down with it. The size is asked of the context rather than picked:
+        // it is the same number the assertion is against, so it cannot drift
+        // out of step with whatever llama.cpp defaults to next.
+        let per = (ctx.n_batch() as usize).max(1);
+        let mut batch = LlamaBatch::new(per, 1);
         let last = tokens.len() - 1;
-        for (i, token) in tokens.iter().enumerate() {
-            batch
-                .add(*token, i as i32, &[0], i == last)
-                .map_err(|e| format!("batching: {e}"))?;
+        let mut at = 0usize;
+        for chunk in tokens.chunks(per) {
+            batch.clear();
+            for token in chunk {
+                // Only the very last token of the whole question is asked for
+                // its logits: that is the one the first word is sampled from.
+                batch
+                    .add(*token, at as i32, &[0], at == last)
+                    .map_err(|e| format!("batching: {e}"))?;
+                at += 1;
+            }
+            ctx.decode(&mut batch).map_err(no_room)?;
         }
-        ctx.decode(&mut batch).map_err(no_room)?;
         // The question has been read; from here the numbers move.
         let mut report = super::Progress {
             prompt: tokens.len(),
