@@ -12,11 +12,13 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
+use llama_cpp_2::token::LlamaToken;
 
 use super::{Ask, Backend, Reply};
 
@@ -60,11 +62,175 @@ pub fn default_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("models/Qwen3-1.7B-Q4_K_M.gguf"))
 }
 
+/// The weights, and the working memory that borrows them.
+///
+/// Held together because the second is worth keeping. Reading a question is
+/// most of what answering one costs, and almost all of any question is the same
+/// as the last: the same system prompt, the same project, the same conversation
+/// with one more turn on the end. What is already in the key/value cache does
+/// not have to be read again, and the only way to have that is to keep the
+/// context that owns it.
+///
+/// `new_context` borrows the model, which makes this a self-referential struct
+/// and is why it needs a word of unsafe. What holds it up:
+///
+/// * the model and the backend are boxed, so their addresses do not change
+///   when this struct moves;
+/// * `ctx` is declared first, and Rust drops fields in declaration order, so
+///   the borrow always ends before the thing it borrows;
+/// * nothing hands `ctx` out - it is reached only through `&mut self` here.
+///
+/// The lifetime written down is a lie told once, in [`Self::open`], and the
+/// three points above are what make it a safe one.
+struct Held {
+    ctx: LlamaContext<'static>,
+    /// Exactly the tokens the cache holds, in the positions it holds them.
+    ///
+    /// Kept in step with the cache on every path, cancellation included: a
+    /// question read against a cache that says it holds something it does not
+    /// is answered from somebody else's sentence.
+    seen: Vec<LlamaToken>,
+    /// Whether this model's cache can be cut back to a common prefix at all.
+    ///
+    /// Not every one can. A model that carries a recurrent state rather than a
+    /// plain key/value cache has nothing to cut - the state after five
+    /// thousand tokens does not contain the state after four thousand - and
+    /// llama.cpp says so: "couldn't remove partial sequence". Qwen3.5 answers
+    /// that way and Qwen3 does not. Asked once and then remembered, because it
+    /// is a property of the architecture and will not have changed by the next
+    /// turn.
+    trims: bool,
+    /// How much room the context was made with. A question that needs more
+    /// gets a new one, and the cache starts again.
+    room: u32,
+    model: Box<LlamaModel>,
+    backend: Box<LlamaBackend>,
+}
+
+/// How much room the first context gets, before any question has been seen.
+///
+/// Big enough that an ordinary question does not immediately outgrow it and
+/// small enough to be worth nothing if one does. The key/value cache is paid
+/// for in memory whether or not it is used.
+const START: u32 = 8192;
+
+// SAFETY: llama.cpp's context is not safe to use from two threads at once, and
+// this one never is. `Local` is moved to the worker thread when the assistant
+// is spawned, at which point there is no context - it is built, used and
+// dropped there and nowhere else. What the compiler cannot see is that the
+// move happens before the thing that is not `Send` exists.
+unsafe impl Send for Held {}
+
+impl Held {
+    fn params(room: u32) -> LlamaContextParams {
+        LlamaContextParams::default().with_n_ctx(NonZeroU32::new(room))
+    }
+
+    fn open(backend: LlamaBackend, model: LlamaModel, room: u32) -> Result<Self, String> {
+        let backend = Box::new(backend);
+        let model = Box::new(model);
+        let ctx = model
+            .new_context(&backend, Self::params(room))
+            .map_err(|e| format!("context: {e}"))?;
+        // SAFETY: see the type's own comment. The borrow is of `*model`, which
+        // is boxed and outlives `ctx` by declaration order.
+        let ctx: LlamaContext<'static> = unsafe { std::mem::transmute(ctx) };
+        Ok(Self {
+            ctx,
+            seen: Vec::new(),
+            trims: true,
+            room,
+            model,
+            backend,
+        })
+    }
+
+    /// How much of `wanted` the cache already holds, and drop the rest of it.
+    ///
+    /// One short of the whole thing at most. The last token of a question is
+    /// the one its first word is sampled from, so it has to go through a decode
+    /// to have logits - a question asked twice still costs one token, not none.
+    fn keep_prefix(&mut self, wanted: &[LlamaToken]) -> usize {
+        if !self.trims {
+            self.forget();
+            return 0;
+        }
+        let common = shared_prefix(&self.seen, wanted);
+        if common < self.seen.len() {
+            // Everything past the common part is somebody else's conversation.
+            if self
+                .ctx
+                .kv_cache_seq_rm(0, Some(common as u32), None)
+                .is_err()
+            {
+                self.trims = false;
+                self.forget();
+                return 0;
+            }
+            self.seen.truncate(common);
+        }
+        common
+    }
+
+    /// Give up on what is remembered, after anything that leaves the cache and
+    /// `seen` possibly disagreeing.
+    fn forget(&mut self) {
+        self.ctx.clear_kv_cache();
+        self.seen.clear();
+    }
+
+    /// The same weights with a bigger context around them.
+    ///
+    /// A context cannot be grown, so a question that needs more room than the
+    /// last one gets a new one and the cache starts empty. What is *not* done
+    /// again is loading the weights, which is the part that takes seconds and
+    /// gigabytes. Taken by value so the old context is dropped, by name,
+    /// before the model it borrows is looked at again.
+    fn regrown(self, room: u32) -> Result<Self, String> {
+        let Self {
+            ctx,
+            model,
+            backend,
+            trims,
+            ..
+        } = self;
+        drop(ctx);
+        let ctx = model
+            .new_context(&backend, Self::params(room))
+            .map_err(|e| format!("context: {e}"))?;
+        // SAFETY: as in `open` - same boxes, same drop order, same invariant.
+        let ctx: LlamaContext<'static> = unsafe { std::mem::transmute(ctx) };
+        Ok(Self {
+            ctx,
+            seen: Vec::new(),
+            trims,
+            room,
+            model,
+            backend,
+        })
+    }
+}
+
+/// How much of the front of `wanted` is already `seen`, one short at most.
+///
+/// The last token of a question is the one its first word is sampled from, and
+/// a token only has logits if it has been through a decode. So the same
+/// question asked twice costs one token rather than none, and - the case that
+/// matters - a question that is entirely a prefix of what is remembered still
+/// ends on a token that has been decoded this time round.
+fn shared_prefix<T: PartialEq>(seen: &[T], wanted: &[T]) -> usize {
+    seen.iter()
+        .zip(wanted)
+        .take(wanted.len().saturating_sub(1))
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
 pub struct Local {
     path: PathBuf,
     /// What the model is told it is doing, from the settings.
     system: String,
-    loaded: Option<(LlamaBackend, LlamaModel)>,
+    loaded: Option<Held>,
     /// Whether this model reasons out loud unless told the thinking is done.
     thinks: bool,
 }
@@ -131,7 +297,7 @@ impl Local {
                 .and_then(|t| t.to_string().ok())
                 .is_some_and(|t| t.contains("<think>"));
             leave_before_ggml_does();
-            self.loaded = Some((backend, model));
+            self.loaded = Some(Held::open(backend, model, START)?);
         }
         Ok(())
     }
@@ -339,6 +505,23 @@ impl Backend for Local {
     }
 
     fn edit(&mut self, ask: &Ask, watch: &mut dyn super::Watcher) -> Reply {
+        let out = self.attempt(ask, watch);
+        if out.is_err() {
+            // A decode that failed leaves the cache holding something nobody
+            // can describe, and a record of it that says otherwise is worse
+            // than no record: the next question would be read against it and
+            // answered out of somebody else's sentence. So a question that
+            // went wrong costs the one after it a full read, and nothing else.
+            if let Some(held) = self.loaded.as_mut() {
+                held.forget();
+            }
+        }
+        out
+    }
+}
+
+impl Local {
+    fn attempt(&mut self, ask: &Ask, watch: &mut dyn super::Watcher) -> Reply {
         let started = std::time::Instant::now();
         self.load()?;
         let thinks = self.thinks;
@@ -347,14 +530,15 @@ impl Backend for Local {
         // it. The setting stays what it says on the tin; the question says what
         // else belongs in front of it.
         let system = ask.system(&self.system);
-        let (backend, model) = self.loaded.as_ref().expect("loaded above");
+        let held = self.loaded.as_ref().expect("loaded above");
         // How far this model was trained to read. Asked of the model rather
         // than set by hand: it is the model's own number, the same on every
         // machine, and nobody sitting in front of a note editor is in a
         // position to pick a better one.
-        let ceiling = model.n_ctx_train();
-        let text = render(model, &system, ask, thinks)?;
-        let tokens = model
+        let ceiling = held.model.n_ctx_train();
+        let text = render(&held.model, &system, ask, thinks)?;
+        let tokens = held
+            .model
             .str_to_token(&text, AddBos::Never)
             .map_err(|e| format!("tokenising: {e}"))?;
         if tokens.len() + RESERVE > ceiling as usize {
@@ -373,10 +557,20 @@ impl Backend for Local {
         let want = ((tokens.len() + RESERVE) as u32)
             .next_power_of_two()
             .clamp(1024, ceiling);
-        let params = LlamaContextParams::default().with_n_ctx(NonZeroU32::new(want));
-        let mut ctx = model
-            .new_context(backend, params)
-            .map_err(|e| format!("context: {e}"))?;
+        if held.room < want {
+            let held = self.loaded.take().expect("loaded above");
+            self.loaded = Some(held.regrown(want)?);
+        }
+        let held = self.loaded.as_mut().expect("loaded above");
+
+        // What of this question the last one already read. Almost all of it,
+        // for a conversation: the same system prompt, the same project, the
+        // same turns with one more on the end. Only the tail is new, and only
+        // the tail is read.
+        let already = held.keep_prefix(&tokens);
+        let Held {
+            ctx, model, seen, ..
+        } = held;
 
         // The question is read a batch at a time rather than all at once.
         // llama.cpp asserts that a batch fits inside `n_batch` and *aborts the
@@ -388,8 +582,8 @@ impl Backend for Local {
         let per = MOUTHFUL.min(ctx.n_batch() as usize).max(1);
         let mut batch = LlamaBatch::new(per, 1);
         let last = tokens.len() - 1;
-        let mut at = 0usize;
-        for chunk in tokens.chunks(per) {
+        let mut at = already;
+        for chunk in tokens[already..].chunks(per) {
             // A stop asked for while the question is still being read is a
             // stop: there is nothing written yet to hand back, and the reply
             // below is the one an empty answer already produces.
@@ -406,6 +600,11 @@ impl Backend for Local {
                 at += 1;
             }
             ctx.decode(&mut batch).map_err(no_room)?;
+            // The cache holds what has just gone into it, and says so before
+            // anything can go wrong further down: an account that runs ahead
+            // of the truth is worse than no account, because the next question
+            // is answered against it.
+            seen.extend_from_slice(chunk);
             // Say how far in it has got. Before this the first word out of the
             // worker was the first word of the answer, so the whole of reading
             // a long question - eight seconds of it, on the model this ships
@@ -460,7 +659,7 @@ impl Backend for Local {
             if !watch.carry_on() {
                 break;
             }
-            let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+            let token = sampler.sample(ctx, batch.n_tokens() - 1);
             sampler.accept(token);
             let piece = model
                 .token_to_piece_bytes(token, 32, true, None)
@@ -484,6 +683,7 @@ impl Backend for Local {
                 .add(token, pos, &[0], true)
                 .map_err(|e| format!("batching: {e}"))?;
             ctx.decode(&mut batch).map_err(no_room)?;
+            seen.push(token);
             pos += 1;
 
             report.written += 1;
@@ -539,5 +739,27 @@ impl Backend for Local {
             return Ok(ask.source.clone());
         }
         Ok(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shared_prefix;
+
+    #[test]
+    fn what_is_already_read_is_never_the_whole_question() {
+        // A conversation: the same thing again with one more turn on the end.
+        assert_eq!(shared_prefix(&[1, 2, 3], &[1, 2, 3, 4, 5]), 3);
+        // The same question twice still leaves a token to sample the first
+        // word from, which is the whole reason for the ceiling.
+        assert_eq!(shared_prefix(&[1, 2, 3], &[1, 2, 3]), 2);
+        // Remembering more than was asked for counts only what was asked for.
+        assert_eq!(shared_prefix(&[1, 2, 3, 4, 5], &[1, 2, 3]), 2);
+        // A different conversation shares its opening and nothing after it.
+        assert_eq!(shared_prefix(&[1, 2, 9, 9], &[1, 2, 3, 4]), 2);
+        // And two that share nothing share nothing.
+        assert_eq!(shared_prefix(&[9, 9], &[1, 2, 3]), 0);
+        assert_eq!(shared_prefix::<u8>(&[], &[1, 2, 3]), 0);
+        assert_eq!(shared_prefix(&[1, 2, 3], &[]), 0);
     }
 }
