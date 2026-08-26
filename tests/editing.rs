@@ -5298,3 +5298,35 @@ fn the_clock_says_it_gives_the_time_and_not_only_the_day() {
     let now = notes::clock::about("today").unwrap();
     assert!(now.contains("the time is"), "{now}");
 }
+
+#[test]
+fn what_was_looked_up_reads_as_a_sentence() {
+    use notes::chat::Lookup;
+    let said = |tool: &str, arg: &str| {
+        Lookup {
+            tool: tool.into(),
+            arg: arg.into(),
+            result: String::new(),
+        }
+        .said()
+    };
+    // `date` and `today` are what the wiring calls it. Somebody who asked what
+    // time it was should not have to read the wiring to see where the answer
+    // came from.
+    assert_eq!(said("date", "today"), "CHECKED THE DATE AND TIME");
+    assert_eq!(said("date", ""), "CHECKED THE DATE AND TIME");
+    assert_eq!(said("date", "2026-12-25"), "CHECKED WHEN 2026-12-25 IS");
+    assert_eq!(said("calc", "384 * 517"), "WORKED OUT 384 * 517");
+    assert_eq!(said("weather", "Berlin"), "CHECKED THE WEATHER IN BERLIN");
+    assert_eq!(
+        said("release", "ggml-org/llama.cpp"),
+        "CHECKED THE LATEST RELEASE OF GGML-ORG/LLAMA.CPP"
+    );
+    // A page is named by where it is, not by the query string that got there.
+    assert_eq!(
+        said("fetch", "https://example.com/a/b?q=1&r=2"),
+        "READ EXAMPLE.COM"
+    );
+    // And a tool added after this was written still gets a sentence.
+    assert_eq!(said("translate", "hola"), "USED TRANSLATE ON HOLA");
+}

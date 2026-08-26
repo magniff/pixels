@@ -156,6 +156,15 @@ pub struct Chat {
     pub notice: Option<String>,
     /// True on the frame it opens, so the field takes the keyboard.
     grab: bool,
+    /// Whether there was a field to type in on the last frame.
+    ///
+    /// While a question is being answered, and while a change is waiting to be
+    /// accepted, there is no field - and the toolkit hands the keyboard back
+    /// when a field it was pointing at stops existing, which is right. What was
+    /// missing is the other half: taking it again when the field returns.
+    /// Without it, every answered question left the conversation unable to be
+    /// typed into until it was clicked.
+    had_field: bool,
     /// True on the frame a completion rewrote the draft, so the field picks up
     /// the new text and puts the caret after it.
     retype: bool,
@@ -201,6 +210,43 @@ pub struct Lookup {
     pub tool: String,
     pub arg: String,
     pub result: String,
+}
+
+impl Lookup {
+    /// What it did, in words.
+    ///
+    /// `date` and `today` are what the machinery calls it, and printing them
+    /// puts the wiring in front of somebody who asked what time it was. The
+    /// call is worth showing - an answer that came from somewhere should say
+    /// so - but showing it is not the same as showing the arguments it was
+    /// made with.
+    pub fn said(&self) -> String {
+        let arg = self.arg.trim();
+        let now =
+            arg.is_empty() || arg.eq_ignore_ascii_case("today") || arg.eq_ignore_ascii_case("now");
+        match self.tool.as_str() {
+            "date" if now => "CHECKED THE DATE AND TIME".to_string(),
+            "date" => format!("CHECKED WHEN {arg} IS"),
+            "calc" => format!("WORKED OUT {arg}"),
+            "weather" => format!("CHECKED THE WEATHER IN {arg}"),
+            "wikipedia" => format!("LOOKED UP {arg}"),
+            "release" => format!("CHECKED THE LATEST RELEASE OF {arg}"),
+            // The address rather than the whole query string, which is longer
+            // than the row and says less.
+            "fetch" => format!(
+                "READ {}",
+                arg.trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .split('/')
+                    .next()
+                    .unwrap_or(arg)
+            ),
+            // Something added since this was written. Better a plain sentence
+            // about a tool this does not know than nothing at all.
+            other => format!("USED {other} ON {arg}"),
+        }
+        .to_uppercase()
+    }
 }
 
 /// Lift the record of what was looked up out of a reply.
@@ -573,6 +619,7 @@ impl Chat {
             failed: None,
             notice: None,
             grab: true,
+            had_field: false,
             retype: false,
             flip_web: false,
             scroll: ScrollState::default(),
@@ -1287,7 +1334,7 @@ impl Chat {
                 // What it went and found, before what it made of it.
                 for look in &looked {
                     let row = ui.alloc(line_h);
-                    let head = format!("LOOKED UP  {}  {}", look.tool.to_uppercase(), look.arg);
+                    let head = look.said();
                     font::draw_text_styled(ui.canvas, row.x + 4, row.y, &head, th.info.hi, true);
                     let line = ui.alloc(line_h);
                     let got = look
@@ -1392,6 +1439,8 @@ impl Chat {
 
         // ---- what to say next ----------------------------------------------
         let field = Rect::new(foot.x, foot.y + 2, foot.w, 15);
+        // Set again below by the one branch that draws a field.
+        let was_there = std::mem::take(&mut self.had_field);
         if self.waiting {
             // Nothing to type into while an answer is on its way, so the room
             // is spent on the way out of it instead.
@@ -1421,9 +1470,10 @@ impl Chat {
             let mut draft = std::mem::take(&mut self.draft);
             // `grab` also puts the caret after the text, which is what a field
             // whose contents were just completed for it needs.
-            let take = self.grab || std::mem::take(&mut self.retype);
+            let take = self.grab || std::mem::take(&mut self.retype) || !was_there;
             ui.text_field_grab_at(field, "chat-field", &mut draft, hint, take);
             self.draft = draft;
+            self.had_field = true;
         }
         self.grab = false;
 
