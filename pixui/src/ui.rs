@@ -381,6 +381,16 @@ impl<'a> Ui<'a> {
         self.layout_mut().alloc_rest()
     }
 
+    /// Change how much room the current layout leaves between what it hands
+    /// out from here on.
+    ///
+    /// The default is the theme's, which suits controls. A list of names is not
+    /// a stack of controls: the gap that keeps two buttons from reading as one
+    /// is, in a list, the gap that stops it reading as a list.
+    pub fn set_spacing(&mut self, gap: i32) {
+        self.layout_mut().spacing = gap;
+    }
+
     /// Advance the cursor without drawing.
     pub fn space(&mut self, main: i32) {
         self.layout_mut().skip(main);

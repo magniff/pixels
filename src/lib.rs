@@ -2086,6 +2086,10 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
     let mut cancel_rename = false;
 
     ui.scroll_area(list, "notes", |ui| {
+        // Tighter than the theme's, which is meant for controls. These are
+        // names in a tree, and the air between two buttons is, between two
+        // filenames, the air that stops them reading as one list.
+        ui.set_spacing(1);
         if shown.is_empty() {
             ui.label_dim("  NO MATCHES");
             return;
@@ -2098,7 +2102,14 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             let project = app.notes[i].project.clone();
             if last.as_ref() != Some(&project) {
                 if !project.is_empty() {
-                    let head = ui.alloc(pixui::font::line_h() + 3);
+                    // The air between projects, put back by hand now that the
+                    // rows have none: it is the gap that says where one tree
+                    // ends and the next begins, and it is the one that was
+                    // right already.
+                    if last.is_some() {
+                        ui.space(6);
+                    }
+                    let head = ui.alloc(pixui::font::line_h() + 2);
                     let id = ui.id(&format!("proj{project}"));
                     let resp = ui.interact(id, head);
                     if resp.clicked {
@@ -2189,7 +2200,7 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
 
             let selected = i == app.current;
             let line = pixui::font::line_h();
-            let h = line + 4;
+            let h = line + 2;
             let row = ui.alloc(h);
             // Notes in a project are stepped in under its heading, and a loose
             // one is not: the indent is what says which of the two it is.
