@@ -3185,7 +3185,7 @@ use notes::llm::Turn;
 
 #[test]
 fn a_conversation_survives_being_written_down_and_read_back() {
-    let mut talk = chat::Chat::new("welcome.md".into());
+    let mut talk = chat::Chat::new("reading".into(), "welcome.md".into());
     talk.turns = vec![
         Turn {
             mine: true,
@@ -3227,7 +3227,7 @@ fn a_marker_inside_a_code_fence_is_code() {
 
 #[test]
 fn an_answer_that_writes_a_marker_cannot_split_itself() {
-    let mut talk = chat::Chat::new("n.md".into());
+    let mut talk = chat::Chat::new("work".into(), "n.md".into());
     talk.turns = vec![
         Turn {
             mine: true,
@@ -3254,7 +3254,7 @@ fn conversations_are_filed_where_the_vault_cannot_see_them() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("welcome.md"), "# Welcome\n\nHello.\n").unwrap();
 
-    let mut talk = chat::Chat::new("welcome.md".into());
+    let mut talk = chat::Chat::new("reading".into(), "welcome.md".into());
     talk.turns = vec![Turn {
         mine: true,
         text: "anything at all".into(),
@@ -3263,21 +3263,21 @@ fn conversations_are_filed_where_the_vault_cannot_see_them() {
 
     let path = talk.path.clone().expect("named on the way out");
     assert!(
-        path.starts_with(dir.join(".chats").join("welcome")),
-        "filed under the note, in a folder the forest does not count: {path:?}"
+        path.starts_with(dir.join(".chats").join("reading")),
+        "filed under the project, in a folder the forest does not count: {path:?}"
     );
     assert_eq!(
         notes::read_vault(&dir).len(),
         1,
         "the vault is still one note - a conversation is not one of them"
     );
-    let listed = chat::filed(&dir, "welcome.md");
+    let listed = chat::filed(&dir, "reading");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].turns, 1);
     assert_eq!(listed[0].title, "anything at all");
     assert!(
-        chat::filed(&dir, "other.md").is_empty(),
-        "and they belong to one note"
+        chat::filed(&dir, "allotment").is_empty(),
+        "and they belong to one project"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -3287,7 +3287,7 @@ fn an_empty_conversation_is_not_filed_at_all() {
     let dir = std::env::temp_dir().join(format!("pixui-chat-empty-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let mut talk = chat::Chat::new("welcome.md".into());
+    let mut talk = chat::Chat::new("reading".into(), "welcome.md".into());
     talk.save(&dir).expect("saving nothing is not an error");
     assert!(
         talk.path.is_none(),
@@ -3303,7 +3303,7 @@ fn a_chat_can_be_given_a_name_that_sticks() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let mut talk = chat::Chat::new("welcome.md".into());
+    let mut talk = chat::Chat::new("reading".into(), "welcome.md".into());
     talk.turns = vec![Turn {
         mine: true,
         text: "how does wrapping work".into(),
@@ -3321,14 +3321,18 @@ fn a_chat_can_be_given_a_name_that_sticks() {
     assert_eq!(talk.title(), "wrapping notes");
     talk.save(&dir).unwrap();
 
-    let back = chat::Chat::open(talk.path.as_ref().unwrap(), "welcome.md".into());
+    let back = chat::Chat::open(
+        talk.path.as_ref().unwrap(),
+        "reading".into(),
+        "welcome.md".into(),
+    );
     assert_eq!(
         back.title(),
         "wrapping notes",
         "and it is still called that tomorrow"
     );
     assert_eq!(
-        chat::filed(&dir, "welcome.md")[0].title,
+        chat::filed(&dir, "reading")[0].title,
         "wrapping notes",
         "in the list too"
     );
@@ -3337,7 +3341,7 @@ fn a_chat_can_be_given_a_name_that_sticks() {
 
 #[test]
 fn a_line_that_is_not_a_command_is_a_question() {
-    let mut talk = chat::Chat::new("n.md".into());
+    let mut talk = chat::Chat::new("work".into(), "n.md".into());
     assert!(
         !talk.command("what does this note say"),
         "prose is not a command"
@@ -3482,7 +3486,7 @@ fn every_command_in_the_list_is_a_command() {
     // The table is what /help prints and what completion offers. A name in it
     // that nothing answers to would be a lie told in two places.
     for command in chat::COMMANDS {
-        let mut talk = chat::Chat::new("n.md".into());
+        let mut talk = chat::Chat::new("work".into(), "n.md".into());
         assert!(talk.command(&format!("/{} something", command.name)));
         let notice = talk.notice.unwrap_or_default();
         assert!(
@@ -3495,7 +3499,7 @@ fn every_command_in_the_list_is_a_command() {
 
 #[test]
 fn help_lists_every_command_there_is() {
-    let mut talk = chat::Chat::new("n.md".into());
+    let mut talk = chat::Chat::new("work".into(), "n.md".into());
     assert!(talk.command("/help"));
     let printed = talk.notice.expect("it says something");
     for command in chat::COMMANDS {
@@ -3552,7 +3556,7 @@ fn a_decision_survives_the_file_it_is_written_in() {
     let dir = std::env::temp_dir().join(format!("pixui-settle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let mut talk = chat::Chat::new("welcome.md".into());
+    let mut talk = chat::Chat::new("reading".into(), "welcome.md".into());
     talk.turns = vec![
         Turn {
             mine: true,
@@ -3564,7 +3568,11 @@ fn a_decision_survives_the_file_it_is_written_in() {
         },
     ];
     talk.save(&dir).unwrap();
-    let back = chat::Chat::open(talk.path.as_ref().unwrap(), "welcome.md".into());
+    let back = chat::Chat::open(
+        talk.path.as_ref().unwrap(),
+        "reading".into(),
+        "welcome.md".into(),
+    );
     let (_, edits) = chat::proposals(&back.turns[1].text);
     assert_eq!(edits[0].state, Some(true), "still applied a day later");
     let _ = std::fs::remove_dir_all(&dir);
@@ -3617,7 +3625,7 @@ fn a_change_waiting_for_an_answer_holds_the_field() {
         here: "n.md".into(),
         files: vec![("n.md".to_string(), &note[..])],
     };
-    let mut talk = chat::Chat::new("n.md".into());
+    let mut talk = chat::Chat::new("work".into(), "n.md".into());
     talk.turns = vec![
         Turn {
             mine: true,
@@ -3646,7 +3654,7 @@ fn a_change_that_can_no_longer_be_made_holds_nothing() {
         here: "n.md".into(),
         files: vec![("n.md".to_string(), &note[..])],
     };
-    let mut talk = chat::Chat::new("n.md".into());
+    let mut talk = chat::Chat::new("work".into(), "n.md".into());
     talk.turns = vec![
         Turn {
             mine: true,
@@ -3667,7 +3675,7 @@ fn nothing_offered_means_nothing_to_answer() {
         here: "n.md".into(),
         files: vec![("n.md".to_string(), &note[..])],
     };
-    let mut talk = chat::Chat::new("n.md".into());
+    let mut talk = chat::Chat::new("work".into(), "n.md".into());
     assert!(
         !talk.pending(&folder),
         "an empty conversation blocks nothing"
@@ -4079,4 +4087,60 @@ fn a_merge_happens_all_at_once_or_not_at_all() {
         "the target is not deleted for being one of its own parts"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_conversation_belongs_to_the_project_not_to_one_file() {
+    let dir = std::env::temp_dir().join(format!("pixui-bound-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("reading")).unwrap();
+
+    // Started while reading one file...
+    let mut talk = chat::Chat::new("reading".into(), "queue.md".into());
+    talk.turns = vec![Turn {
+        mine: true,
+        text: "what is in this project".into(),
+    }];
+    talk.save(&dir).unwrap();
+
+    // ...and found again while reading another.
+    let listed = chat::filed(&dir, "reading");
+    assert_eq!(
+        listed.len(),
+        1,
+        "the same conversations, whichever file you asked from"
+    );
+
+    let reopened = chat::Chat::open(&listed[0].path, "reading".into(), "patterns.md".into());
+    assert_eq!(
+        reopened.turns, talk.turns,
+        "with everything that was said in it"
+    );
+    assert_eq!(
+        reopened.focus, "patterns.md",
+        "and looking at whichever file it was opened from this time"
+    );
+    assert_eq!(reopened.project, "reading");
+
+    assert!(
+        chat::filed(&dir, "allotment").is_empty(),
+        "another project's conversations are its own"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn loose_notes_keep_their_conversations_at_the_top() {
+    let dir = std::env::temp_dir().join("pixui-loose-chats");
+    assert_eq!(chat::folder(&dir, ""), dir.join(".chats"));
+    assert_eq!(
+        chat::folder(&dir, "reading"),
+        dir.join(".chats").join("reading")
+    );
+    assert_eq!(
+        chat::called(""),
+        "THE VAULT",
+        "which is what to call it out loud"
+    );
+    assert_eq!(chat::called("reading"), "READING");
 }

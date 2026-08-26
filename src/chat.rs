@@ -125,8 +125,14 @@ pub struct Chat {
     /// Where it is filed, once it has been saved. A conversation with nothing
     /// said in it is not written to disk.
     pub path: Option<PathBuf>,
-    /// The note it belongs to, by filename.
-    pub note: String,
+    /// The project it belongs to. A conversation is about the work, and the
+    /// work is a folder of notes rather than one of them: opened from any file
+    /// in a project you get the same conversations back.
+    pub project: String,
+    /// The file it was opened from, which is the one it is looking at. Not
+    /// kept in the transcript - it follows wherever you open the chat from,
+    /// which is the point of it.
+    pub focus: String,
     /// What it has been called, if it has been given a name. Otherwise it is
     /// known by the first thing that was asked in it.
     pub name: Option<String>,
@@ -503,11 +509,12 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 }
 
 impl Chat {
-    /// A new conversation about `note`.
-    pub fn new(note: String) -> Self {
+    /// A new conversation in `project`, looking at `focus`.
+    pub fn new(project: String, focus: String) -> Self {
         Self {
             path: None,
-            note,
+            project,
+            focus,
             name: None,
             turns: Vec::new(),
             draft: String::new(),
@@ -524,7 +531,7 @@ impl Chat {
     }
 
     /// A conversation read back off disk.
-    pub fn open(path: &Path, note: String) -> Self {
+    pub fn open(path: &Path, project: String, focus: String) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         // The heading is taken as the name rather than re-derived: a chat that
         // was renamed keeps the name it was given, and one that never was gets
@@ -538,7 +545,7 @@ impl Chat {
             path: Some(path.to_path_buf()),
             turns: parse(&text),
             name,
-            ..Self::new(note)
+            ..Self::new(project, focus)
         }
     }
 
@@ -617,7 +624,7 @@ impl Chat {
         if self.turns.is_empty() {
             return Ok(());
         }
-        let home = folder(dir, &self.note);
+        let home = folder(dir, &self.project);
         std::fs::create_dir_all(&home)?;
         if self.path.is_none() {
             self.path = Some(free_name(&home, &self.title()));
@@ -639,10 +646,10 @@ impl Chat {
     }
 }
 
-/// Every conversation filed under a note, newest first.
-pub fn filed(dir: &Path, note: &str) -> Vec<Filed> {
+/// Every conversation filed under a project, newest first.
+pub fn filed(dir: &Path, project: &str) -> Vec<Filed> {
     let mut out = Vec::new();
-    let Ok(read) = std::fs::read_dir(folder(dir, note)) else {
+    let Ok(read) = std::fs::read_dir(folder(dir, project)) else {
         return out;
     };
     for entry in read.flatten() {
@@ -669,18 +676,30 @@ pub fn filed(dir: &Path, note: &str) -> Vec<Filed> {
     out
 }
 
-/// Where a note's conversations live.
+/// Where a project's conversations live.
 ///
-/// Under the vault rather than beside it, and in a directory rather than mixed
-/// in: the vault is read as the `.md` files directly inside it, so everything
-/// in here is invisible to it without the loader having to know this exists.
-pub fn folder(dir: &Path, note: &str) -> PathBuf {
-    let stem = note.strip_suffix(".md").unwrap_or(note);
-    // A dot in front, so the forest of projects does not grow one more tree
-    // that is not a project. The note is named by where it sits in the vault
-    // rather than by its filename: two projects may each have a `todo.md`, and
-    // their conversations are not the same conversations.
-    dir.join(".chats").join(stem)
+/// Under the vault rather than beside it, and in a dot directory: the vault is
+/// read as the `.md` files directly inside it and the folders beside them, so
+/// everything in here is invisible to it without the loader having to know
+/// this exists. The loose notes at the top of the vault keep their
+/// conversations at the top of this, which is the same arrangement one level
+/// down.
+pub fn folder(dir: &Path, project: &str) -> PathBuf {
+    let home = dir.join(".chats");
+    if project.is_empty() {
+        home
+    } else {
+        home.join(project)
+    }
+}
+
+/// What to call a project out loud, including the one with no name.
+pub fn called(project: &str) -> String {
+    if project.is_empty() {
+        "THE VAULT".to_string()
+    } else {
+        project.to_uppercase()
+    }
 }
 
 /// A file name nothing else has taken.
@@ -849,7 +868,7 @@ impl Picker {
     /// The new-conversation row is one of the rows rather than a button off to
     /// the side, so the same two keys reach everything and starting a new one
     /// costs the same gesture as continuing an old one.
-    pub fn show(&mut self, ui: &mut Ui, note: &str, chats: &[Filed]) -> Picked {
+    pub fn show(&mut self, ui: &mut Ui, project: &str, chats: &[Filed]) -> Picked {
         let th = *ui.theme;
         let line_h = font::line_h();
         let screen = ui.canvas.bounds();
@@ -858,7 +877,7 @@ impl Picker {
 
         let rows = (chats.len() + 1).min(ROWS);
         let rect = screen.centered(440, rows as i32 * line_h + 4 * line_h + 26);
-        let inner = ui.panel(rect, &format!("CHATS ABOUT {}", note.to_uppercase()));
+        let inner = ui.panel(rect, &format!("CHATS IN {}", called(project)));
         ui.capture_keyboard();
 
         let count = chats.len() + 1;
@@ -1292,11 +1311,12 @@ impl Chat {
 
         let legend = Rect::new(foot.x, field.bottom() + 2, foot.w, line_h);
         let said = if held {
-            format!("ABOUT {} - A CHANGE IS WAITING", self.note.to_uppercase())
+            format!("IN {} - A CHANGE IS WAITING", called(&self.project))
         } else {
             format!(
-                "ABOUT {} - /HELP LISTS THE COMMANDS",
-                self.note.to_uppercase()
+                "IN {} - LOOKING AT {} - /HELP LISTS THE COMMANDS",
+                called(&self.project),
+                self.focus.to_uppercase()
             )
         };
         ui.draw_text_in(legend, &said, th.ink_soft, Align::Left);

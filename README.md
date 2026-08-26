@@ -73,8 +73,9 @@ ask for a change.
 - The window is sized per request, up to whatever the model was trained to
   read; the weights are put down again after a few minutes' quiet
 - `Cmd-Enter` with nothing selected opens a conversation instead: the same
-  context, no passage, and every chat is filed under the note it was had about
-  so it can be picked up again later. `/help` lists what can be typed, Tab
+  context, no passage, and every chat is filed under the *project* it was had
+  in - opened from any file in it you get the same conversations back, looking
+  at whichever file you asked from. `/help` lists what can be typed, Tab
   finishes a half-typed command, and the title bar says what the last question
   came to in tokens
 - A conversation sees the whole project - every file in the folder, numbered -

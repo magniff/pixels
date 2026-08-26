@@ -727,14 +727,14 @@ impl Notes {
     /// when there are not: a list with one row saying "new" is a step that
     /// exists only to be walked past.
     fn open_chat(&mut self) {
-        let note = self.notes[self.current.min(self.notes.len() - 1)].slug();
-        if chat::filed(&self.notes_dir, &note).is_empty() {
-            let fresh = self.begin_chat(chat::Chat::new(note));
+        let here = self.note().project.clone();
+        if chat::filed(&self.notes_dir, &here).is_empty() {
+            let fresh = self.begin_chat(chat::Chat::new(here, self.note().filename()));
             self.chat = Some(fresh);
             self.status = "CHAT - ASK SOMETHING".into();
         } else {
             self.picker = Some(chat::Picker::new());
-            self.status = "CHATS ABOUT THIS NOTE".into();
+            self.status = "CHATS IN THIS PROJECT".into();
         }
     }
 
@@ -1413,13 +1413,16 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
     // The list first: choosing from it is what opens the other one, so the
     // frame it is chosen on is the frame the conversation appears.
     if let Some(mut picker) = app.picker.take() {
-        let note = app.notes[app.current.min(app.notes.len() - 1)].slug();
-        let chats = chat::filed(&app.notes_dir, &note);
-        match picker.show(ui, &note, &chats) {
+        // The project's conversations, and the file the chat will look at:
+        // whichever one you were reading when you asked for it.
+        let here = app.note().project.clone();
+        let focus = app.note().filename();
+        let chats = chat::filed(&app.notes_dir, &here);
+        match picker.show(ui, &here, &chats) {
             chat::Picked::None => app.picker = Some(picker),
             chat::Picked::Close => app.status = "EDITOR".into(),
             chat::Picked::Fresh => {
-                app.chat = Some(app.begin_chat(chat::Chat::new(note)));
+                app.chat = Some(app.begin_chat(chat::Chat::new(here, focus)));
                 app.status = "CHAT - ASK SOMETHING".into();
             }
             chat::Picked::Delete(path) => {
@@ -1434,7 +1437,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.picker = Some(picker);
             }
             chat::Picked::Open(path) => {
-                app.chat = Some(app.begin_chat(chat::Chat::open(&path, note)));
+                app.chat = Some(app.begin_chat(chat::Chat::open(&path, here, focus)));
                 app.status = "CHAT".into();
             }
         }
