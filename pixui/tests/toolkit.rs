@@ -1732,3 +1732,27 @@ fn a_face_can_be_found_by_name_and_put_back() {
     assert_eq!(pixui::font::face().name, now);
     pixui::font::use_face(pixui::font::face_named(before).unwrap());
 }
+
+#[test]
+fn a_row_band_covers_its_own_line_and_leaves_the_one_above_alone() {
+    let before = pixui::font::face().name;
+    for (i, face) in pixui::font::FACES.iter().enumerate() {
+        pixui::font::use_face(i);
+        // Text is drawn from the top of its glyphs, so a line at `y` has the
+        // line before it at `y - line_h`.
+        let y = 100;
+        let top = pixui::font::row_top(y);
+        let bottom = top + face.line_h;
+        assert!(
+            top >= y - face.line_h + face.glyph_h,
+            "{}: a band from {top} reaches into the glyphs of the line above",
+            face.name
+        );
+        assert!(
+            top <= y && bottom >= y + face.glyph_h,
+            "{}: a band of {top}..{bottom} does not cover its own glyphs",
+            face.name
+        );
+    }
+    pixui::font::use_face(pixui::font::face_named(before).unwrap());
+}

@@ -17,9 +17,9 @@
 
 pub mod assist;
 pub mod dialog;
-pub mod finder;
 pub mod diff;
 pub mod fetch;
+pub mod finder;
 pub mod indent;
 pub mod llm;
 pub mod markdown;
@@ -1964,7 +1964,7 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                 // ---- current-line band -------------------------------
                 if line_no == cursor.line {
                     ui.canvas.fill_rect(
-                        Rect::new(inner.x, y - 1, inner.w, line_h),
+                        Rect::new(inner.x, pixui::font::row_top(y), inner.w, line_h),
                         th.well.shade(0.10),
                     );
                 }
@@ -2000,7 +2000,12 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                         if b > a {
                             let x0 = text_x + (a - from) as i32 * advance - 1;
                             ui.canvas.fill_rect(
-                                Rect::new(x0, y - 1, (b - a) as i32 * advance, line_h),
+                                Rect::new(
+                                    x0,
+                                    pixui::font::row_top(y),
+                                    (b - a) as i32 * advance,
+                                    line_h,
+                                ),
                                 th.well.lerp(th.highlight, 0.30),
                             );
                         }
@@ -2033,7 +2038,12 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                         // side; see the caret below for why.
                         let x0 = text_x + (a - from) as i32 * advance - 1;
                         ui.canvas.fill_rect(
-                            Rect::new(x0, y - 1, (b - a) as i32 * advance, line_h),
+                            Rect::new(
+                                x0,
+                                pixui::font::row_top(y),
+                                (b - a) as i32 * advance,
+                                line_h,
+                            ),
                             th.accent.lo,
                         );
                     }
@@ -2069,7 +2079,8 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                         let wave = (cycle * std::f32::consts::TAU).cos() * 0.5 + 0.5;
                         let h = (line_h as f32 * wave.powf(0.45)).round() as i32;
                         if h > 0 {
-                            let bar = Rect::new(cx - 1, y - 1 + (line_h - h) / 2, 2, h);
+                            let bar =
+                                Rect::new(cx - 1, pixui::font::row_top(y) + (line_h - h) / 2, 2, h);
                             ui.canvas.fill_rect(bar, th.positive.face);
                             // Lit ends, so what reads is the two edges closing
                             // in rather than the bar merely getting shorter.
@@ -2087,7 +2098,12 @@ fn draw_editor(ui: &mut Ui, rect: Rect, app: &mut Notes) -> Rect {
                         // the tracking on its right and none on its left, and
                         // reads as shunted sideways.
                         ui.canvas.fill_rect(
-                            Rect::new(cx - 1, y - 1, pixui::font::glyph_w() + 2, line_h),
+                            Rect::new(
+                                cx - 1,
+                                pixui::font::row_top(y),
+                                pixui::font::glyph_w() + 2,
+                                line_h,
+                            ),
                             th.accent.face,
                         );
                         let under = text.chars().nth(cursor.col).unwrap_or(' ');

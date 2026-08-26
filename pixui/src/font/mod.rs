@@ -90,6 +90,19 @@ pub fn line_h() -> i32 {
     face().line_h
 }
 
+/// The top of the row box for text drawn at `y`.
+///
+/// Anything painted *behind* a line — a highlight, a selection, a block caret —
+/// wants the whole line step, centred on the glyphs. It cannot simply start a
+/// pixel above them: most of the faces here are set solid, with `line_h ==
+/// glyph_h` and no leading at all, and a band that starts at `y - 1` on one of
+/// those eats the bottom pixel row of the line above and stops a row short of
+/// covering its own. At this size one pixel is a third of a stroke, so that
+/// reads as the letters being clipped.
+pub fn row_top(y: i32) -> i32 {
+    y - (line_h() - glyph_h()) / 2
+}
+
 const FIRST: u32 = 32;
 
 /// The rows of one glyph in the current face, falling back to `?`.

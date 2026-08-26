@@ -158,7 +158,7 @@ fn highlight_hits(ui: &mut Ui, ctx: &Ctx, x: i32, y: i32, text: &str) {
     for (a, b) in crate::vim::matches_in(text, pattern) {
         let cell = Rect::new(
             x + a as i32 * advance() - 1,
-            y - 1,
+            font::row_top(y),
             (b - a) as i32 * advance(),
             line_h(),
         );
@@ -214,7 +214,7 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
         let len = span.text.chars().count() as i32;
         let plain = span.tok == Tok::Text && ctx.quoted.get();
         let mut color = token_color(&ctx.th, if plain { Tok::Quote } else { span.tok });
-        let cell = Rect::new(sx - 1, y - 1, len * advance(), line_h());
+        let cell = Rect::new(sx - 1, font::row_top(y), len * advance(), line_h());
 
         match span.tok {
             // A code span gets a slab behind it, which is what makes it read as
@@ -232,7 +232,12 @@ fn draw_line(ui: &mut Ui, x: i32, y: i32, spans: &[Span], ctx: &Ctx) {
             // alt text stand where the picture would.
             Tok::Image => {
                 ui.canvas.box_chamfer(
-                    Rect::new(sx - 2, y - 2, len * advance() + 2, line_h() + 2),
+                    Rect::new(
+                        sx - 2,
+                        font::row_top(y) - 1,
+                        len * advance() + 2,
+                        line_h() + 2,
+                    ),
                     ctx.th.well.shade(0.08),
                     ctx.th.info.face,
                     1,

@@ -149,7 +149,11 @@ impl Assist {
                 } else {
                     format!(
                         "{} - {} TOKENS AT {:.0}/S",
-                        if p.deliberating { "THINKING" } else { "WRITING" },
+                        if p.deliberating {
+                            "THINKING"
+                        } else {
+                            "WRITING"
+                        },
                         p.written,
                         p.rate()
                     )
@@ -447,8 +451,10 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &[(Change, String)]) {
             } else {
                 th.danger.lo
             };
-            ui.canvas
-                .fill_rect(Rect::new(x - 1, rect.y - 1, w + 1, font::line_h()), tint);
+            ui.canvas.fill_rect(
+                Rect::new(x - 1, font::row_top(rect.y), w + 1, font::line_h()),
+                tint,
+            );
         }
         font::draw_text(ui.canvas, x, rect.y, text, color);
         if *change == Change::Removed {

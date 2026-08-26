@@ -216,7 +216,7 @@ impl PromptEditor {
                     if b > a {
                         let x = inner.x + (a - from) as i32 * advance - 1;
                         ui.canvas.fill_rect(
-                            Rect::new(x, y - 1, (b - a) as i32 * advance, line_h),
+                            Rect::new(x, font::row_top(y), (b - a) as i32 * advance, line_h),
                             th.accent.lo,
                         );
                     }
@@ -227,11 +227,13 @@ impl PromptEditor {
                 if line == caret.line && caret.col >= from && caret.col <= to {
                     let x = inner.x + (caret.col - from) as i32 * advance;
                     if insert {
-                        ui.canvas
-                            .fill_rect(Rect::new(x - 1, y - 1, 2, line_h), th.positive.face);
+                        ui.canvas.fill_rect(
+                            Rect::new(x - 1, font::row_top(y), 2, line_h),
+                            th.positive.face,
+                        );
                     } else {
                         ui.canvas.fill_rect(
-                            Rect::new(x - 1, y - 1, font::glyph_w() + 2, line_h),
+                            Rect::new(x - 1, font::row_top(y), font::glyph_w() + 2, line_h),
                             th.accent.face,
                         );
                         let under = text.chars().nth(caret.col).unwrap_or(' ');
