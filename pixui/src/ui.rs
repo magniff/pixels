@@ -184,6 +184,8 @@ pub struct FrameOutput {
     /// the event loop stops drawing and waits for something to happen. An
     /// application that sits still should cost nothing to sit still.
     pub animating: bool,
+    /// Whether something else needs the GPU more than the window does.
+    pub sharing_gpu: bool,
 }
 
 /// The per-frame UI context handed to application code.
@@ -201,6 +203,7 @@ pub struct Ui<'a> {
     input_blocked: bool,
     /// Set by anything that will look different next frame.
     animating: bool,
+    sharing_gpu: bool,
     /// How deep in floating layers the drawing currently is. Zero is the page.
     layer_depth: u32,
     keyboard_captured: bool,
@@ -234,6 +237,7 @@ impl<'a> Ui<'a> {
             next_theme: None,
             input_blocked: false,
             animating: false,
+            sharing_gpu: false,
             layer_depth: 0,
             keyboard_captured: false,
             quit: false,
@@ -297,6 +301,7 @@ impl<'a> Ui<'a> {
             cursor: self.cursor,
             theme: self.next_theme,
             animating: self.animating,
+            sharing_gpu: self.sharing_gpu,
             quit: self.quit,
             pixel_scale: self.next_pixel_scale,
         };
@@ -487,6 +492,26 @@ impl<'a> Ui<'a> {
     /// springs are covered already.
     pub fn request_repaint(&mut self) {
         self.animating = true;
+    }
+
+    /// Say that something else on this machine is using the GPU heavily, and
+    /// that the window should keep out of its way until it stops.
+    ///
+    /// For an application that computes on the GPU as well as drawing on it -
+    /// a model answering a question, a video encoding, a simulation stepping.
+    /// The two queue behind each other, and since a command buffer runs to
+    /// completion, a frame that arrives behind a long computation waits for
+    /// all of it. Measured with a language model reading a question on a
+    /// worker thread: 50-87 frames a second with 200ms gaps, against 111-119
+    /// with a worst frame of 9.7ms once the window stopped using the GPU.
+    ///
+    /// Presenting on the CPU costs more of it - 11ms a frame against 1.5ms at
+    /// 3024x1724 - so this is for the stretch where it is true and not for the
+    /// whole run. Called every frame it applies to, like
+    /// [`Self::request_repaint`]. Where the toolkit has only one presenter
+    /// compiled in, it does nothing.
+    pub fn share_gpu(&mut self) {
+        self.sharing_gpu = true;
     }
 
     /// Whether interaction is currently suppressed.

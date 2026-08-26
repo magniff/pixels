@@ -1866,3 +1866,27 @@ fn the_first_to_ask_for_a_point_gets_the_press() {
         assert_eq!(took, Some(who), "whoever asked first has it");
     }
 }
+
+#[test]
+fn a_frame_can_say_the_gpu_is_wanted_elsewhere() {
+    // The window and the thing computing on the GPU are one queue, and a
+    // command buffer runs to completion: a frame arriving behind a long
+    // computation waits for all of it. Measured with a language model reading
+    // a question beside the window, that was 200ms gaps between frames. This
+    // is the frame saying so, and the default presenter answers it by drawing
+    // on the CPU until it stops.
+    let mut h = Harness::new();
+    let (_, out) = h.out(|ui| ui.label("BUSY"));
+    assert!(!out.sharing_gpu, "nothing said, so nothing is asked for");
+
+    let (_, out) = h.out(|ui| {
+        ui.label("BUSY");
+        ui.share_gpu();
+    });
+    assert!(out.sharing_gpu);
+
+    // And it lasts one frame, like asking for a repaint does: the frame that
+    // stops saying it is the frame the GPU comes back.
+    let (_, out) = h.out(|ui| ui.label("DONE"));
+    assert!(!out.sharing_gpu);
+}

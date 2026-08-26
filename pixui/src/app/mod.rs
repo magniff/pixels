@@ -80,6 +80,112 @@ pub trait Presenter: Sized {
     fn paces_frames(&self) -> bool {
         false
     }
+
+    /// Take the GPU up, or put it down, and say whether that changed anything.
+    ///
+    /// Asked once a frame. A presenter that only has one way of drawing says
+    /// no and carries on; the one the default [`run`] uses holds a GPU
+    /// presenter and a CPU one and swaps between them, so that an application
+    /// computing on the GPU can get the window out of its own way. See
+    /// [`crate::Ui::share_gpu`] for why that is worth doing.
+    fn suit_gpu(&mut self, _window: &Arc<Window>, _vsync: bool, _gpu_wanted: bool) -> bool {
+        false
+    }
+}
+
+/// A presenter that can put the GPU down and pick it up again.
+///
+/// Both presenters draw the same picture; what differs is who does the work.
+/// Normally the GPU one is right by a wide margin - at 3024x1724 it presents a
+/// frame in 1.5ms against the CPU one's 11ms. But "the GPU" is one queue, and
+/// an application that also *computes* on it is queueing behind itself: a
+/// command buffer runs to completion, so a frame that arrives behind a long
+/// one waits for the whole of it.
+///
+/// Measured with a language model reading a question on a worker thread while
+/// a window animated beside it: on the GPU presenter the window fell to 50-87
+/// frames a second with 200ms gaps between some of them, and on the CPU one it
+/// held 111-119 with a worst frame of 9.7ms - through the same work. Nothing
+/// about the CPU presenter got faster; it simply was not in the queue.
+///
+/// So neither is the answer on its own, and this holds both. They are kept
+/// rather than built per swap: tearing the window's surface down and putting
+/// it back cost a second of stall at each end, and the window came back at 216
+/// frames a second where it had been at 120, which is the display's rate.
+/// Keeping both, a swap is a choice and nothing is reconfigured.
+#[cfg(all(feature = "gpu", feature = "soft"))]
+struct Either {
+    gpu: gpu::GpuPresenter,
+    /// Built the first time it is wanted and kept from then on. Building it is
+    /// microseconds; what is expensive is what the platform does around it,
+    /// which is why it is not built and dropped per swap.
+    soft: Option<soft::SoftPresenter>,
+    window: Arc<Window>,
+    vsync: bool,
+    on_gpu: bool,
+}
+
+#[cfg(all(feature = "gpu", feature = "soft"))]
+impl Presenter for Either {
+    const NAME: &'static str = "auto";
+
+    fn new(window: Arc<Window>, vsync: bool) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            gpu: gpu::GpuPresenter::new(window.clone(), vsync)?,
+            soft: None,
+            window,
+            vsync,
+            on_gpu: true,
+        })
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        // Both, whichever is drawing: the other one is next.
+        self.gpu.resize(width, height);
+        if let Some(p) = self.soft.as_mut() {
+            p.resize(width, height);
+        }
+    }
+
+    fn present(&mut self, canvas: &Canvas, scale: i32, offset: (i32, i32), letterbox: Color) {
+        match (self.on_gpu, self.soft.as_mut()) {
+            (false, Some(p)) => p.present(canvas, scale, offset, letterbox),
+            _ => self.gpu.present(canvas, scale, offset, letterbox),
+        }
+    }
+
+    /// False from the moment the CPU one has drawn, even back on the GPU.
+    ///
+    /// Once softbuffer has presented to the window, wgpu's vsync stops
+    /// blocking on it and does not start again - not after reconfiguring the
+    /// swapchain with the same present mode, and not after building a whole
+    /// new presenter; both were tried. So the window came back from a swap
+    /// running at 216 frames a second on a 120Hz display: no more picture,
+    /// just the work of one. On macOS the compositor owns the vblank, so
+    /// nothing tears - it is heat and battery and nothing else.
+    ///
+    /// Saying it is no longer paced is exactly right, then: it is not, and it
+    /// hands the pacing back to the frame timer, which caps at the display's
+    /// rate whether or not anything blocks.
+    fn paces_frames(&self) -> bool {
+        self.on_gpu && self.soft.is_none()
+    }
+
+    fn suit_gpu(&mut self, _window: &Arc<Window>, _vsync: bool, gpu_wanted: bool) -> bool {
+        if self.on_gpu == gpu_wanted {
+            return false;
+        }
+        if !gpu_wanted && self.soft.is_none() {
+            match soft::SoftPresenter::new(self.window.clone(), self.vsync) {
+                Ok(p) => self.soft = Some(p),
+                // Nothing to fall back to but carrying on as we are, which is
+                // stuttery rather than broken.
+                Err(_) => return false,
+            }
+        }
+        self.on_gpu = gpu_wanted;
+        true
+    }
 }
 
 /// How the virtual canvas relates to the window.
@@ -383,7 +489,12 @@ where
         if std::env::var("PIXUI_BACKEND").as_deref() == Ok("soft") {
             return run_with::<soft::SoftPresenter, S, F>(config, state, ui_fn);
         }
-        run_with::<gpu::GpuPresenter, S, F>(config, state, ui_fn)
+        if std::env::var("PIXUI_BACKEND").as_deref() == Ok("gpu") {
+            return run_with::<gpu::GpuPresenter, S, F>(config, state, ui_fn);
+        }
+        // The GPU one, but able to stand aside for whatever else is on the
+        // card. Either name still forces one of them, for measuring against.
+        run_with::<Either, S, F>(config, state, ui_fn)
     }
     #[cfg(all(feature = "gpu", not(feature = "soft")))]
     {
@@ -657,6 +768,15 @@ where
             self.config.theme = theme;
         }
         self.animating = out.animating | std::mem::take(&mut self.pending_input);
+        // Before presenting, so the frame that first asks is already drawn by
+        // whichever presenter it asked for.
+        if let (Some(p), Some(w)) = (self.presenter.as_mut(), self.window.as_ref()) {
+            // Which one is holding it decides whether the swapchain paces the
+            // frames, so the budget is worked out again when it changes.
+            if p.suit_gpu(w, self.config.resolved_vsync(), !out.sharing_gpu) {
+                self.recompute_frame_budget();
+            }
+        }
         self.quit_requested |= out.quit;
         if let Some(scale) = out.pixel_scale {
             self.set_pixel_scale(scale);

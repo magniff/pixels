@@ -774,6 +774,15 @@ impl Notes {
         if moving {
             ui.request_repaint();
         }
+        // While the model has the GPU, the window keeps off it. Reading a
+        // question is thousands of tokens of matrix arithmetic on the same
+        // card the window is drawn on, and a frame that queues behind one of
+        // those waits for the whole of it: the window fell to 50-87 frames a
+        // second with 200ms gaps between some of them. Presenting on the CPU
+        // costs more of the CPU and none of the wait.
+        if self.helper.busy() {
+            ui.share_gpu();
+        }
     }
 
     /// Move the selection animation on by a frame.
