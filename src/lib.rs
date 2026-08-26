@@ -2078,10 +2078,6 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
         }
     }
 
-    // Fit the preview text to whatever width the sidebar ended up, allowing for
-    // the scrollbar gutter and the row's own padding.
-    let cols = ((list.w - 20) / pixui::font::advance()).max(8) as usize;
-
     let mut select = None;
     let mut toggle = None;
     let mut opened = None;
@@ -2179,24 +2175,25 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
             }
             // Copy what the row needs before drawing, so nothing holds a
             // borrow of the note list while the rename field mutates state.
-            let title = app.notes[i].title();
+            // The file's own name, not the heading inside it and not a line
+            // of what it says. A tree is a list of things you can point at,
+            // and the thing you point at is the file: it is what the rename
+            // renames, what the model is told to edit, and what is on disk.
+            // Cut to the room there is, with the tilde the previews and titles
+            // use, and short of the corner where the unsaved dot goes.
+            let indent = if project.is_empty() { 0 } else { 9 };
+            let room = ((list.w - 26 - indent) / pixui::font::advance()).max(6) as usize;
+            let title = markdown::truncate(&app.notes[i].filename(), room);
             let dirty = app.notes[i].buffer.dirty;
-            let preview = markdown::preview(app.notes[i].buffer.lines(), 2, cols);
             let renaming = matches!(&app.renaming, Some((Renaming::Note(idx), _)) if *idx == i);
 
             let selected = i == app.current;
-            // A title, then a line of preview each: sized from the face, or a
-            // taller one writes the second row over the first.
             let line = pixui::font::line_h();
-            let h = line + 4 + preview.len() as i32 * line;
+            let h = line + 4;
             let row = ui.alloc(h);
             // Notes in a project are stepped in under its heading, and a loose
             // one is not: the indent is what says which of the two it is.
-            let row = if project.is_empty() {
-                row
-            } else {
-                Rect::new(row.x + 9, row.y, row.w - 9, row.h)
-            };
+            let row = Rect::new(row.x + indent, row.y, row.w - indent, row.h);
             let id = ui.id(&format!("note{i}"));
             let resp = ui.interact(id, row);
             if resp.clicked {
@@ -2273,9 +2270,6 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                 // words the whole way, so this is a blend rather than the two
                 // clipped passes a patch growing from nothing would need.
                 let ink = th.ink.lerp(th.accent.ink, held);
-                let dim = th
-                    .ink_soft
-                    .lerp(th.accent.ink.lerp(th.accent.face, 0.4), held);
                 pixui::font::draw_text_styled(
                     ui.canvas,
                     title_at.x,
@@ -2284,10 +2278,6 @@ fn draw_sidebar(ui: &mut Ui, rect: Rect, app: &mut Notes, arrived: bool) {
                     ink,
                     true,
                 );
-                for (n, text) in preview.iter().enumerate() {
-                    let y = row.y + line + 2 + n as i32 * line;
-                    pixui::font::draw_text(ui.canvas, title_at.x, y, text, dim);
-                }
                 if dirty {
                     ui.canvas
                         .fill_rect(Rect::new(row.right() - 5, row.y + 3, 3, 3), th.danger.face);

@@ -710,7 +710,9 @@ fn strip_markers(s: &str) -> String {
     out.trim().to_string()
 }
 
-fn truncate(s: &str, max: usize) -> String {
+/// Cut to `max` characters, marking the cut with a tilde the way the
+/// previews and the derived titles do.
+pub fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }
