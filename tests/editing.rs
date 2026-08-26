@@ -3579,3 +3579,69 @@ fn only_the_block_that_was_decided_is_marked() {
         "the second is the one that was answered"
     );
 }
+
+#[test]
+fn a_change_waiting_for_an_answer_holds_the_field() {
+    let note: Vec<String> = "one\ntwo\nthree\nfour\nfive\nsix"
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let mut talk = chat::Chat::new("n.md".into());
+    talk.turns = vec![
+        Turn {
+            mine: true,
+            text: "tighten line 6".into(),
+        },
+        Turn {
+            mine: false,
+            text: "Like so.\n\n<edit lines=\"6-6\">\ntighter\n</edit>".into(),
+        },
+    ];
+    assert!(
+        talk.pending(&note),
+        "it asked something back and is owed an answer"
+    );
+
+    talk.turns[1].text = chat::settle(&talk.turns[1].text, 0, false);
+    assert!(!talk.pending(&note), "rejecting is an answer too");
+}
+
+#[test]
+fn a_change_that_can_no_longer_be_made_holds_nothing() {
+    // Otherwise a block whose lines have gone is a conversation nobody can get
+    // out of: it cannot be accepted, cannot be rejected, and blocks the field.
+    let note: Vec<String> = vec!["only one line".to_string()];
+    let mut talk = chat::Chat::new("n.md".into());
+    talk.turns = vec![
+        Turn {
+            mine: true,
+            text: "fix line 40".into(),
+        },
+        Turn {
+            mine: false,
+            text: "<edit lines=\"40-41\">\nnope\n</edit>".into(),
+        },
+    ];
+    assert!(!talk.pending(&note));
+}
+
+#[test]
+fn nothing_offered_means_nothing_to_answer() {
+    let note: Vec<String> = vec!["a line".to_string()];
+    let mut talk = chat::Chat::new("n.md".into());
+    assert!(!talk.pending(&note), "an empty conversation blocks nothing");
+    talk.turns = vec![
+        Turn {
+            mine: true,
+            text: "what is this about".into(),
+        },
+        Turn {
+            mine: false,
+            text: "A note about pixels.".into(),
+        },
+    ];
+    assert!(
+        !talk.pending(&note),
+        "and neither does an answer with no change in it"
+    );
+}

@@ -949,10 +949,15 @@ impl Chat {
         if ui.input.key_pressed(Key::Escape) {
             return Outcome::Close;
         }
+        // A change that has been offered is a question back, and it is answered
+        // before anything else is asked. Otherwise the next answer is written
+        // against a note that may or may not be about to change, and the diff
+        // sitting above it quietly stops meaning what it says.
+        let held = self.pending(note);
         // Enter sends. A conversation is one question at a time, so the key
         // that ends a sentence is the key that asks it; a newline inside one
         // question is a thing to want later and not today.
-        if ui.input.key_pressed(Key::Enter) && !self.draft.trim().is_empty() {
+        if !held && ui.input.key_pressed(Key::Enter) && !self.draft.trim().is_empty() {
             let typed = self.draft.clone();
             if self.command(&typed) {
                 // A rename is worth writing down straight away: it is the kind
@@ -967,8 +972,12 @@ impl Chat {
 
         // What a half-typed command could still become, offered above the
         // field: near what is being typed, and out of the transcript's way.
-        let hints = completions(self.draft.trim_end());
-        if ui.input.key_pressed(Key::Tab) {
+        let hints = if held {
+            Vec::new()
+        } else {
+            completions(self.draft.trim_end())
+        };
+        if !held && ui.input.key_pressed(Key::Tab) {
             if let Some(finished) = complete(self.draft.trim_end()) {
                 self.draft = finished;
                 self.retype = true;
@@ -1096,29 +1105,44 @@ impl Chat {
 
         // ---- what to say next ----------------------------------------------
         let field = Rect::new(foot.x, foot.y + 2, foot.w, 15);
-        let hint = if self.waiting {
-            "WAITING FOR AN ANSWER"
+        if held {
+            // Not a disabled field but no field at all: one that looks like it
+            // takes typing and does not is worse than one that is plainly not
+            // there, and the space is better spent saying why.
+            ui.canvas
+                .box_chamfer(field, th.well.shade(-0.04), th.well_border, 1);
+            let say = Rect::new(field.x + 4, field.y, field.w - 8, field.h);
+            ui.draw_text_in(
+                say,
+                "ACCEPT OR REJECT THE CHANGE ABOVE TO CARRY ON",
+                th.info.hi,
+                Align::Left,
+            );
         } else {
-            "ASK SOMETHING"
-        };
-        let mut draft = std::mem::take(&mut self.draft);
-        // `grab` also puts the caret after the text, which is what a field
-        // whose contents were just completed for it needs.
-        let take = self.grab || std::mem::take(&mut self.retype);
-        ui.text_field_grab_at(field, "chat-field", &mut draft, hint, take);
-        self.draft = draft;
+            let hint = if self.waiting {
+                "WAITING FOR AN ANSWER"
+            } else {
+                "ASK SOMETHING"
+            };
+            let mut draft = std::mem::take(&mut self.draft);
+            // `grab` also puts the caret after the text, which is what a field
+            // whose contents were just completed for it needs.
+            let take = self.grab || std::mem::take(&mut self.retype);
+            ui.text_field_grab_at(field, "chat-field", &mut draft, hint, take);
+            self.draft = draft;
+        }
         self.grab = false;
 
         let legend = Rect::new(foot.x, field.bottom() + 2, foot.w, line_h);
-        ui.draw_text_in(
-            legend,
-            &format!(
+        let said = if held {
+            format!("ABOUT {} - A CHANGE IS WAITING", self.note.to_uppercase())
+        } else {
+            format!(
                 "ABOUT {} - /HELP LISTS THE COMMANDS",
                 self.note.to_uppercase()
-            ),
-            th.ink_soft,
-            Align::Left,
-        );
+            )
+        };
+        ui.draw_text_in(legend, &said, th.ink_soft, Align::Left);
         ui.draw_text_in(
             legend,
             "ESC LEAVES - IT IS SAVED",
@@ -1136,6 +1160,20 @@ impl Chat {
             }
             None => outcome,
         }
+    }
+
+    /// Whether a change has been offered and not yet answered.
+    ///
+    /// Only one that could still be made counts. A block whose lines have since
+    /// gone is not something anybody can accept or reject, and letting one of
+    /// those hold the field would be a conversation nobody can get out of.
+    pub fn pending(&self, note: &[String]) -> bool {
+        self.turns.iter().filter(|t| !t.mine).any(|turn| {
+            proposals(&turn.text)
+                .1
+                .iter()
+                .any(|e| e.state.is_none() && e.replacing(note).is_some())
+        })
     }
 
     /// How much context this conversation is carrying, said in tokens.

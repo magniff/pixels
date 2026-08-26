@@ -79,7 +79,8 @@ ask for a change.
   edit against numbered lines, and you get the diff with **ACCEPT** and
   **REJECT** before anything moves. What you decided is written into the
   transcript, so a change taken today is a `+2 -1` summary tomorrow rather than
-  a question asked twice
+  a question asked twice. The field is held while one is waiting: a change
+  offered is a question back, and it is answered before anything else is asked
 - The question opens *in* the text, between the lines
 - The answer arrives as a word-level diff, and the note is not touched until
   you keep it — `Cmd-Enter` again, or **APPLY**
