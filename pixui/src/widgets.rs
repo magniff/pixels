@@ -6,6 +6,7 @@
 //! right is most of what makes a pixel UI feel tactile rather than flat.
 
 use crate::anim::{smooth, WidgetAnim};
+use crate::clipboard;
 use crate::color::Color;
 use crate::font;
 use crate::geom::{Point, Rect};
@@ -371,8 +372,31 @@ impl Ui<'_> {
 
         if resp.focused && !self.is_input_blocked() {
             let mut edited = chars.clone();
+            let cmd = self.input.mods.cmd;
             for key in &self.input.keys {
                 match key {
+                    // The three the whole desktop shares. A field has no
+                    // selection of its own, so copy and cut mean the field:
+                    // there is nothing else they could mean, and reaching for
+                    // Cmd-C in a one-line box is a request for what is in it.
+                    Key::Char('c') if cmd => clipboard::copy(&edited.iter().collect::<String>()),
+                    Key::Char('x') if cmd => {
+                        clipboard::copy(&edited.iter().collect::<String>());
+                        edited.clear();
+                        st.caret = 0;
+                    }
+                    Key::Char('v') if cmd => {
+                        if let Some(text) = clipboard::paste() {
+                            // Flattened, because this is one line. Pasting a
+                            // paragraph into a search box should give the
+                            // paragraph run together, not its first line with
+                            // the rest silently dropped.
+                            for c in text.chars().map(|c| if c == '\n' { ' ' } else { c }) {
+                                edited.insert(st.caret.min(edited.len()), c);
+                                st.caret += 1;
+                            }
+                        }
+                    }
                     Key::Char(c) if !self.input.mods.cmd && !self.input.mods.ctrl => {
                         edited.insert(st.caret.min(edited.len()), *c);
                         st.caret += 1;

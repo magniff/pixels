@@ -1145,6 +1145,23 @@ fn handle_shortcuts(ui: &mut Ui, app: &mut Notes) {
             Key::Enter => app.want_assist(),
             // The note list answers "which note?"; this answers "where in it?".
             Key::Char('p') => app.finder = Some(finder::Finder::new()),
+            // The clipboard keys, for the hand that reaches for these instead
+            // of for `y` and `p`. Only where there is a note under them: a
+            // text field handles its own three, and the note list has nothing
+            // to copy.
+            Key::Char('c') | Key::Char('x') | Key::Char('v')
+                if app.pane == Pane::Editor && app.editor_tab == 0 && !ui.text_input_active() =>
+            {
+                let i = app.current.min(app.notes.len() - 1);
+                match key {
+                    Key::Char('c') => app.vim.copy_out(&mut app.notes[i].buffer),
+                    Key::Char('x') => app.vim.cut_out(&mut app.notes[i].buffer),
+                    _ => app.vim.paste_in(&mut app.notes[i].buffer),
+                }
+                if !app.vim.status.is_empty() {
+                    app.status = std::mem::take(&mut app.vim.status).to_uppercase();
+                }
+            }
             Key::Char('e') => app.focus_pane(Pane::Editor),
             Key::Char('n') => app.focus_pane(Pane::Notes),
             Key::Char('s') => app.focus_pane(Pane::Search),

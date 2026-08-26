@@ -1756,3 +1756,29 @@ fn a_row_band_covers_its_own_line_and_leaves_the_one_above_alone() {
     }
     pixui::font::use_face(pixui::font::face_named(before).unwrap());
 }
+
+// ----------------------------------------------------------------- clipboard
+
+#[test]
+fn a_clipboard_with_nothing_on_it_answers_nothing() {
+    // No window, so this is the in-process fallback, and it starts empty.
+    assert_eq!(pixui::clipboard::paste(), None);
+    pixui::clipboard::copy("");
+    assert_eq!(
+        pixui::clipboard::paste(),
+        None,
+        "an empty string is not something to paste"
+    );
+}
+
+#[test]
+fn what_is_copied_is_what_comes_back() {
+    pixui::clipboard::copy("two\nlines\n");
+    assert_eq!(
+        pixui::clipboard::paste().as_deref(),
+        Some("two\nlines\n"),
+        "including the newlines, which is what makes it a linewise yank"
+    );
+    pixui::clipboard::copy("replaced");
+    assert_eq!(pixui::clipboard::paste().as_deref(), Some("replaced"));
+}

@@ -73,6 +73,7 @@
 pub mod anim;
 pub mod app;
 pub mod canvas;
+pub mod clipboard;
 pub mod color;
 pub mod cursor;
 pub mod font;

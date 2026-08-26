@@ -1437,10 +1437,18 @@ fn a_search_lights_up_as_it_is_typed() {
 
     let none = Mods::default();
     vim.handle(&mut buf, Key::Char('/'), none);
-    assert_eq!(vim.search_pattern(), None, "an empty pattern matches nothing");
+    assert_eq!(
+        vim.search_pattern(),
+        None,
+        "an empty pattern matches nothing"
+    );
 
     vim.handle(&mut buf, Key::Char('b'), none);
-    assert_eq!(vim.search_pattern(), Some("b"), "one character is a pattern");
+    assert_eq!(
+        vim.search_pattern(),
+        Some("b"),
+        "one character is a pattern"
+    );
     vim.handle(&mut buf, Key::Char('e'), none);
     vim.handle(&mut buf, Key::Char('t'), none);
     assert_eq!(vim.search_pattern(), Some("bet"));
@@ -1503,7 +1511,10 @@ fn a_panel_is_not_painted_until_it_knows_how_tall_it_is() {
         0,
         "a panel drawn at a height measured for some other page is the flicker"
     );
-    assert!(animating, "and it has to ask for the frame that does paint it");
+    assert!(
+        animating,
+        "and it has to ask for the frame that does paint it"
+    );
     let measured = chrome.panel_h;
     assert!(measured > 72, "it measured itself while it was invisible");
 
@@ -1585,7 +1596,11 @@ fn a_question_in_flight_reports_where_it_has_got_to() {
         },
         &mut |p| seen.push(p),
     );
-    assert_eq!(seen.len(), 1, "the stub answers at once, so it reports once");
+    assert_eq!(
+        seen.len(),
+        1,
+        "the stub answers at once, so it reports once"
+    );
     assert_eq!(seen[0].prompt, 3);
     // Nothing written in no time is not an infinite rate.
     assert_eq!(seen[0].rate(), 0.0);
@@ -2933,4 +2948,94 @@ fn the_prompt_is_edited_by_the_same_grammar_as_a_note() {
     assert_eq!(editor.text(), "beta gamma!");
     press(&mut editor.vim, &mut editor.buf, "u");
     assert_eq!(editor.text(), "beta gamma", "and undo is vim's undo");
+}
+
+// ----------------------------------------------------------------- clipboard
+
+#[test]
+fn a_yank_goes_out_to_the_system_clipboard() {
+    let (mut v, mut b) = buffer("first\nsecond");
+    press(&mut v, &mut b, "yy");
+    assert_eq!(
+        pixui::clipboard::paste().as_deref(),
+        Some("first\n"),
+        "a whole line, ending in the newline that says it was a whole line"
+    );
+    press(&mut v, &mut b, "jvey");
+    assert_eq!(
+        pixui::clipboard::paste().as_deref(),
+        Some("second"),
+        "and a charwise yank goes out without one"
+    );
+    // Deleting is copying too, the way it is in every other editor.
+    press(&mut v, &mut b, "dd");
+    assert_eq!(pixui::clipboard::paste().as_deref(), Some("second\n"));
+}
+
+#[test]
+fn text_from_outside_is_what_p_pastes() {
+    let (mut v, mut b) = buffer("here");
+    pixui::clipboard::copy("from elsewhere");
+    press(&mut v, &mut b, "p");
+    assert_eq!(
+        b.to_text(),
+        "hfrom elsewhereere",
+        "no newline on it, so it goes in charwise after the cursor"
+    );
+}
+
+#[test]
+fn a_yank_keeps_its_shape_through_the_clipboard() {
+    // The round trip must not quietly turn `yy` into a charwise put: the
+    // register is only replaced when what the clipboard holds came from
+    // somewhere else.
+    let (mut v, mut b) = buffer("alpha\nbeta");
+    press(&mut v, &mut b, "yyp");
+    assert_eq!(b.to_text(), "alpha\nalpha\nbeta");
+}
+
+#[test]
+fn the_clipboard_keys_do_what_the_vim_keys_do() {
+    let (mut v, mut b) = buffer("one\ntwo");
+    v.copy_out(&mut b);
+    assert_eq!(pixui::clipboard::paste().as_deref(), Some("one\n"));
+    assert_eq!(b.cursor, Cursor::new(0, 0), "copying moves nothing");
+
+    press(&mut v, &mut b, "j");
+    v.cut_out(&mut b);
+    assert_eq!(b.to_text(), "one");
+    assert_eq!(pixui::clipboard::paste().as_deref(), Some("two\n"));
+
+    v.paste_in(&mut b);
+    assert_eq!(b.to_text(), "one\ntwo", "and it comes back where it was");
+}
+
+#[test]
+fn pasting_while_typing_puts_the_text_at_the_caret() {
+    let (mut v, mut b) = buffer("say  here");
+    pixui::clipboard::copy("it");
+    press(&mut v, &mut b, "0lllli");
+    assert_eq!(v.mode, Mode::Insert);
+    v.paste_in(&mut b);
+    assert_eq!(b.to_text(), "say it here");
+    assert_eq!(b.cursor.col, 6, "the caret ends after what was pasted");
+}
+
+#[test]
+fn pasting_into_a_search_pattern_types_it_rather_than_the_note() {
+    let (mut v, mut b) = buffer("alpha\nbeta gamma\nalpha");
+    pixui::clipboard::copy("gamma\nand more\n");
+    press(&mut v, &mut b, "/");
+    v.paste_in(&mut b);
+    assert_eq!(
+        v.cmdline, "gamma",
+        "one line, because a pattern is one line"
+    );
+    press(&mut v, &mut b, "\n");
+    assert_eq!(b.cursor.line, 1, "and then it is a search like any other");
+    assert_eq!(
+        b.to_text(),
+        "alpha\nbeta gamma\nalpha",
+        "the note is untouched"
+    );
 }

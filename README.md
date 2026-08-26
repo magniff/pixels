@@ -42,6 +42,9 @@ it at a real vault.
 - Both views carry the same gutter and the same scrollbar, numbered with the
   same source lines
 - `/` searches the preview and lights up every hit
+- The clipboard is the system's: `y` and `d` put text on it, `p` takes whatever
+  is on it, and `Cmd-c`/`Cmd-x`/`Cmd-v` are the same three for the hand that
+  reaches for those instead
 
 | finding a note | source | preview |
 |---|---|---|
@@ -118,8 +121,8 @@ echo "teh meeting was ok" | cargo run --release -- --ask "fix the typos"
 
 ## Not implemented
 
-Marks, macros, named registers, regular expressions in search (patterns are
-literal), tag objects, inline and block HTML, footnotes, definition lists,
+Marks, macros, named registers (the unnamed one is the system clipboard),
+regular expressions in search (patterns are literal), tag objects, inline and block HTML, footnotes, definition lists,
 character entities, and any script the built-in ASCII font cannot draw. Images
 are parsed but cannot be drawn, so their alt text stands in for them.
 

@@ -360,6 +360,8 @@ where
     S: 'static,
     F: FnMut(&mut Ui, &mut S) + 'static,
 {
+    // There is a window, so there is a desktop to share a clipboard with.
+    crate::clipboard::connect();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::<S, F, P>::new(config, state, ui_fn);

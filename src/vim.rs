@@ -128,6 +128,32 @@ pub enum Register {
     Block(Vec<String>),
 }
 
+impl Register {
+    /// What this is as plain text, which is all the system clipboard can hold.
+    ///
+    /// A linewise yank ends in a newline and a charwise one does not, which is
+    /// the one bit of the shape that survives the trip out and is enough to
+    /// rebuild it on the way back.
+    pub fn text(&self) -> String {
+        match self {
+            Register::Chars(s) => s.clone(),
+            Register::Lines(v) | Register::Block(v) => {
+                let mut out = v.join("\n");
+                out.push('\n');
+                out
+            }
+        }
+    }
+
+    /// Text from outside, read back into a register.
+    pub fn from_text(text: &str) -> Self {
+        match text.strip_suffix('\n') {
+            Some(body) => Register::Lines(body.split('\n').map(str::to_string).collect()),
+            None => Register::Chars(text.to_string()),
+        }
+    }
+}
+
 /// Something the editor cannot do by itself, handed back to the application.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VimEvent {
@@ -711,7 +737,7 @@ impl Vim {
             'x' => {
                 buf.checkpoint();
                 let removed = buf.delete_chars(count);
-                self.register = Some(Register::Chars(removed));
+                self.record(Register::Chars(removed));
                 buf.clamp_cursor(false);
             }
             'D' => {
@@ -719,7 +745,7 @@ impl Vim {
                 let line = buf.cursor.line;
                 let end = buf.line_len(line);
                 let removed = buf.delete_range_in_line(line, buf.cursor.col, end);
-                self.register = Some(Register::Chars(removed));
+                self.record(Register::Chars(removed));
                 buf.clamp_cursor(false);
             }
             'C' => {
@@ -796,7 +822,7 @@ impl Vim {
         match sel {
             Selection::Chars { from, to } => {
                 let end = Cursor::new(to.line, to.col + 1);
-                self.register = Some(Register::Chars(buf.text_between(from, end)));
+                self.record(Register::Chars(buf.text_between(from, end)));
                 if yank_only {
                     buf.move_to(from);
                 } else {
@@ -806,11 +832,11 @@ impl Vim {
             Selection::Lines { from, to } => {
                 let last = to.min(buf.line_count().saturating_sub(1));
                 if yank_only {
-                    self.register = Some(Register::Lines(buf.lines()[from..=last].to_vec()));
+                    self.record(Register::Lines(buf.lines()[from..=last].to_vec()));
                     buf.move_to(Cursor::new(from, 0));
                 } else {
                     let removed = buf.delete_lines(from, last);
-                    self.register = Some(Register::Lines(removed));
+                    self.record(Register::Lines(removed));
                     if op == 'c' {
                         // `c` on lines leaves a blank one to type into rather
                         // than closing the gap.
@@ -836,7 +862,7 @@ impl Vim {
                         rows.push(buf.delete_range_in_line(line, left, right + 1));
                     }
                 }
-                self.register = Some(Register::Block(rows));
+                self.record(Register::Block(rows));
                 buf.move_to(Cursor::new(top, left));
             }
         }
@@ -923,7 +949,110 @@ impl Vim {
         }
     }
 
+    /// Remember a yank, and hand it to the rest of the desktop.
+    ///
+    /// Every `y`, `d`, `x` and `c` comes through here, which is vim's
+    /// `clipboard=unnamed` and the only setting of it anybody who is not
+    /// already a vim user would expect: text copied out of a note is copied,
+    /// full stop, and where it is pasted is not this program's business.
+    fn record(&mut self, reg: Register) {
+        pixui::clipboard::copy(&reg.text());
+        self.register = Some(reg);
+    }
+
+    /// Take up what the clipboard is holding, if it is not already ours.
+    ///
+    /// The comparison is what keeps the shape of a yank: a linewise `yy`
+    /// followed by `p` should open a line rather than paste into the middle of
+    /// one, and it still does, because the clipboard is holding exactly what
+    /// this register put there and the register is left alone. It is only text
+    /// that arrived from somewhere else that replaces it.
+    fn adopt(&mut self) {
+        let Some(text) = pixui::clipboard::paste() else {
+            return;
+        };
+        if self.register.as_ref().map(Register::text).as_deref() != Some(text.as_str()) {
+            self.register = Some(Register::from_text(&text));
+        }
+    }
+
+    /// Cmd-C: the selection, or the line the cursor is on.
+    ///
+    /// The three below are spelled as the keys they already are, rather than
+    /// reimplemented next to them: this *is* `yy`, and an editor where the two
+    /// spellings could drift apart is an editor with two of everything.
+    pub fn copy_out(&mut self, buf: &mut Buffer) {
+        // Not part of the pending grammar, the way the control combinations
+        // are not: a half-typed `2d` should not swallow this.
+        self.pending.clear();
+        if self.on_the_command_line() {
+            return;
+        }
+        if self.visual_kind().is_some() {
+            self.handle(buf, Key::Char('y'), Mods::default());
+        } else {
+            let at = buf.cursor;
+            self.handle(buf, Key::Char('y'), Mods::default());
+            self.handle(buf, Key::Char('y'), Mods::default());
+            buf.move_to(at);
+        }
+        self.status = "copied".into();
+    }
+
+    /// Cmd-X: the same, taken away.
+    pub fn cut_out(&mut self, buf: &mut Buffer) {
+        self.pending.clear();
+        if self.on_the_command_line() {
+            return;
+        }
+        if self.visual_kind().is_some() {
+            self.handle(buf, Key::Char('x'), Mods::default());
+        } else {
+            self.handle(buf, Key::Char('d'), Mods::default());
+            self.handle(buf, Key::Char('d'), Mods::default());
+        }
+        self.status = "cut".into();
+    }
+
+    /// Cmd-V: whatever the clipboard is holding.
+    pub fn paste_in(&mut self, buf: &mut Buffer) {
+        self.pending.clear();
+        if !matches!(self.mode, Mode::Insert) && !self.on_the_command_line() {
+            self.handle(buf, Key::Char('p'), Mods::default());
+            return;
+        }
+        self.adopt();
+        let Some(reg) = self.register.clone() else {
+            self.status = "clipboard empty".into();
+            return;
+        };
+        // A `:` or `/` line is one line, so it takes the first one and leaves
+        // the rest: a pattern pasted out of a note should not submit itself.
+        if self.on_the_command_line() {
+            let text = reg.text();
+            self.cmdline.push_str(text.lines().next().unwrap_or(""));
+            return;
+        }
+        // Mid-typing there is no linewise or charwise about it: the text goes
+        // in at the caret, and the newlines in it are newlines.
+        buf.checkpoint();
+        for (i, piece) in reg.text().split('\n').enumerate() {
+            if i > 0 {
+                buf.insert_newline();
+            }
+            buf.insert_str_at(buf.cursor.line, buf.cursor.col, piece);
+            buf.cursor.col += piece.chars().count();
+        }
+    }
+
+    /// Whether what is being typed is a `:` command or a `/` pattern rather
+    /// than the note itself.
+    fn on_the_command_line(&self) -> bool {
+        matches!(self.mode, Mode::Command | Mode::Search { .. })
+    }
+
     fn put(&mut self, buf: &mut Buffer, after: bool) {
+        self.adopt();
         let Some(reg) = self.register.clone() else {
             self.status = "register empty".into();
             return;
@@ -1113,7 +1242,7 @@ impl Vim {
                 } else {
                     buf.delete_lines(from, to)
                 };
-                self.register = Some(Register::Lines(removed));
+                self.record(Register::Lines(removed));
                 if op == 'c' {
                     // `cc` keeps a line to type on rather than removing it.
                     buf.open_line(false);
@@ -1124,7 +1253,7 @@ impl Vim {
             }
             Range::Chars { from, to } => {
                 let text = buf.text_between(from, to);
-                self.register = Some(Register::Chars(text));
+                self.record(Register::Chars(text));
                 if op != 'y' {
                     buf.delete_between(from, to);
                 } else {
