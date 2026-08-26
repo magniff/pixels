@@ -934,6 +934,16 @@ impl Picker {
             for i in 0..count.min(ROWS) {
                 let y = list.y + i as i32 * line_h;
                 let row = Rect::new(list.x, y, list.w, line_h);
+                // The bin asks first. Two things want the same pixels, and the
+                // pointer goes to whoever asks for it first: with the row
+                // asking first, a press on the bin was taken by the row and
+                // the answer to "delete this" was "open it".
+                let bin = Rect::new(row.right() - 11, y + 1, 9, 7);
+                let bin_hit = ui.id(&format!("bin{i}"));
+                let hit = ui.interact(bin_hit, Rect::new(bin.x - 2, y, 13, line_h));
+                if hit.clicked {
+                    asking = Some(i);
+                }
                 let id = ui.id(&format!("chat{i}"));
                 let resp = ui.interact(id, row);
                 if i == self.selected {
@@ -983,16 +993,9 @@ impl Picker {
                     dim,
                     Align::Right,
                 );
-                let bin = Rect::new(row.right() - 11, y + 1, 9, 7);
-                let over = resp.hovered || picked_row;
-                let id = ui.id(&format!("bin{i}"));
-                let hit = ui.interact(id, Rect::new(bin.x - 2, y, 13, line_h));
-                if over || hit.hovered {
+                if resp.hovered || picked_row || hit.hovered {
                     let tint = if hit.hovered { th.danger.hi } else { dim };
                     pixui::icon::draw(ui.canvas, bin.x, bin.y, pixui::icon::BIN, tint);
-                }
-                if hit.clicked {
-                    asking = Some(i);
                 }
             }
         });

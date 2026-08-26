@@ -1819,3 +1819,50 @@ fn the_other_button_asks_rather_than_takes() {
     assert!(!ui.interact(id, rect).right_clicked);
     ui.finish();
 }
+
+#[test]
+fn the_first_to_ask_for_a_point_gets_the_press() {
+    // Which is what a small control inside a big one depends on: a bin at the
+    // end of a row is inside the row, and if the row asks first the row takes
+    // the press and the answer to "delete this" is "open it".
+    let mut canvas = Canvas::new(200, 100);
+    let theme = Theme::default();
+    let row = Rect::new(0, 0, 200, 20);
+    let bin = Rect::new(180, 0, 20, 20);
+    let on_the_bin = Point::new(190, 10);
+
+    let press = Input {
+        mouse: on_the_bin,
+        mouse_in_window: true,
+        mouse_down: true,
+        mouse_pressed: true,
+        ..Default::default()
+    };
+    let release = Input {
+        mouse: on_the_bin,
+        mouse_in_window: true,
+        mouse_released: true,
+        ..Default::default()
+    };
+
+    for (small_first, who) in [(true, "bin"), (false, "row")] {
+        let mut state = UiState::new();
+        let mut took = None;
+        for input in [&press, &release] {
+            let mut ui = Ui::begin(&mut canvas, input, &theme, &mut state);
+            let (a, b) = if small_first {
+                (("bin", bin), ("row", row))
+            } else {
+                (("row", row), ("bin", bin))
+            };
+            for (name, rect) in [a, b] {
+                let id = ui.id(name);
+                if ui.interact(id, rect).clicked {
+                    took = Some(name);
+                }
+            }
+            ui.finish();
+        }
+        assert_eq!(took, Some(who), "whoever asked first has it");
+    }
+}

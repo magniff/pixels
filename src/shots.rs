@@ -308,6 +308,33 @@ pub fn run() -> std::io::Result<()> {
             canvas: (768, 470),
         },
         Scene {
+            // The bin on a row asks before it throws a conversation away, and the
+            // row underneath it does not take the click on the way past.
+            name: "chat-bin",
+            seed: &[
+                (
+                    ".chats/what-the-toolkit-is.md",
+                    "# what the toolkit is\n\n## you\n\nwhat is the toolkit called\n\n## assistant\n\nIt is called pixui.\n",
+                ),
+                (
+                    ".chats/whether-to-wrap-long-lines.md",
+                    "# whether to wrap long lines\n\n## you\n\nshould long lines wrap or scroll\n\n## assistant\n\nWrap. A note is prose.\n\n## you\n\nwhat about code fences\n\n## assistant\n\nThose scroll.\n",
+                ),
+            ],
+            right_click: None,
+            script: [keys(":e welcome.md"), keys("\n"), cmd_key(Key::Enter)].concat(),
+            mouse: Point::new(-9, -9),
+            click_first: false,
+            double_click: false,
+            drag: None,
+            wheel: 0.0,
+            hover: None,
+            clicks: vec![Point::new(590, 221)],
+            then: vec![],
+            settle: 12,
+            canvas: (768, 470),
+        },
+        Scene {
             // One of them opened, with an answer in it that has markdown in it.
             name: "chat-talk",
             right_click: None,
