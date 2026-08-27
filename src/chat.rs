@@ -445,6 +445,91 @@ impl Change {
     }
 }
 
+/// Take back any decision the model wrote into its own change.
+///
+/// Whether a change was accepted is recorded in the block itself, as
+/// `state="applied"`, which is how a conversation still shows tomorrow what
+/// was done with it. The model sees those blocks in its own history, and
+/// copies the shape: asked to write a file, Qwen3.5 produced
+/// `<write file="facts.md" state="applied">` - already decided, by the one
+/// party that does not get a say.
+///
+/// The application believed it. The change was not pending, so no buttons were
+/// offered; it was not applied either, because nobody had applied it. The file
+/// was silently not written, and the conversation looked like it had been.
+///
+/// So a decision only ever gets into the text from this side of it.
+fn undecided(reply: &str) -> String {
+    let mut out = String::new();
+    let mut at = 0;
+    for (_, tag, open, _) in blocks(reply) {
+        out.push_str(&reply[at..tag]);
+        let bare = strip_state(&reply[tag..open]);
+        let bare = bare.trim_end().trim_end_matches('>').trim_end();
+        out.push_str(bare);
+        out.push('>');
+        at = open;
+    }
+    out.push_str(&reply[at..]);
+    out
+}
+
+/// Put right a change block written as if it were a tool call.
+///
+/// Applied once, as a reply is stored - see [`Chat::answered`].
+///
+/// The two are told apart by nothing but their tags, and a model handed both in
+/// one system prompt sometimes fuses them. Asked to make a file, Qwen3.5 wrote
+///
+/// ```text
+/// <tool_call>
+/// <function=write file="kettle.md">
+/// the kettle is broken.
+/// </write>
+/// </tool_call>
+/// ```
+///
+/// which is this app's own write block wearing a call's opening tag. The intent
+/// is not in doubt - the closing tag says which block was meant - so it is read
+/// as the block it plainly is rather than thrown away, which is what happened
+/// before: the reply came out empty and the conversation showed a blank turn.
+///
+/// Only the four kinds that exist, and only when the matching close is there,
+/// so a genuine call to a tool that happens to share a name is left alone.
+fn unfused(reply: &str) -> std::borrow::Cow<'_, str> {
+    if !reply.contains("<function=") {
+        return std::borrow::Cow::Borrowed(reply);
+    }
+    let mut out = reply.to_string();
+    let mut mended = false;
+    for kind in ["edit", "write", "create", "delete", "merge"] {
+        let opened = format!("<function={kind}");
+        if !out.contains(&opened) {
+            continue;
+        }
+        out = out.replace(&opened, &format!("<{kind}"));
+        mended = true;
+        // The close is fused in more than one way - `</write>` one time,
+        // `</parameter></function>` the next - so whichever wrapper closes
+        // first stands in for the one that was meant.
+        if !out.contains(&format!("</{kind}>")) {
+            for wrapper in ["</parameter>", "</function>", "</tool_call>"] {
+                if out.contains(wrapper) {
+                    out = out.replacen(wrapper, &format!("</{kind}>"), 1);
+                    break;
+                }
+            }
+        }
+    }
+    if !mended {
+        return std::borrow::Cow::Borrowed(reply);
+    }
+    for wrapper in ["<tool_call>", "</tool_call>", "</function>", "</parameter>"] {
+        out = out.replace(wrapper, "");
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Split a reply into what it said and what it proposed.
 ///
 /// The blocks are lifted out of the prose rather than left in it: a reply is
@@ -720,9 +805,18 @@ impl Chat {
         self.waiting = false;
         match reply {
             Ok(text) => {
+                // Put right here, once, rather than wherever a block is read.
+                // What is stored is what the rest of the application works
+                // from: the panel reads the blocks out of it, and answering
+                // one writes the decision back into the same string by the
+                // same offsets. Mending it on the way in keeps those two
+                // looking at the same text - mending it on the way out meant
+                // a change could be offered and then never settle, because
+                // the decision was written against a block the store did not
+                // have.
                 self.turns.push(Turn {
                     mine: false,
-                    text: text.trim().to_string(),
+                    text: undecided(unfused(text.trim()).trim()).trim().to_string(),
                 });
                 self.follow = true;
                 let _ = self.save(dir);

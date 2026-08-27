@@ -5448,3 +5448,49 @@ fn a_question_that_runs_out_of_lookups_still_gets_answered() {
     assert!((6..=14).contains(&n), "bounded, and not at the old five: {n}");
     let _ = Progress::default();
 }
+
+#[test]
+fn a_reply_cannot_decide_its_own_change_or_disguise_it_as_a_call() {
+    use notes::chat::{proposals, Chat};
+    use notes::llm::Turn;
+
+    // Fused: the model wrapped one of this app's change blocks in a tool
+    // call's opening tag. It closes two different ways depending on the day.
+    for fused in [
+        "<tool_call>\n<function=write file=\"kettle.md\">\nbroken.\n</write>\n</tool_call>",
+        "<tool_call>\n<function=write file=\"kettle.md\">\nbroken.\n</parameter>\n</function>\n</tool_call>",
+    ] {
+        let mut chat = Chat::new("home".into(), "notes.md".into());
+        chat.answered(Ok(fused.into()), std::path::Path::new("/tmp"));
+        let stored = &chat.turns.last().expect("a turn").text;
+        let (_, changes) = proposals(stored);
+        assert_eq!(changes.len(), 1, "not read as a change: {stored:?}");
+        assert_eq!(changes[0].file.as_deref(), Some("kettle.md"), "{stored:?}");
+        assert!(changes[0].state.is_none(), "already decided: {stored:?}");
+    }
+
+    // Decided: the model copied `state="applied"` off an earlier settled block
+    // in its own history. Believing it meant no buttons were offered and the
+    // file was never written - the change vanished, quietly.
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    chat.answered(
+        Ok("here you go.\n\n<write file=\"facts.md\" state=\"applied\">\nsome facts.\n</write>".into()),
+        std::path::Path::new("/tmp"),
+    );
+    let stored = &chat.turns.last().expect("a turn").text;
+    assert!(!stored.contains("applied"), "kept its own verdict: {stored:?}");
+    let (prose, changes) = proposals(stored);
+    assert_eq!(changes.len(), 1);
+    assert!(
+        changes[0].state.is_none(),
+        "the one party that does not get a say got one: {stored:?}"
+    );
+    assert!(prose.contains("here you go"), "{prose:?}");
+
+    // And a reply with nothing untoward in it is left exactly as it was.
+    let plain = "just a sentence, no blocks.";
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    chat.answered(Ok(plain.into()), std::path::Path::new("/tmp"));
+    assert_eq!(chat.turns.last().expect("a turn").text, plain);
+    let _ = Turn { mine: true, text: String::new() };
+}

@@ -152,6 +152,18 @@ pub struct UiState {
     layers: Vec<(u32, Rect)>,
     layers_before: Vec<(u32, Rect)>,
     frame: u64,
+    /// Whether to keep a note of where each named widget ended up.
+    ///
+    /// Off, and costing a branch, unless something asks. What asks is a test:
+    /// driving the real application from a synthetic [`crate::Input`] works
+    /// for anything with a key, and falls down on anything that has to be
+    /// clicked, because a test that knows a button is at (1312, 84) is a test
+    /// that breaks when the layout moves by a pixel. With this on it can ask
+    /// where "ACCEPT" is and click the middle of it, which is what a person
+    /// does.
+    indexing: bool,
+    named: HashMap<Id, String>,
+    placed: HashMap<Id, Rect>,
 }
 
 impl UiState {
@@ -165,6 +177,43 @@ impl UiState {
 
     pub fn clear_focus(&mut self) {
         self.focus = None;
+    }
+
+    /// Keep a note of where each named widget is drawn, for a harness that
+    /// wants to click one by name. See [`Self::find`].
+    pub fn index(&mut self, on: bool) {
+        self.indexing = on;
+        if !on {
+            self.named.clear();
+            self.placed.clear();
+        }
+    }
+
+    /// Where the widget with this name was on the last frame drawn.
+    ///
+    /// The name is the one the application passed - a button's label, a
+    /// field's name. `None` for a widget that was not drawn, which is itself
+    /// worth asserting on: a panel that should have closed, a button that
+    /// should not be offered.
+    pub fn find(&self, name: &str) -> Option<Rect> {
+        self.named
+            .iter()
+            .find(|(_, n)| n.as_str() == name)
+            .and_then(|(id, _)| self.placed.get(id))
+            .copied()
+    }
+
+    /// Every name drawn on the last frame, for saying what *was* there when
+    /// something expected is not.
+    pub fn names(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .named
+            .iter()
+            .filter(|(id, _)| self.placed.contains_key(id))
+            .map(|(_, n)| n.clone())
+            .collect();
+        out.sort();
+        out
     }
 }
 
@@ -225,6 +274,10 @@ impl<'a> Ui<'a> {
         state.focus_order.clear();
 
         let root = Layout::new(canvas.bounds(), Dir::Vertical, theme.metrics.gap);
+        if state.indexing {
+            state.placed.clear();
+            state.named.clear();
+        }
         Self {
             canvas,
             input,
@@ -350,6 +403,9 @@ impl<'a> Ui<'a> {
             fnv(base, &count.to_le_bytes())
         };
         *count += 1;
+        if self.state.indexing {
+            self.state.named.insert(id, label.to_string());
+        }
         id
     }
 
@@ -576,6 +632,9 @@ impl<'a> Ui<'a> {
     /// bounds keeps feeding it events, and no other widget lights up. That is
     /// what makes a slider survive a sloppy drag.
     pub fn interact(&mut self, id: Id, rect: Rect) -> Response {
+        if self.state.indexing {
+            self.state.placed.insert(id, rect);
+        }
         let p: Point = self.input.mouse;
         // Blocked input means blocked: a widget drawn under a modal must not
         // take the pointer, and until this said so, `input_blocked` only ever

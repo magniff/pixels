@@ -20,6 +20,7 @@ pub mod calc;
 pub mod chat;
 pub mod clock;
 pub mod dialog;
+pub mod e2e;
 pub mod diff;
 pub mod digest;
 pub mod fetch;

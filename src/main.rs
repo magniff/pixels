@@ -11,6 +11,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // `--e2e` drives the whole application against the real model and checks
+    // what it did to the vault. See `tools/e2e.sh`, which makes the sandbox it
+    // expects to be run in.
+    if std::env::args().any(|a| a == "--e2e") {
+        let failed = notes::e2e::run()?;
+        std::process::exit(i32::from(failed > 0));
+    }
+
     // `--ask <instruction>` runs one edit against whatever is on stdin and
     // prints the answer. A way to try the model, and to see what it costs,
     // without going through the interface at all.

@@ -163,9 +163,26 @@ It is a path dependency of this app rather than the point of the repo, and
 
 ```sh
 cargo run --release -- --shots      # regenerate screenshots/
-cargo test --workspace              # 405 tests
+cargo test --workspace              # 316 tests, 413 with both backends
+tools/e2e.sh                        # the whole app, against the real model
 PIXUI_PROFILE=1 cargo run --release # live frame breakdown
 ```
+
+`tools/e2e.sh` is the one that needs weights. It drives the application with no
+window — typing into the editor, opening a conversation, clicking the buttons
+the model's answers put on screen — and then looks at the vault on disk to see
+whether what was asked for actually happened. Everything runs in a sandbox made
+for the run and thrown away after, with its own settings, so it cannot touch the
+notes you keep. `tools/e2e.sh Ornith` picks a model by name and
+`E2E_ONLY="turned down" tools/e2e.sh` runs one scene.
+
+It tells two kinds of failure apart, because they mean different things. A
+button that is not there, a question that never went, a file not written after
+the change was accepted — those are this code, and they set the exit status. An
+answer that is simply wrong is a model having a poor day, and is reported
+without failing the run. Nearly everything it has caught so far was the first
+kind: a change block the model wrapped in a tool call and lost, a reply that
+came back empty, and a model marking its own change as already accepted.
 
 The model is built in by default, which means a first build compiles llama.cpp
 and wants `cmake` and `clang`. `--no-default-features` leaves it out, and the

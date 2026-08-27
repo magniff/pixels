@@ -1892,3 +1892,27 @@ fn a_frame_can_say_the_gpu_is_wanted_elsewhere() {
     let (_, out) = h.out(|ui| ui.label("DONE"));
     assert!(!out.sharing_gpu);
 }
+
+#[test]
+fn a_widget_can_be_found_by_the_name_it_was_given() {
+    // What a test needs to click a button without knowing where it is. A test
+    // that knows "ACCEPT" is at (1312, 84) breaks when the layout moves by a
+    // pixel; one that asks where "ACCEPT" is does what a person does.
+    let mut h = Harness::new();
+    h.state.index(true);
+    let (_, _) = h.out(|ui| {
+        ui.label("NOT A WIDGET");
+        ui.button("SAVE");
+    });
+    let at = h.state.find("SAVE").expect("the button was drawn");
+    assert!(at.w > 0 && at.h > 0, "and somewhere real: {at:?}");
+    assert!(h.state.names().iter().any(|n| n == "SAVE"));
+    // A label is not something to click, and does not pretend to be.
+    assert_eq!(h.state.find("NOT A WIDGET"), None);
+    // What is gone is gone: the index describes the frame just drawn, which is
+    // what makes "the panel closed" something a test can assert.
+    let (_, _) = h.out(|ui| {
+        ui.label("STILL");
+    });
+    assert_eq!(h.state.find("SAVE"), None);
+}

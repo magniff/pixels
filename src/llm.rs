@@ -280,6 +280,15 @@ pub fn without_machinery(said: &str) -> &str {
     let Some(at) = said.find("<tool_call").or_else(|| said.find("<function=")) else {
         return said;
     };
+    // Only when it really is one. A model that opens a call block and then
+    // writes something else inside it has still written something, and cutting
+    // there hands back an empty reply - which is what happened: asked to make
+    // a file, Qwen3.5 wrapped one of this app's own change blocks in a call it
+    // never finished, and the conversation showed a blank turn where the
+    // answer should have been. Better the machinery than nothing.
+    if called(said).is_none() && said[..at].trim().is_empty() {
+        return said;
+    }
     &said[..at]
 }
 
@@ -522,7 +531,12 @@ fn finish(
         &mut watch,
     )?);
     let mut out: String = used.iter().map(Used::written).collect();
-    out.push_str(without_machinery(&said).trim());
+    // There were no tools to call on this pass, so anything shaped like a call
+    // is not one - it is the model carrying on out of habit, and what it wrote
+    // inside is all the answer there is. Stripping it left nothing at all, and
+    // the conversation showed four lookups followed by a blank.
+    let plain = without_machinery(&said).trim();
+    out.push_str(if plain.is_empty() { said.trim() } else { plain });
     Ok(out)
 }
 

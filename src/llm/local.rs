@@ -877,9 +877,15 @@ impl Local {
             if !watch.carry_on() {
                 return Err("stopped before it had written anything".into());
             }
-            // Nothing to say is an answer: the passage is already what the
-            // instruction asked for. Handing back the source says that in the
-            // one vocabulary the caller understands — a diff with nothing in it.
+            // Nothing to say is an answer to an *edit*: the passage is
+            // already what the instruction asked for, and handing the source
+            // back says so in the one vocabulary a diff understands. A
+            // conversation has no source, so the same line handed back an
+            // empty string and the panel drew a turn with nothing in it -
+            // which reads as the application having lost the answer.
+            if ask.talking() {
+                return Err("it did not answer".into());
+            }
             return Ok(ask.source.clone());
         }
         Ok(text)
