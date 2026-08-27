@@ -231,9 +231,16 @@ impl Progress {
 
 /// The most tools one question may run before it has to answer.
 ///
+/// It was five, which is fewer than some perfectly ordinary questions need: a
+/// table of the last ten Christmases is ten calls to the calendar before a word
+/// can be written, and asking for one got "I looked several things up and did
+/// not get to an answer" - having thrown away all five lookups on the way out.
+/// Twelve covers that, and what happens at the ceiling matters more than where
+/// the ceiling is: see `finish`.
+///
 /// A cap rather than a hope. A model that cannot find what it wants will search
 /// for it again, and again, and there is somebody waiting at the end of it.
-const STEPS: u8 = 5;
+const STEPS: u8 = 12;
 
 /// A call the model made and what came back.
 ///
@@ -429,11 +436,16 @@ fn answer(
             out.push_str(without_machinery(&said).trim());
             return Ok(out);
         };
-        if step >= STEPS {
-            return Ok(format!(
-                "{}I looked several things up and did not get to an answer.",
-                used.iter().map(Used::written).collect::<String>()
-            ));
+        // Out of steps, or going round in one. Either way the thing to do is
+        // not to give up: it has been looking things up all this time and the
+        // answers are sitting in the turns behind it.
+        let repeat = used.iter().any(|u| u.tool == tool && u.arg == arg);
+        if step >= STEPS || repeat {
+            turns.push(Turn {
+                mine: false,
+                text: said,
+            });
+            return finish(backend, &ask, turns, used, beat, words, stop, repeat);
         }
         step += 1;
         let _ = beat.send(Progress {
@@ -456,6 +468,62 @@ fn answer(
         });
         used.push(Used { tool, arg, result });
     }
+}
+
+/// One more pass, with the tools taken away.
+///
+/// What used to happen at the ceiling was a sentence saying it had looked
+/// several things up and got nowhere, with the lookups discarded - the worst of
+/// both, since the answers it needed were already in front of it and the person
+/// waiting got neither them nor a reply.
+///
+/// So it is asked once more without any tools to reach for, which leaves it
+/// nothing to do but write. The results are still in the turns, so a table of
+/// ten Christmases is written from the ten answers rather than abandoned on the
+/// eleventh call.
+#[allow(clippy::too_many_arguments)]
+fn finish(
+    backend: &mut dyn Backend,
+    ask: &Ask,
+    mut turns: Vec<Turn>,
+    used: Vec<Used>,
+    beat: &Sender<Progress>,
+    words: &Sender<String>,
+    stop: &std::sync::atomic::AtomicBool,
+    looping: bool,
+) -> Reply {
+    turns.push(Turn {
+        mine: true,
+        text: if looping {
+            "You have already looked that up and the answer is above. Answer now, \
+             from what you have, without looking anything else up."
+                .into()
+        } else {
+            "That is as much looking up as there is time for. Answer now, from what \
+             you have, without looking anything else up."
+                .into()
+        },
+    });
+    let mut watch = Watching {
+        beat,
+        words,
+        stop,
+        step: STEPS,
+        sent: 0,
+        at: Progress::default(),
+    };
+    let said = to_ascii(&backend.edit(
+        &Ask {
+            turns,
+            // Nothing to reach for, so the only thing left is the answer.
+            tools: Vec::new(),
+            ..ask.clone()
+        },
+        &mut watch,
+    )?);
+    let mut out: String = used.iter().map(Used::written).collect();
+    out.push_str(without_machinery(&said).trim());
+    Ok(out)
 }
 
 /// How long the weights stay resident after the last question.

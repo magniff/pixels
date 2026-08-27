@@ -5382,3 +5382,69 @@ fn copying_a_turn_gives_what_is_on_the_screen() {
     assert!(whole.contains("It is Thursday."), "{whole}");
     assert!(!whole.contains("<used"), "no machinery in it: {whole}");
 }
+
+#[test]
+fn a_question_that_runs_out_of_lookups_still_gets_answered() {
+    use notes::llm::{Ask, Assistant, Backend, Progress, Reply, Tool, Watcher};
+    /// A model that will not stop reaching for the calendar.
+    ///
+    /// Which is what a real one did: asked for a table of the last ten
+    /// Christmases it went round the same call until the ceiling, and the
+    /// person waiting got "I looked several things up and did not get to an
+    /// answer" for their trouble.
+    struct Greedy {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl Backend for Greedy {
+        fn name(&self) -> String {
+            "GREEDY".into()
+        }
+        fn edit(&mut self, ask: &Ask, _w: &mut dyn Watcher) -> Reply {
+            // Tools taken away is the signal to answer, and it does.
+            if ask.tools.is_empty() {
+                return Ok("Here is the table, from what I looked up.".into());
+            }
+            let n = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // A different argument each time, so it is the ceiling that stops
+            // this and not the going-round-in-circles check.
+            Ok(format!(
+                "<tool_call><function=date><parameter=when>202{n}-12-25</parameter></function></tool_call>"
+            ))
+        }
+    }
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut a = Assistant::spawn(Box::new(Greedy {
+        calls: calls.clone(),
+    }));
+    a.ask(Ask {
+        turns: vec![notes::llm::Turn {
+            mine: true,
+            text: "a table of the last ten christmases".into(),
+        }],
+        tools: vec![Tool {
+            name: "date",
+            about: "what day it is",
+            takes: ("when", "a date"),
+        }],
+        ..Default::default()
+    });
+    let said = loop {
+        if let Some(r) = a.poll() {
+            break r.expect("answers rather than failing");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    // It stopped, it did not give up, and what it looked up on the way is
+    // still in the reply.
+    assert!(
+        said.contains("Here is the table"),
+        "answered from what it had: {said}"
+    );
+    assert!(!said.contains("did not get to an answer"), "{said}");
+    assert!(said.contains("<used tool=\"date\""), "kept the lookups: {said}");
+    let n = calls.load(std::sync::atomic::Ordering::Relaxed);
+    assert!((6..=14).contains(&n), "bounded, and not at the old five: {n}");
+    let _ = Progress::default();
+}
