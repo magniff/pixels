@@ -248,3 +248,88 @@ pub fn numbered(text: &str) -> String {
     }
     out
 }
+
+/// What has changed in a project since the model was shown it.
+///
+/// `None` when nothing has. Otherwise a note saying which files moved and what
+/// their lines say now, meant to go at the *end* of a question rather than at
+/// the front with the rest of the project.
+///
+/// That placement is the whole point. Everything before the newest question is
+/// read once and kept; changing a character of the project at the front throws
+/// all of it away and reads it again - measured, a one-line edit to a
+/// five-thousand-token project cost 8.7 seconds on the next question, against
+/// 0.4 for the same question with nothing moved. Left alone at the front and
+/// corrected at the end, that becomes 0.4 as well, and the cost is the size of
+/// the edit rather than the size of the project.
+///
+/// The correction has to be believed over the copy above it, and it is: shown
+/// a file saying the bicycle is red and then told the line now says green, the
+/// model says green, and still says green a turn later.
+pub fn since(shown: &[(String, String)], now: &[(String, String)]) -> Option<String> {
+    let mut out = String::new();
+    for (name, text) in now {
+        match shown.iter().find(|(n, _)| n == name) {
+            None => {
+                out.push_str(&format!("`{name}` is new. It says:\n\n{}\n\n", numbered(text)));
+            }
+            Some((_, before)) if before != text => {
+                out.push_str(&format!("In `{name}`, {}\n\n", replaced(before, text)));
+            }
+            Some(_) => {}
+        }
+    }
+    for (name, _) in shown {
+        if !now.iter().any(|(n, _)| n == name) {
+            out.push_str(&format!("`{name}` is gone.\n\n"));
+        }
+    }
+    (!out.is_empty()).then(|| {
+        format!(
+            "Some of the project has changed since it was written out above. \
+             What follows is what those parts say now, and it is the true version - \
+             where the two disagree, this one is right.\n\n{}",
+            out.trim_end()
+        )
+    })
+}
+
+/// The lines of a file that are not the same any more, with their numbers.
+///
+/// Matched from both ends, because an edit is a contiguous stretch far more
+/// often than it is scattered: what is left in the middle is what moved. A
+/// scattered change collapses to one large middle, which is correct if not
+/// clever, and the caller has a budget for when that stops being worth it.
+fn replaced(before: &str, after: &str) -> String {
+    let (old, new): (Vec<&str>, Vec<&str>) = (before.lines().collect(), after.lines().collect());
+    let head = old
+        .iter()
+        .zip(&new)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let tail = old[head..]
+        .iter()
+        .rev()
+        .zip(new[head..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (from, to) = (head + 1, new.len() - tail);
+    if to < from {
+        // Only removals: nothing new stands where the old lines were.
+        return format!(
+            "lines {from} to {} are gone, and the file is now {} lines long.",
+            old.len() - tail,
+            new.len()
+        );
+    }
+    let body: Vec<String> = new[head..new.len() - tail]
+        .iter()
+        .enumerate()
+        .map(|(i, line)| format!("{:>4} {line}", from + i))
+        .collect();
+    format!(
+        "lines {from} to {to} now read:\n\n{}\n\nThe file is {} lines long.",
+        body.join("\n"),
+        new.len()
+    )
+}

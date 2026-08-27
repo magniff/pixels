@@ -50,6 +50,12 @@ pub struct Ask {
     /// is not the same as being told it has none: a tool it was never offered
     /// is one it cannot mention.
     pub tools: Vec<Tool>,
+    /// What has moved in the project since it was written out in `within`.
+    ///
+    /// Goes at the end, just before the newest question, rather than being
+    /// folded into the project at the front - which is the whole reason it
+    /// exists. See [`crate::digest::since`].
+    pub since: Option<String>,
     /// Whether looking things up is switched off rather than absent.
     ///
     /// The difference is worth telling the model, because the two produce the

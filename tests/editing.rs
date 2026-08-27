@@ -5813,3 +5813,80 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
     let plain = "Here you go.\n<tool_call>\n<function=date>\n<parameter=when>today</parameter>\n</function>\n</tool_call>";
     assert_eq!(without_machinery(plain), "Here you go.");
 }
+
+#[test]
+fn the_project_is_written_out_once_and_corrected_after() {
+    use notes::chat::Chat;
+    let file = |n: &str, t: &str| (n.to_string(), t.to_string());
+    let big = "a line that is here to take up room\n".repeat(60);
+    let one = |tail: &str| {
+        vec![
+            file("notes.md", &format!("# Notes\n\n{big}{tail}")),
+            file("plans.md", "# Plans\n\nBuy a bicycle.\n"),
+        ]
+    };
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+
+    // First time: written out, nothing to correct.
+    let (first, moved) = chat.context(&one("the tap drips\n"));
+    assert!(first.contains("# Notes") && first.contains("# Plans"));
+    assert!(moved.is_none(), "nothing has moved yet");
+
+    // Nothing changed: the same text, to the byte, so it stays in the cache.
+    let (again, moved) = chat.context(&one("the tap drips\n"));
+    assert_eq!(again, first, "the project must not be rewritten");
+    assert!(moved.is_none());
+
+    // A line changed - by this panel or by somebody editing the file in
+    // another window, which is the same thing from here. The project is still
+    // the same text; what moved is said separately.
+    let (still, moved) = chat.context(&one("the tap was fixed\n"));
+    assert_eq!(still, first, "the project must still not be rewritten");
+    let moved = moved.expect("the change is reported");
+    assert!(moved.contains("notes.md"), "{moved}");
+    assert!(moved.contains("the tap was fixed"), "{moved}");
+    assert!(!moved.contains("the tap drips"), "the old line is not repeated");
+    assert!(
+        moved.len() < first.len() / 4,
+        "a one line change should be small beside the project: {} vs {}",
+        moved.len(),
+        first.len()
+    );
+
+    // A new file, and a file taken away.
+    let (_, moved) = chat.context(&[
+        file("notes.md", &format!("# Notes\n\n{big}the tap drips\n")),
+        file("later.md", "# Later\n\nSomething else.\n"),
+    ]);
+    let moved = moved.expect("both are reported");
+    assert!(moved.contains("`later.md` is new"), "{moved}");
+    assert!(moved.contains("`plans.md` is gone"), "{moved}");
+
+    // And when the corrections grow past being worth it, it is written out
+    // again and the corrections stop.
+    let (fresh, moved) = chat.context(&[file("notes.md", "# Notes\n\nAll of it, different.\n")]);
+    assert!(moved.is_none(), "rewritten rather than corrected");
+    assert!(fresh.contains("All of it, different"), "{fresh}");
+    assert!(!fresh.contains("Buy a bicycle"), "the old project is gone: {fresh}");
+    // ...and the new text is now what it compares against.
+    let (_, moved) = chat.context(&[file("notes.md", "# Notes\n\nAll of it, different.\n")]);
+    assert!(moved.is_none(), "nothing has moved since the rewrite");
+}
+
+#[test]
+fn a_conversation_reopened_is_shown_the_project_afresh() {
+    use notes::chat::Chat;
+    // What a chat remembers about the project is what it sent, and it sends
+    // nothing until it is asked to. So one opened tomorrow - or one whose
+    // notes were edited while it was closed - writes the whole thing out
+    // again, which is right and is the only safe answer: it cannot know what
+    // the model was told last time.
+    let files = vec![("notes.md".to_string(), "# Notes\n\nthe tap drips\n".to_string())];
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    let (_, moved) = chat.context(&files);
+    assert!(moved.is_none());
+    let mut reopened = Chat::new("home".into(), "notes.md".into());
+    let (whole, moved) = reopened.context(&files);
+    assert!(moved.is_none(), "nothing to correct against nothing shown");
+    assert!(whole.contains("the tap drips"), "the whole of it: {whole}");
+}

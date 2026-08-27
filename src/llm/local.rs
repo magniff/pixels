@@ -474,13 +474,24 @@ fn render(model: &LlamaModel, system: &str, ask: &Ask, thinks: bool) -> Result<S
         // than stored with the conversation: a chat resumed a week later is
         // then told about the vault as it is now, not as it was when it began.
         let context = surroundings(ask);
+        let last = ask.turns.len().saturating_sub(1);
         for (i, turn) in ask.turns.iter().enumerate() {
             let role = if turn.mine { "user" } else { "assistant" };
-            let text = if i == 0 {
+            let mut text = if i == 0 {
                 format!("{context}{}", turn.text)
             } else {
                 turn.text.clone()
             };
+            // What has moved since goes immediately before the newest question
+            // and nowhere else. Everything ahead of that point is the same
+            // text as last time and is still read from the cache; folding the
+            // update into the project at the front would throw all of that
+            // away, which is the cost this exists to avoid.
+            if i == last {
+                if let Some(moved) = &ask.since {
+                    text = format!("{moved}\n\n---\n\n{text}");
+                }
+            }
             said(role, text, &mut chat)?;
         }
     } else {

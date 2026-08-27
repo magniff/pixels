@@ -177,6 +177,14 @@ pub struct Chat {
     /// the vault list and the note. Told to it once by the application, which
     /// is the thing that assembles them, rather than worked out every frame.
     pub overhead: usize,
+    /// The project as the model was last shown it, whole.
+    ///
+    /// Not saved with the conversation, and deliberately: a chat opened
+    /// tomorrow has shown the model nothing, so it is written out afresh. That
+    /// is also what makes a file edited in another window - or in this one,
+    /// with the panel closed - come out right, because what is compared
+    /// against is what was *sent*, not what the notes were doing at the time.
+    shown: Vec<(String, String)>,
 }
 
 /// A conversation on disk, as the picker lists it.
@@ -700,6 +708,7 @@ impl Chat {
             scroll: ScrollState::default(),
             follow: true,
             overhead: 0,
+            shown: Vec::new(),
         }
     }
 
@@ -802,6 +811,36 @@ impl Chat {
             // than typing it out a second time.
             Err(why) => self.failed = Some(why),
         }
+    }
+
+    /// The project to send, and what has moved since it was last sent.
+    ///
+    /// The first is byte for byte the same text every time until it is worth
+    /// rewriting, so everything before the newest question stays in the
+    /// model's cache. The second says what changed, and goes at the end.
+    ///
+    /// Rewritten rather than corrected when correcting stops being the cheaper
+    /// of the two, which is a thing that can be worked out rather than guessed
+    /// at. Correcting costs the length of the correction, because everything
+    /// before it is still in the model's cache. Rewriting costs the length of
+    /// the whole project, because changing the front of it empties that cache.
+    /// So correct while the correction is the smaller number, and when a
+    /// project has been told it is wrong in so many places that the list is
+    /// longer than the project, show it the project.
+    pub fn context(&mut self, now: &[(String, String)]) -> (String, Option<String>) {
+        if self.shown.is_empty() {
+            self.shown = now.to_vec();
+            return (crate::digest::project(now), None);
+        }
+        let Some(moved) = crate::digest::since(&self.shown, now) else {
+            return (crate::digest::project(&self.shown), None);
+        };
+        let afresh = crate::digest::project(now);
+        if moved.len() >= afresh.len() {
+            self.shown = now.to_vec();
+            return (afresh, None);
+        }
+        (crate::digest::project(&self.shown), Some(moved))
     }
 
     /// Write it out, choosing a name the first time.

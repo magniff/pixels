@@ -1168,7 +1168,7 @@ impl Notes {
     }
 
     /// The conversation, told what it is about.
-    fn chat_ask(&self, talk: &chat::Chat) -> llm::Ask {
+    fn chat_ask(&self, talk: &mut chat::Chat) -> llm::Ask {
         let here = self.note().project.clone();
         let files: Vec<(String, String)> = self
             .notes
@@ -1176,11 +1176,13 @@ impl Notes {
             .filter(|n| n.project == here)
             .map(|n| (n.filename(), n.buffer.to_text()))
             .collect();
+        let (within, since) = talk.context(&files);
         llm::Ask {
             turns: talk.turns.clone(),
             vault: digest::vault(&self.notes),
             file: self.note().slug(),
-            within: Some(digest::project(&files)),
+            within: Some(within),
+            since,
             // Only when it has been turned on, and only for a conversation.
             // A tool the model was never offered is one it cannot reach for
             // and cannot mention.
@@ -1755,7 +1757,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         match talk.show(ui, &folder) {
             chat::Outcome::None => app.chat = Some(talk),
             chat::Outcome::Ask => {
-                let ask = app.chat_ask(&talk);
+                let ask = app.chat_ask(&mut talk);
                 if !app.helper.ask(ask) {
                     talk.waiting = false;
                     talk.failed = Some("still busy with the last one".into());
