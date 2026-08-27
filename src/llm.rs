@@ -177,7 +177,10 @@ end unchanged, and fill it in when you have something better to say than that. T
 edit to mean the file they are looking at, and name a file that was not in the list only \
 when you mean to make it. Line numbers are \
 inclusive, count from one, and are the numbers in the margin - write the replacement \
-without them. An empty edit takes the lines out. One block per reply, and a sentence \
+without them. Change as few lines as the request needs and leave the rest alone: to add \
+something to a file, edit the line it goes after, not the whole of it. Rewriting a file \
+to make one addition means copying out every line you were not asked to touch, and what \
+gets copied out wrong is the part nobody was looking at. An empty edit takes the lines out. One block per reply, and a sentence \
 outside it saying what you changed. Nothing happens to any file until they accept it, so \
 propose the change rather than announcing that you have made it. If you were not asked \
 to change anything, do not write a block at all.";
