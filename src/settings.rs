@@ -48,50 +48,58 @@ pub struct Weights {
 
 /// The two that earned their place.
 ///
-/// Seven were tried on a 24GB Mac against the same battery: six questions with
-/// a checkable answer, two it cannot know - where the answer is saying so -
-/// and one asking for a change in the block format this app reads.
+/// Eleven were tried on a 24GB Mac against the same battery: six questions
+/// with a checkable answer - a sum, a weekday, a day count, something from the
+/// notes themselves, and two dates written the way people write them.
 ///
-/// | model | on disk | right | writing | later questions |
+/// | model | on disk | right | writing | cold |
 /// | --- | --- | --- | --- | --- |
-/// | Qwen3.5 9B | 5.7 GB | 6/6 | 20.7 tok/s | 0.30 s |
-/// | Ornith 1.5 9B | 5.8 GB | 6/6 | 20.9 tok/s | 0.30 s |
-/// | Qwen3 14B | 9.0 GB | 6/6 | 12.5 tok/s | 0.48 s |
-/// | Qwen3.8 27B (IQ3_S) | 12.0 GB | 5/6 | 9.0 tok/s | 0.85 s |
-/// | gpt-oss 20b | 12.1 GB | 3/6 | 40.7 tok/s | 1.48 s |
+/// | Qwen3.5 35B-A3B (IQ3_XXS) | 13.1 GB | 6/6 | 37.3 tok/s | 17 s |
+/// | Qwen3.5 27B (Q3_K_S) | 12.3 GB | 6/6 | 8.5 tok/s | 37 s |
+/// | Ornith 1.5 9B | 5.8 GB | 6/6 | 18.8 tok/s | 12 s |
+/// | Qwen3.5 9B | 5.7 GB | 5/6 | 20.1 tok/s | 12 s |
+/// | Qwen3 14B | 9.0 GB | 6/6 | 12.5 tok/s | 21 s |
+/// | gpt-oss 20b | 12.1 GB | 3/6 | 40.7 tok/s | 13 s |
 ///
-/// Nothing beat the two 9Bs, and the reason is memory rather than merit: 24GB
-/// of it leaves the GPU about sixteen, so a model much past nine gigabytes
-/// spends what is left of the machine on itself. Qwen3.8's smallest release is
-/// 27B, which only fits by quantising it down to where it is slower than a 9B
-/// and no more right.
+/// The 35B is the one to have, and it is a surprise: it is quantised down to
+/// three bits to fit, which has spoiled every other model tried that way. It
+/// survives because only three billion of its thirty-five are awake for any
+/// one token - so it is the largest model here and also the fastest, twice the
+/// speed of a 9B while getting more right.
 ///
-/// gpt-oss 20b came out because it was the largest and the worst: three out of
-/// six, by never reaching for the clock at all and inventing instead - a
-/// Saturday, seven days until Christmas, a date of 20231124, a llama.cpp
-/// release numbered v0.1.0beta. A model that says it does not know is worth
-/// more here than a bigger one that does not know it does not.
+/// The dense 27B matches it for correctness at eight tokens a second, which is
+/// slower than reading. Size on its own buys nothing: gpt-oss 20b, the biggest
+/// thing tried, scored three out of six by never reaching for the clock and
+/// inventing instead - a Saturday, seven days until Christmas, a date of
+/// 20231124, a llama.cpp release numbered v0.1.0beta. A model that says it does
+/// not know is worth more here than a bigger one that does not know it does
+/// not.
 ///
-/// Two others were tried and are not here for reasons of this application
-/// rather than of theirs. LFM2.5 8B writes at 70 tokens a second, three times
-/// anything else, and scored nothing because it calls its tools in a syntax
-/// this does not parse. Gemma 4 will not load at all: its chat template is
-/// eighteen thousand characters of Jinja and the llama.cpp this builds against
-/// answers every one of them with the same error.
+/// Ornith stays as the smaller one. It answers everything the 35B does at half
+/// the size and half the speed, which is the right trade on a machine with
+/// less to spare.
+///
+/// Four were tried and are not here for reasons of this application rather
+/// than of theirs. LFM2.5 8B writes at 70 tokens a second and scored nothing,
+/// because it calls its tools in a syntax this does not parse. Gemma 4 will
+/// not load at all: its chat template is eighteen thousand characters of Jinja
+/// and the llama.cpp this builds against answers every one with the same
+/// error. Kimi K3's smallest quantisation is 466 GB, and DeepSeek V4-Flash's
+/// is 82 GB.
 pub const CATALOGUE: &[Weights] = &[
     Weights {
-        label: "QWEN3.5 9B",
-        file: "Qwen3.5-9B-Q4_K_M.gguf",
-        url: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
-        megabytes: 5680,
-        note: "SAYS WHEN IT DOES NOT KNOW",
+        label: "QWEN3.5 35B",
+        file: "Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf",
+        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf",
+        megabytes: 13100,
+        note: "THE BEST OF THESE, AND THE FASTEST",
     },
     Weights {
         label: "ORNITH 1.5 9B",
         file: "Ornith-1.5-9B-Q4_K_M.gguf",
         url: "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf",
         megabytes: 5780,
-        note: "ANSWERS SHORT, LOOKS THINGS UP",
+        note: "HALF THE SIZE, NEARLY AS RIGHT",
     },
 ];
 
