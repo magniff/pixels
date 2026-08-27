@@ -5627,9 +5627,9 @@ fn a_reply_that_was_only_machinery_says_so_rather_than_nothing() {
             "ALL TAGS".into()
         }
         fn edit(&mut self, _ask: &Ask, _w: &mut dyn Watcher) -> Reply {
-            // No `<parameter=`, so it is not a call; all tags, so nothing is
-            // left of it once they come off.
-            Ok("<tool_call>\n<function=write file=\"sums.md\">\n</function>\n</tool_call>".into())
+            // No `<parameter=`, so it is not a call, and no change block
+            // inside it either: nothing is left once the tags come off.
+            Ok("<tool_call>\n<function=date>\n</function>\n</tool_call>".into())
         }
     }
     let mut a = Assistant::spawn(Box::new(AllTags));
@@ -5652,11 +5652,15 @@ fn a_reply_that_was_only_machinery_says_so_rather_than_nothing() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
     let (prose, _) = notes::chat::lookups(&said);
-    let (prose, _) = notes::chat::proposals(&prose);
+    let (prose, changes) = notes::chat::proposals(&prose);
     // Not blank, and not tags. A turn with nothing in it reads as the
     // application having lost the answer, and the tags are the inside of the
-    // thing they asked a question of.
-    assert!(!prose.trim().is_empty(), "a blank turn: {said:?}");
+    // thing they asked a question of. Something to show means either words or
+    // a change: a reply that is only a block is not blank, it is a diff.
+    assert!(
+        !prose.trim().is_empty() || !changes.is_empty(),
+        "a blank turn: {said:?}"
+    );
     for bracket in ["<tool_call", "<function=", "</function", "</tool_call", "<parameter"] {
         assert!(!prose.contains(bracket), "{bracket} reached the panel: {prose:?}");
     }
@@ -5785,4 +5789,27 @@ fn an_age_is_given_in_years_and_months_not_only_days() {
     let now = notes::clock::about(&on(year)).unwrap();
     assert!(now.contains("which is today"), "{now}");
     assert!(!now.contains(" - 0 "), "{now}");
+}
+
+#[test]
+fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
+    use notes::llm::without_machinery;
+    // The scrub takes out a whole call, opening tag to closing one - and a
+    // change block wearing a call's tags sits inside that span. Asked to add
+    // two children to a note, the model looked up both their birthdays, wrote
+    // the edit, wrapped the lot in a call, and every word of it was deleted as
+    // wiring: two correct lookups and then "it looked that up but did not say
+    // anything about it".
+    let fused = "<tool_call>\n<function=edit file=\"family.md\" lines=\"1-4\">\n- **Danila**: 11 February 2020\n</edit>\n</tool_call>";
+    let kept = without_machinery(fused);
+    assert!(kept.contains("<edit file=\"family.md\""), "lost the block: {kept:?}");
+    assert!(kept.contains("Danila"), "lost the body: {kept:?}");
+    assert!(!kept.contains("tool_call"), "kept the wrapping: {kept:?}");
+    // And the block is then read as the change it is.
+    let (_, changes) = notes::chat::proposals(&kept);
+    assert_eq!(changes.len(), 1, "{kept:?}");
+
+    // A call with nothing of ours inside it still goes entirely.
+    let plain = "Here you go.\n<tool_call>\n<function=date>\n<parameter=when>today</parameter>\n</function>\n</tool_call>";
+    assert_eq!(without_machinery(plain), "Here you go.");
 }

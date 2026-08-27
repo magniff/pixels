@@ -489,62 +489,6 @@ fn undecided(reply: &str) -> String {
     out
 }
 
-/// Put right a change block written as if it were a tool call.
-///
-/// Applied once, as a reply is stored - see [`Chat::answered`].
-///
-/// The two are told apart by nothing but their tags, and a model handed both in
-/// one system prompt sometimes fuses them. Asked to make a file, Qwen3.5 wrote
-///
-/// ```text
-/// <tool_call>
-/// <function=write file="kettle.md">
-/// the kettle is broken.
-/// </write>
-/// </tool_call>
-/// ```
-///
-/// which is this app's own write block wearing a call's opening tag. The intent
-/// is not in doubt - the closing tag says which block was meant - so it is read
-/// as the block it plainly is rather than thrown away, which is what happened
-/// before: the reply came out empty and the conversation showed a blank turn.
-///
-/// Only the four kinds that exist, and only when the matching close is there,
-/// so a genuine call to a tool that happens to share a name is left alone.
-fn unfused(reply: &str) -> std::borrow::Cow<'_, str> {
-    if !reply.contains("<function=") {
-        return std::borrow::Cow::Borrowed(reply);
-    }
-    let mut out = reply.to_string();
-    let mut mended = false;
-    for kind in ["edit", "write", "create", "delete", "merge"] {
-        let opened = format!("<function={kind}");
-        if !out.contains(&opened) {
-            continue;
-        }
-        out = out.replace(&opened, &format!("<{kind}"));
-        mended = true;
-        // The close is fused in more than one way - `</write>` one time,
-        // `</parameter></function>` the next - so whichever wrapper closes
-        // first stands in for the one that was meant.
-        if !out.contains(&format!("</{kind}>")) {
-            for wrapper in ["</parameter>", "</function>", "</tool_call>"] {
-                if out.contains(wrapper) {
-                    out = out.replacen(wrapper, &format!("</{kind}>"), 1);
-                    break;
-                }
-            }
-        }
-    }
-    if !mended {
-        return std::borrow::Cow::Borrowed(reply);
-    }
-    for wrapper in ["<tool_call>", "</tool_call>", "</function>", "</parameter>"] {
-        out = out.replace(wrapper, "");
-    }
-    std::borrow::Cow::Owned(out)
-}
-
 /// Split a reply into what it said and what it proposed.
 ///
 /// The blocks are lifted out of the prose rather than left in it: a reply is
@@ -848,7 +792,7 @@ impl Chat {
                 // have.
                 self.turns.push(Turn {
                     mine: false,
-                    text: undecided(unfused(text.trim()).trim()).trim().to_string(),
+                    text: undecided(crate::llm::unfused(text.trim()).trim()).trim().to_string(),
                 });
                 self.follow = true;
                 let _ = self.save(dir);

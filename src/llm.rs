@@ -277,6 +277,10 @@ impl Used {
 /// and an unterminated block takes the rest with it, since a block half written
 /// is a block still being written.
 pub fn without_machinery(said: &str) -> String {
+    // A change block dressed as a call is put right before anything is taken
+    // away, or it would be taken away with the dressing. See `unfused`.
+    let mended = unfused(said);
+    let said: &str = &mended;
     let mut out = String::with_capacity(said.len());
     let mut rest = said;
     loop {
@@ -333,6 +337,68 @@ const STRAYS: &[&str] = &[
     "[/TOOL_CALL]",
     "[TOOL_CALL]",
 ];
+
+/// Put right a change block written as if it were a tool call.
+///
+/// Applied before the machinery is taken off, and again as a reply is stored.
+/// Before, because the scrub removes a whole call from opening tag to closing
+/// one - and a change block wearing a call's tags is inside that span. Asked
+/// to add two children to a note, the model looked both their birthdays up,
+/// wrote the edit, wrapped it in a call, and the whole thing was deleted as
+/// wiring: two correct lookups followed by "it looked that up but did not say
+/// anything about it".
+///
+/// The two are told apart by nothing but their tags, and a model handed both in
+/// one system prompt sometimes fuses them. Asked to make a file, Qwen3.5 wrote
+///
+/// ```text
+/// <tool_call>
+/// <function=write file="kettle.md">
+/// the kettle is broken.
+/// </write>
+/// </tool_call>
+/// ```
+///
+/// which is this app's own write block wearing a call's opening tag. The intent
+/// is not in doubt - the closing tag says which block was meant - so it is read
+/// as the block it plainly is rather than thrown away, which is what happened
+/// before: the reply came out empty and the conversation showed a blank turn.
+///
+/// Only the four kinds that exist, and only when the matching close is there,
+/// so a genuine call to a tool that happens to share a name is left alone.
+pub fn unfused(reply: &str) -> std::borrow::Cow<'_, str> {
+    if !reply.contains("<function=") {
+        return std::borrow::Cow::Borrowed(reply);
+    }
+    let mut out = reply.to_string();
+    let mut mended = false;
+    for kind in ["edit", "write", "create", "delete", "merge"] {
+        let opened = format!("<function={kind}");
+        if !out.contains(&opened) {
+            continue;
+        }
+        out = out.replace(&opened, &format!("<{kind}"));
+        mended = true;
+        // The close is fused in more than one way - `</write>` one time,
+        // `</parameter></function>` the next - so whichever wrapper closes
+        // first stands in for the one that was meant.
+        if !out.contains(&format!("</{kind}>")) {
+            for wrapper in ["</parameter>", "</function>", "</tool_call>"] {
+                if out.contains(wrapper) {
+                    out = out.replacen(wrapper, &format!("</{kind}>"), 1);
+                    break;
+                }
+            }
+        }
+    }
+    if !mended {
+        return std::borrow::Cow::Borrowed(reply);
+    }
+    for wrapper in ["<tool_call>", "</tool_call>", "</function>", "</parameter>"] {
+        out = out.replace(wrapper, "");
+    }
+    std::borrow::Cow::Owned(out)
+}
 
 /// The tool call a reply is making, if it is making one.
 ///
