@@ -54,21 +54,28 @@ pub fn about(what: &str) -> Result<String, String> {
     };
     if parse(&asked).is_none() {
         if let Some(next) = coming(&asked, &now) {
-            let here = days_from_civil((now.year, now.month, now.day));
+            let now_ymd = (now.year, now.month, now.day);
+            let here = days_from_civil(now_ymd);
             let last = (next.0 - 1, next.1, next.2);
             let (to, since) = (days_from_civil(next) - here, here - days_from_civil(last));
+            let long = |a, b| match spanned(a, b) {
+                s if s.is_empty() => String::new(),
+                s => format!(" - {s}"),
+            };
+            let ahead = format!("{}{}", plural(to, "from today"), long(now_ymd, next));
+            let behind = format!("{} ago{}", plural(since, ""), long(last, now_ymd));
             return Ok(format!(
-                "The next {} is {}, a {}, {}. The one before was {}, a {}, {} ago. Today is {}.",
+                "The next {} is {}, a {}, {}. The one before was {}, a {}, {}. Today is {}.",
                 stamp((0, next.1, next.2)).rsplit_once(' ').map_or_else(
                     || stamp((0, next.1, next.2)),
                     |(day_month, _)| day_month.to_string()
                 ),
                 stamp(next),
                 weekday(days_from_civil(next)),
-                plural(to, "from today"),
+                ahead,
                 stamp(last),
                 weekday(days_from_civil(last)),
-                plural(since, ""),
+                behind,
                 now.said()
             ));
         }
@@ -81,12 +88,18 @@ pub fn about(what: &str) -> Result<String, String> {
         ));
     };
     let gap = days_from_civil(then) - days_from_civil((now.year, now.month, now.day));
+    let now_ymd = (now.year, now.month, now.day);
+    // In years and months as well, past a point. See `spanned`.
+    let long = |a, b| match spanned(a, b) {
+        s if s.is_empty() => String::new(),
+        s => format!(" - {s}"),
+    };
     let when = match gap {
         0 => "which is today".to_string(),
         1 => "which is tomorrow".to_string(),
         -1 => "which was yesterday".to_string(),
-        d if d > 0 => format!("which is {d} days from today"),
-        d => format!("which was {} days ago", -d),
+        d if d > 0 => format!("which is {d} days from today{}", long(now_ymd, then)),
+        d => format!("which was {} days ago{}", -d, long(then, now_ymd)),
     };
     // A year written from memory is the mistake this tool exists to catch, and
     // it is the one it kept making: asked how long until Christmas it named a
@@ -124,6 +137,31 @@ pub fn about(what: &str) -> Result<String, String> {
         now.said(),
         stale.unwrap_or_default()
     ))
+}
+
+/// How long between two days, in the units people use for it.
+///
+/// Days are exact and useless past a certain size: told somebody was 612 days
+/// old, the model divided by 365, rounded, and announced that a child born in
+/// December 2024 had turned two. She is one. Whole calendar years and months
+/// are what anybody means by an age, and counting them is not something to
+/// leave to a model with a division sign.
+fn spanned(from: (i64, i64, i64), to: (i64, i64, i64)) -> String {
+    let (mut years, mut months) = (to.0 - from.0, to.1 - from.1);
+    if to.2 < from.2 {
+        months -= 1;
+    }
+    if months < 0 {
+        years -= 1;
+        months += 12;
+    }
+    let say = |n: i64, unit: &str| format!("{n} {unit}{}", if n == 1 { "" } else { "s" });
+    match (years, months) {
+        (0, 0) => String::new(),
+        (0, m) => say(m, "month"),
+        (y, 0) => say(y, "year"),
+        (y, m) => format!("{} and {}", say(y, "year"), say(m, "month")),
+    }
 }
 
 /// A count of days, said the way somebody would say it.

@@ -5154,6 +5154,8 @@ fn a_day_with_no_year_means_the_next_one_there_is() {
     assert!(said.contains("The one before was"), "{said}");
     assert!(said.contains("days from today"), "{said}");
     assert!(said.contains("days ago"), "{said}");
+    // And how long that is in the units anybody would use for it.
+    assert!(said.contains("months") || said.contains("year"), "{said}");
 }
 
 #[test]
@@ -5749,4 +5751,38 @@ fn an_edit_of_no_particular_lines_is_a_write() {
     let (prose, changes) = proposals(bare);
     assert!(changes.is_empty(), "{changes:?} from {bare:?}");
     assert!(prose.contains("<edit>"), "left visible instead: {prose:?}");
+}
+
+#[test]
+fn an_age_is_given_in_years_and_months_not_only_days() {
+    // Told a child was 612 days old, the model divided by 365, rounded, and
+    // announced she had turned two. She was one. Days are exact and useless
+    // past a certain size, and whole calendar years are not something to leave
+    // to a model with a division sign.
+    //
+    // Worked from today rather than from a date written here, so this still
+    // means something next year.
+    let today = notes::clock::about("today").unwrap();
+    let year: i64 = today
+        .split_whitespace()
+        .filter_map(|w| w.trim_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+        .find(|n: &i64| (2000..3000).contains(n))
+        .expect("a year in it");
+    let rest: Vec<&str> = today.split_whitespace().collect();
+    let (day, month) = (rest[1], rest[2]);
+    let on = |y: i64| format!("{day} {month} {y}");
+
+    // A year to the day is a year, with no months hanging off it.
+    let last = notes::clock::about(&on(year - 1)).unwrap();
+    assert!(last.contains("- 1 year."), "{last}");
+    assert!(!last.contains("1 year and"), "{last}");
+
+    // And several are several.
+    let ago = notes::clock::about(&on(year - 37)).unwrap();
+    assert!(ago.contains("- 37 years."), "{ago}");
+
+    // Today and yesterday have no age to give, and do not pretend to.
+    let now = notes::clock::about(&on(year)).unwrap();
+    assert!(now.contains("which is today"), "{now}");
+    assert!(!now.contains(" - 0 "), "{now}");
 }
