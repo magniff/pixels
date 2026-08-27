@@ -832,6 +832,37 @@ fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
     Err(format!("{WRONG}missing {missing:?}: {said:?}"))
 }
 
+/// A note edited by something other than this, mid-conversation.
+///
+/// The vault used to be read once at startup and never again, so this was
+/// invisible: asked what colour the bike was after the file had been rewritten
+/// in another window, the answer was the colour it used to be.
+fn a_note_changed_behind_its_back(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
+    let bike = app.dir.join("bike.md");
+    std::fs::write(&bike, "# Bike\n\nThe bike is RED.\n")
+        .map_err(|e| format!("could not write the note: {e}"))?;
+    app.steps(60);
+    asking(app, "what colour is the bike? one word.")?;
+    let said = last_answer(app).to_lowercase();
+    if !said.contains("red") {
+        return Err(format!("{WRONG}it should say red: {said:?}"));
+    }
+    // Now somebody else writes it. A whole second, because a filesystem that
+    // keeps seconds cannot tell two writes inside one apart.
+    std::thread::sleep(Duration::from_millis(1100));
+    std::fs::write(&bike, "# Bike\n\nThe bike is GREEN.\n")
+        .map_err(|e| format!("could not rewrite the note: {e}"))?;
+    app.steps(90);
+    asking(app, "and now? one word.")?;
+    let said = last_answer(app).to_lowercase();
+    if said.contains("green") {
+        Ok(())
+    } else {
+        Err(format!("still the old colour: {said:?}"))
+    }
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -869,6 +900,7 @@ const SCENES: &[Scene] = &[
     ("a family of birthdays", a_family_of_birthdays),
     ("a share of a lifetime", a_share_of_a_lifetime),
     ("a passage the model rewrites", a_passage_the_model_rewrites),
+    ("a note changed behind its back", a_note_changed_behind_its_back),
     ("the conversation is kept", the_conversation_is_kept),
 ];
 

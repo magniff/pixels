@@ -70,6 +70,14 @@ fn sidebar_width(canvas_w: i32) -> i32 {
 pub struct Note {
     pub path: Option<PathBuf>,
     pub buffer: Buffer,
+    /// When the file was last written or read by this program.
+    ///
+    /// What tells a change made somewhere else from one made here. Nothing
+    /// else notices: the vault is read once at startup, so a note edited in
+    /// another window stayed as it was in the editor, in the sidebar, and in
+    /// what the assistant was shown - it answered "the bike is red" about a
+    /// file that had said green for ten minutes.
+    pub seen: Option<std::time::SystemTime>,
     /// The project it belongs to: the folder it sits in, under the vault.
     /// Empty for a note lying loose at the top of the vault, which is where
     /// one that has never been saved starts out.
@@ -82,6 +90,7 @@ impl Note {
         Self {
             path: None,
             buffer: Buffer::new(),
+            seen: None,
             project,
         }
     }
@@ -176,6 +185,13 @@ fn points_at(line: &str, stem: &str, project: &str, near: bool) -> bool {
 /// Long enough that it is a pause rather than a gap between two words, short
 /// enough that what you lose to a power cut is a sentence.
 const SETTLED: f32 = 1.5;
+
+/// How often to look for a note changed by something other than this program.
+///
+/// Every frame would be a stat for every note sixty times a second, for a
+/// thing that happens once an hour. Twice a second is far inside what anybody
+/// notices and nothing at all beside one keystroke's work.
+const LOOK: f32 = 0.5;
 
 /// The selection travelling between two notes.
 ///
@@ -284,6 +300,8 @@ pub struct Notes {
     pub chat: Option<chat::Chat>,
     /// Open while somebody is choosing which conversation to carry on.
     pub picker: Option<chat::Picker>,
+    /// Seconds since the vault was last looked at for changes made elsewhere.
+    pub looked: f32,
     /// Seconds since anything was typed, for the save that happens by itself.
     /// Counted from the last change rather than on a timer, so a save lands in
     /// a pause and never in the middle of a sentence.
@@ -344,6 +362,11 @@ pub fn notes_dir() -> PathBuf {
 /// Separate from opening the vault because a vault can be read without being
 /// entered: `--ask` wants the notes to tell the model about, and has no
 /// business seeding a directory or installing a reference note to do it.
+/// When a file was last written, as the filesystem has it.
+fn stamp(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
+}
+
 pub fn read_vault(dir: &Path) -> Vec<Note> {
     let mut notes = markdown_in(dir, "");
     let mut projects: Vec<String> = Vec::new();
@@ -378,9 +401,11 @@ fn markdown_in(dir: &Path, project: &str) -> Vec<Note> {
     paths.sort();
     for path in paths {
         if let Ok(text) = std::fs::read_to_string(&path) {
+            let seen = stamp(&path);
             notes.push(Note {
                 path: Some(path),
                 buffer: Buffer::from_text(&text),
+                seen,
                 project: project.to_string(),
             });
         }
@@ -446,6 +471,7 @@ impl Notes {
             assist_wanted: false,
             chat: None,
             picker: None,
+            looked: 0.0,
             still: 0.0,
             folded: std::collections::HashSet::new(),
             context: None,
@@ -502,10 +528,91 @@ impl Notes {
             };
             if std::fs::write(&path, note.buffer.to_text()).is_ok() {
                 note.buffer.mark_saved();
+                // What this program wrote is not a change made behind its
+                // back, so the mark moves with the file.
+                note.seen = stamp(&path);
                 written += 1;
             }
         }
         written
+    }
+
+    /// Take up any change made to the vault by something other than this.
+    ///
+    /// The vault is read once at startup, so until this existed a note edited
+    /// in another window was invisible: the editor showed the old text, and so
+    /// did the assistant, which answered "the bike is red" about a file that
+    /// had said green since before the question was asked.
+    ///
+    /// A note whose file has been written since this program last touched it
+    /// is read again - unless it has unsaved changes here, in which case what
+    /// somebody typed and has not saved is worth more than tidiness and is
+    /// left exactly where it is. Files that have appeared are picked up, and
+    /// files that have gone are let go of, on the same terms.
+    ///
+    /// Returns how many notes moved, so a caller can say so.
+    pub fn take_up_changes(&mut self) -> usize {
+        let mut moved = 0;
+        for note in &mut self.notes {
+            let Some(path) = note.path.clone() else { continue };
+            let now = stamp(&path);
+            if now == note.seen {
+                continue;
+            }
+            // Somebody's unsaved work is not something to throw away because
+            // another program touched the same file.
+            if note.buffer.dirty {
+                continue;
+            }
+            match std::fs::read_to_string(&path) {
+                Ok(text) if text != note.buffer.to_text() => {
+                    note.buffer = Buffer::from_text(&text);
+                    note.seen = now;
+                    moved += 1;
+                }
+                // Same contents after all - a touch, or our own write seen
+                // twice. Move the mark so it is not looked at again.
+                Ok(_) => note.seen = now,
+                // Gone, or unreadable. Dropped below rather than here, so the
+                // list is not shuffled while it is being walked.
+                Err(_) => {}
+            }
+        }
+        // Anything that has been taken away, and anything that has appeared.
+        let here: Vec<PathBuf> = read_vault(&self.notes_dir)
+            .into_iter()
+            .filter_map(|n| n.path)
+            .collect();
+        let before = self.notes.len();
+        self.notes.retain(|n| match &n.path {
+            Some(p) => here.contains(p) || n.buffer.dirty,
+            None => true,
+        });
+        moved += before - self.notes.len();
+        if self.current >= self.notes.len() {
+            self.current = self.notes.len().saturating_sub(1);
+        }
+        for path in here {
+            if self.notes.iter().any(|n| n.path.as_ref() == Some(&path)) {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let note = Note {
+                    project: self.project_of(&path),
+                    seen: stamp(&path),
+                    path: Some(path),
+                    buffer: Buffer::from_text(&text),
+                };
+                self.insert_note(note);
+                moved += 1;
+            }
+        }
+        // A vault with nothing left in it still needs somewhere to type.
+        if self.notes.is_empty() {
+            self.notes.push(Note::blank(String::new()));
+            self.current = 0;
+        }
+        moved
     }
 
     fn save_to(&mut self, path: &Path) {
@@ -516,9 +623,11 @@ impl Notes {
                     "WROTE {}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 );
+                let stamped = stamp(path);
                 let note = self.note_mut();
                 note.path = Some(path.to_path_buf());
                 note.buffer.mark_saved();
+                note.seen = stamped;
             }
             Err(e) => self.status = format!("WRITE FAILED: {e}"),
         }
@@ -543,6 +652,7 @@ impl Notes {
                     project: self.project_of(path),
                     path: Some(path.to_path_buf()),
                     buffer: Buffer::from_text(&text),
+                    seen: stamp(path),
                 };
                 self.current = self.insert_note(note);
                 self.scroll = 0;
@@ -1168,7 +1278,11 @@ impl Notes {
     }
 
     /// The conversation, told what it is about.
-    fn chat_ask(&self, talk: &mut chat::Chat) -> llm::Ask {
+    fn chat_ask(&mut self, talk: &mut chat::Chat) -> llm::Ask {
+        // Before anything is described to the model, make sure what is being
+        // described is what is on disk. A question asked about a file somebody
+        // edited in another window should be answered about that file.
+        self.take_up_changes();
         let here = self.note().project.clone();
         let files: Vec<(String, String)> = self
             .notes
@@ -1580,6 +1694,18 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         || app.picker.is_some();
     let typing_elsewhere = modal || app.assist.is_some();
     app.caret_phase += ui.input.dt;
+
+    // ---- what somebody else changed --------------------------------------
+    // Looked for a few times a second rather than every frame: it is a stat
+    // for each note, which is cheap but not free, and a file being edited
+    // elsewhere is not something that needs answering within 16ms.
+    app.looked += ui.input.dt;
+    if app.looked > LOOK {
+        app.looked = 0.0;
+        if app.take_up_changes() > 0 {
+            app.status = "A NOTE CHANGED ON DISK".into();
+        }
+    }
 
     // ---- the save nobody asked for ---------------------------------------
     // A pause in the typing is when a note goes to disk. Anything at all that

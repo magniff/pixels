@@ -1079,6 +1079,7 @@ fn note(body: &str, path: Option<&str>) -> notes::Note {
         path: path.map(std::path::PathBuf::from),
         buffer: Buffer::from_text(body),
         project: String::new(),
+        seen: None,
     }
 }
 
@@ -1184,6 +1185,7 @@ fn naming_a_note_that_was_never_saved_writes_it() {
         path: None,
         buffer: Buffer::from_text("scratch"),
         project: String::new(),
+        seen: None,
     });
     let i = app.notes.len() - 1;
 
@@ -3093,6 +3095,7 @@ fn vault_of(notes: &[(&str, &str)]) -> Vec<notes::Note> {
             path: Some(std::path::PathBuf::from(file)),
             buffer: Buffer::from_text(text),
             project: String::new(),
+            seen: None,
         })
         .collect()
 }
@@ -5889,4 +5892,54 @@ fn a_conversation_reopened_is_shown_the_project_afresh() {
     let (whole, moved) = reopened.context(&files);
     assert!(moved.is_none(), "nothing to correct against nothing shown");
     assert!(whole.contains("the tap drips"), "the whole of it: {whole}");
+}
+
+#[test]
+fn a_note_changed_by_something_else_is_taken_up() {
+    // The vault was read once at startup and never again, so a note edited in
+    // another window stayed as it was everywhere it mattered: the editor, the
+    // sidebar, and the project the assistant is shown. Asked what colour the
+    // bike was, it said red about a file that had said green for ten minutes.
+    let dir = std::env::temp_dir().join(format!("notes-outside-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a vault");
+    std::fs::write(dir.join("bike.md"), "# Bike\n\nThe bike is red.\n").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    let text = |app: &notes::Notes| {
+        app.notes
+            .iter()
+            .find(|n| n.filename() == "bike.md")
+            .map(|n| n.buffer.to_text())
+            .unwrap_or_default()
+    };
+    assert!(text(&app).contains("red"), "{:?}", text(&app));
+
+    // Somebody else writes it. The stamp has to move, and a filesystem that
+    // keeps whole seconds would not notice two writes in the same one.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(dir.join("bike.md"), "# Bike\n\nThe bike is green.\n").expect("rewritten");
+    assert!(app.take_up_changes() > 0, "nothing noticed");
+    assert!(text(&app).contains("green"), "still: {:?}", text(&app));
+
+    // A note appearing is picked up, and one taken away is let go of.
+    std::fs::write(dir.join("kettle.md"), "# Kettle\n").expect("a new note");
+    app.take_up_changes();
+    assert!(app.notes.iter().any(|n| n.filename() == "kettle.md"), "the new one");
+    std::fs::remove_file(dir.join("kettle.md")).expect("gone");
+    app.take_up_changes();
+    assert!(!app.notes.iter().any(|n| n.filename() == "kettle.md"), "the gone one");
+
+    // And what somebody has typed and not saved is worth more than tidiness.
+    let i = app.notes.iter().position(|n| n.filename() == "bike.md").expect("there");
+    app.notes[i].buffer = notes::text::Buffer::from_text("# Bike\n\nmine, unsaved\n");
+    app.notes[i].buffer.dirty = true;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(dir.join("bike.md"), "# Bike\n\ntheirs\n").expect("rewritten again");
+    app.take_up_changes();
+    assert!(
+        text(&app).contains("mine, unsaved"),
+        "an unsaved note was thrown away: {:?}",
+        text(&app)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
