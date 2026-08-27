@@ -5862,17 +5862,22 @@ fn the_project_is_written_out_once_and_corrected_after() {
         file("later.md", "# Later\n\nSomething else.\n"),
     ]);
     let moved = moved.expect("both are reported");
-    assert!(moved.contains("`later.md` is new"), "{moved}");
+    assert!(moved.contains("`later.md` now contains"), "{moved}");
     assert!(moved.contains("`plans.md` is gone"), "{moved}");
 
-    // And when the corrections grow past being worth it, it is written out
-    // again and the corrections stop.
+    // And when the corrections grow past being worth it, the project is
+    // written out again - but what moved is still said at the end, because
+    // that is the part that gets noticed. A file rewritten at the front sits
+    // behind every turn of the conversation, and a conversation that has been
+    // saying one thing for six turns drowns it.
     let (_, fresh, moved) =
         chat.context("- `notes.md`", &[file("notes.md", "# Notes\n\nAll of it, different.\n")]);
-    assert!(moved.is_none(), "rewritten rather than corrected");
     assert!(fresh.contains("All of it, different"), "{fresh}");
     assert!(!fresh.contains("Buy a bicycle"), "the old project is gone: {fresh}");
-    // ...and the new text is now what it compares against.
+    let moved = moved.expect("still told what moved");
+    assert!(moved.contains("notes.md"), "{moved}");
+    // ...and the new text is now what it compares against, so once it settles
+    // there is nothing left to say.
     let (_, _, moved) =
         chat.context("- `notes.md`", &[file("notes.md", "# Notes\n\nAll of it, different.\n")]);
     assert!(moved.is_none(), "nothing has moved since the rewrite");

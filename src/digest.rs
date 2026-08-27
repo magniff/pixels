@@ -271,7 +271,10 @@ pub fn since(shown: &[(String, String)], now: &[(String, String)]) -> Option<Str
     for (name, text) in now {
         match shown.iter().find(|(n, _)| n == name) {
             None => {
-                out.push_str(&format!("`{name}` is new. It says:\n\n{}\n\n", numbered(text)));
+                out.push_str(&format!(
+                    "`{name}` now contains, in full:\n\n{}\n\n",
+                    numbered(text)
+                ));
             }
             Some((_, before)) if before != text => {
                 out.push_str(&format!("In `{name}`, {}\n\n", replaced(before, text)));
@@ -286,9 +289,11 @@ pub fn since(shown: &[(String, String)], now: &[(String, String)]) -> Option<Str
     }
     (!out.is_empty()).then(|| {
         format!(
-            "Some of the project has changed since it was written out above. \
-             What follows is what those parts say now, and it is the true version - \
-             where the two disagree, this one is right.\n\n{}",
+            "STOP. The files below have changed on disk since anything you have been \
+             told about them - including the copy written out at the top of this \
+             conversation, and including anything you or the user said about them in \
+             earlier turns. All of that is out of date and must be ignored. What \
+             follows is the only current text. Answer from this and nothing else.\n\n{}",
             out.trim_end()
         )
     })

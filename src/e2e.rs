@@ -893,6 +893,65 @@ fn a_note_changed_behind_its_back(app: &mut App) -> Result<(), String> {
     }
 }
 
+/// The reported one, to the letter: a note in a project, made by the model,
+/// then the file changed from outside.
+fn a_note_in_a_project_changed_outside(app: &mut App) -> Result<(), String> {
+    // A project, and the editor looking at something in it - which is what
+    // decides the project a conversation is about.
+    let folder = app.dir.join("new-one");
+    std::fs::create_dir_all(&folder).map_err(|e| format!("{e}"))?;
+    // A name nothing else in the vault shares, because the finder takes the
+    // best match and by this point there are a dozen notes to match against.
+    std::fs::write(folder.join("zzqqseed.md"), "# Seed\n\nsomething.\n")
+        .map_err(|e| format!("{e}"))?;
+    app.steps(90);
+    // The keyboard first: a conversation left open by the scene before takes
+    // every key, and the finder never hears about it.
+    if app.app.chat.is_some() {
+        chatting(app)?;
+        app.key(Key::Escape);
+        app.steps(4);
+    }
+    app.press(Key::Char('e'), cmd(Key::Char('e')));
+    app.press(Key::Char('p'), cmd(Key::Char('p')));
+    app.typed("zzqqseed");
+    app.key(Key::Enter);
+    app.steps(6);
+    if app.app.note().project != "new-one" {
+        return Err(format!(
+            "the editor is in {:?} on {:?}, not the project",
+            app.app.note().project,
+            app.app.note().filename()
+        ));
+    }
+    fresh_chat(app)?;
+    asking(app, "make a note stating that the cycle is red, call the note cycle.md")?;
+    if accept_all(app) == 0 {
+        return Err(format!(
+            "{WRONG}nothing proposed: {:?}",
+            last_answer(app).chars().take(120).collect::<String>()
+        ));
+    }
+    let bike = folder.join("cycle.md");
+    if !bike.exists() {
+        return Err(format!("no new-one/cycle.md. vault: {:?}", app.vault()));
+    }
+    asking(app, "what colour is the cycle? one word.")?;
+    if !last_answer(app).to_lowercase().contains("red") {
+        return Err(format!("{WRONG}should be red: {:?}", last_answer(app)));
+    }
+    std::thread::sleep(Duration::from_millis(1100));
+    std::fs::write(&bike, "# Cycle\n\nThe cycle is green.\n").map_err(|e| format!("{e}"))?;
+    app.steps(90);
+    asking(app, "what colour is the cycle now? one word.")?;
+    let said = last_answer(app).to_lowercase();
+    if said.contains("green") {
+        Ok(())
+    } else {
+        Err(format!("still says: {said:?}"))
+    }
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -931,6 +990,7 @@ const SCENES: &[Scene] = &[
     ("a share of a lifetime", a_share_of_a_lifetime),
     ("a passage the model rewrites", a_passage_the_model_rewrites),
     ("a note changed behind its back", a_note_changed_behind_its_back),
+    ("a note in a project changed outside", a_note_in_a_project_changed_outside),
     ("the conversation is kept", the_conversation_is_kept),
 ];
 

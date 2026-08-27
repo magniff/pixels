@@ -841,13 +841,22 @@ impl Chat {
         index: &str,
         now: &[(String, String)],
     ) -> (String, String, Option<String>) {
-        let afresh = |chat: &mut Self| {
+        // Written out again, and still told at the end what moved.
+        //
+        // The rewrite is about what it costs to read; the note at the end is
+        // about what gets noticed. A file rewritten at the front sits before
+        // every turn of the conversation, and a conversation that has been
+        // saying "the bike is red" for six turns drowns it: shown a project
+        // that plainly said green, the model went on answering red, because
+        // the last thing said about the bike was its own. What is put in front
+        // of the question is not.
+        let afresh = |chat: &mut Self, moved: Option<String>| {
             chat.shown_index = index.to_string();
             chat.shown = now.to_vec();
-            (index.to_string(), crate::digest::project(now), None)
+            (index.to_string(), crate::digest::project(now), moved)
         };
         if self.shown.is_empty() {
-            return afresh(self);
+            return afresh(self, None);
         }
         let moved = crate::digest::since(&self.shown, now);
         let listed = (self.shown_index != index).then(|| {
@@ -870,7 +879,7 @@ impl Chat {
             None => moved,
         };
         if both.len() >= crate::digest::project(now).len() + index.len() {
-            return afresh(self);
+            return afresh(self, Some(both));
         }
         (
             self.shown_index.clone(),
