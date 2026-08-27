@@ -48,18 +48,22 @@ pub struct Weights {
 
 /// The two that earned their place.
 ///
-/// Eleven were tried on a 24GB Mac against the same battery: six questions
+/// Thirteen were tried on a 24GB Mac against the same battery: six questions
 /// with a checkable answer - a sum, a weekday, a day count, something from the
 /// notes themselves, and two dates written the way people write them.
 ///
-/// | model | on disk | right | writing | cold |
-/// | --- | --- | --- | --- | --- |
-/// | Qwen3.5 35B-A3B (IQ3_XXS) | 13.1 GB | 6/6 | 37.3 tok/s | 17 s |
-/// | Qwen3.5 27B (Q3_K_S) | 12.3 GB | 6/6 | 8.5 tok/s | 37 s |
-/// | Ornith 1.5 9B | 5.8 GB | 6/6 | 18.8 tok/s | 12 s |
-/// | Qwen3.5 9B | 5.7 GB | 5/6 | 20.1 tok/s | 12 s |
-/// | Qwen3 14B | 9.0 GB | 6/6 | 12.5 tok/s | 21 s |
-/// | gpt-oss 20b | 12.1 GB | 3/6 | 40.7 tok/s | 13 s |
+/// | model | on disk | right | writing | cold | scenes |
+/// | --- | --- | --- | --- | --- | --- |
+/// | Qwen3.6 35B-A3B (IQ3_XXS) | 13.2 GB | 7/7 | 37.5 tok/s | 12 s | 9/9 |
+/// | Qwen3.5 35B-A3B (IQ3_XXS) | 13.1 GB | 7/7 | 36.6 tok/s | 15 s | 7/9 |
+/// | Qwen3.5 27B (Q3_K_S) | 12.3 GB | 6/6 | 8.5 tok/s | 37 s | - |
+/// | Ornith 1.5 9B | 5.8 GB | 6/6 | 18.8 tok/s | 12 s | 7/9 |
+/// | Qwen3.5 9B | 5.7 GB | 5/6 | 20.1 tok/s | 12 s | 6/9 |
+/// | gpt-oss 20b | 12.1 GB | 3/6 | 40.7 tok/s | 13 s | - |
+///
+/// The last column is `tools/e2e.sh`, which drives the whole application and
+/// then looks at the vault. Qwen3.6 is the only one that has answered every
+/// scene of it.
 ///
 /// The 35B is the one to have, and it is a surprise: it is quantised down to
 /// three bits to fit, which has spoiled every other model tried that way. It
@@ -85,13 +89,15 @@ pub struct Weights {
 /// not load at all: its chat template is eighteen thousand characters of Jinja
 /// and the llama.cpp this builds against answers every one with the same
 /// error. Kimi K3's smallest quantisation is 466 GB, and DeepSeek V4-Flash's
-/// is 82 GB.
+/// is 82 GB. There is no Qwen3.7; the line goes 3.5, 3.6, 3.8, and every
+/// Qwen3.8 is out of reach - the 27B answers five of six at eight tokens a
+/// second, and Flash-Next is 72 GB before it is quantised at all.
 pub const CATALOGUE: &[Weights] = &[
     Weights {
-        label: "QWEN3.5 35B",
-        file: "Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf",
-        url: "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf",
-        megabytes: 13100,
+        label: "QWEN3.6 35B",
+        file: "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+        url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+        megabytes: 13200,
         note: "THE BEST OF THESE, AND THE FASTEST",
     },
     Weights {
