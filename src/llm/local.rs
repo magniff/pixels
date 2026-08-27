@@ -68,6 +68,14 @@ const MOUTHFUL: usize = 128;
 /// the whole thing again and the cost of being generous is 64 tokens.
 const MARGIN: usize = 64;
 
+/// How many marks to keep.
+///
+/// Each is fifty megabytes of host memory, so this is a small number by
+/// necessity. Three is enough for the two cases that actually happen - the
+/// next turn of this conversation, and a different question about the same
+/// project - with one spare.
+const MARKS: usize = 3;
+
 /// Where the weights are, unless `PIXUI_MODEL` says otherwise.
 pub fn default_path() -> PathBuf {
     std::env::var_os("PIXUI_MODEL")
@@ -103,12 +111,20 @@ struct Held {
     /// question read against a cache that says it holds something it does not
     /// is answered from somebody else's sentence.
     seen: Vec<LlamaToken>,
-    /// A point the sequence can be put back to, for a model that cannot be cut.
+    /// Points the sequence can be put back to, for a model that cannot be cut.
     ///
-    /// The position it was taken at, and llama.cpp's own snapshot of the
-    /// running state there. Only ever one: it is fifty megabytes and a tenth of
-    /// a second to take, which is worth paying once a question and not more.
-    mark: Option<(usize, SeqState)>,
+    /// Each is a position and llama.cpp's own snapshot of the running state
+    /// there. More than one because a question can differ from the last in two
+    /// quite different places. Another turn of the same conversation shares
+    /// everything but its ending, and wants a mark near the end. A new question
+    /// about the same project shares the project and nothing after it, and
+    /// wants one much earlier - with only a late mark, that case measured 13.7
+    /// seconds against 2.1, because the only mark it had sat past the point
+    /// where the two questions parted.
+    ///
+    /// So they are kept spread out rather than clustered, and the one used is
+    /// the furthest along that is still inside the shared part.
+    marks: Vec<(usize, SeqState)>,
     /// Whether `trims` has been found out yet, rather than assumed.
     ///
     /// It is only learnt by trying, and the first question has nothing in the
@@ -165,7 +181,7 @@ impl Held {
         Ok(Self {
             ctx,
             seen: Vec::new(),
-            mark: None,
+            marks: Vec::new(),
             probed: false,
             trims: true,
             room,
@@ -207,7 +223,7 @@ impl Held {
         self.rewind(common)
     }
 
-    /// Put the sequence back to the mark, if the mark is inside what is shared.
+    /// Put the sequence back to the best mark inside what is shared.
     ///
     /// For the models that cannot be cut. Restoring the running state is what
     /// makes the cut legal: the same `kv_cache_seq_rm` that answers "couldn't
@@ -216,12 +232,16 @@ impl Held {
     /// was. Measured exact - after a rewind and a re-read, the same top token
     /// and not one logit different.
     fn rewind(&mut self, common: usize) -> usize {
-        let Some((at, state)) = self.mark.take() else {
+        let Some(best) = self.marks.iter().rposition(|(at, _)| *at <= common) else {
             self.forget();
             return 0;
         };
-        if at > common
-            || self.ctx.state_seq_set(&state, 0).is_err()
+        // Everything past the one being used describes a continuation that is
+        // about to stop being true.
+        self.marks.truncate(best + 1);
+        let (at, state) = self.marks.last().expect("found above");
+        let at = *at;
+        if self.ctx.state_seq_set(state, 0).is_err()
             || self.ctx.kv_cache_seq_rm(0, Some(at as u32), None).is_err()
         {
             self.forget();
@@ -236,7 +256,7 @@ impl Held {
     fn forget(&mut self) {
         self.ctx.clear_kv_cache();
         self.seen.clear();
-        self.mark = None;
+        self.marks.clear();
     }
 
     /// The same weights with a bigger context around them.
@@ -264,13 +284,42 @@ impl Held {
         Ok(Self {
             ctx,
             seen: Vec::new(),
-            mark: None,
+            marks: Vec::new(),
             probed,
             trims,
             room,
             model,
             backend,
         })
+    }
+}
+
+/// Keep this point, and keep the kept ones spread out.
+///
+/// A mark is fifty megabytes and a tenth of a second, so there is a small
+/// number of them and the question is which to let go of. The one dropped is
+/// whichever sits closest to its neighbour: two marks a few tokens apart
+/// answer the same question twice and leave the rest of the sequence with
+/// nothing. It is also what keeps the useful one. The first mark of a
+/// conversation lands just before the project the question is about, which is
+/// exactly where every later question about that project stops matching - and
+/// because everything after it arrives in a cluster at the far end, the gap in
+/// front of it is the biggest there is and it is the last thing dropped.
+fn remember(marks: &mut Vec<(usize, SeqState)>, at: usize, state: SeqState) {
+    marks.retain(|(p, _)| *p != at);
+    marks.push((at, state));
+    marks.sort_by_key(|(p, _)| *p);
+    while marks.len() > MARKS {
+        let mut crowded = 1;
+        let mut closest = usize::MAX;
+        for i in 1..marks.len() {
+            let gap = marks[i].0 - marks[i - 1].0;
+            if gap < closest {
+                closest = gap;
+                crowded = i;
+            }
+        }
+        marks.remove(crowded);
     }
 }
 
@@ -636,7 +685,7 @@ impl Local {
             ctx,
             model,
             seen,
-            mark,
+            marks,
             ..
         } = held;
 
@@ -693,12 +742,12 @@ impl Local {
             // is answered against it.
             seen.extend_from_slice(chunk);
             if stop == Some(close) {
-                // Fifty megabytes and a tenth of a second, once. Against
-                // reading five thousand tokens again, which is nine seconds.
-                *mark = ctx
-                    .state_seq_get(0, LlamaStateSeqFlags::PARTIAL_ONLY)
-                    .ok()
-                    .map(|state| (seen.len(), state));
+                // Fifty megabytes and a tenth of a second, once a question.
+                // Against reading five thousand tokens again, which is nine
+                // seconds.
+                if let Ok(state) = ctx.state_seq_get(0, LlamaStateSeqFlags::PARTIAL_ONLY) {
+                    remember(marks, seen.len(), state);
+                }
             }
             // Say how far in it has got. Before this the first word out of the
             // worker was the first word of the answer, so the whole of reading
@@ -840,6 +889,46 @@ impl Local {
 #[cfg(test)]
 mod tests {
     use super::shared_prefix;
+
+    #[test]
+    fn marks_are_kept_spread_out_rather_than_clustered() {
+        use super::MARKS;
+        // Positions only; the states themselves cannot be forged from safe
+        // code, so this stands in for them with what the rule actually reads.
+        fn thin(marks: &mut Vec<usize>, at: usize) {
+            marks.retain(|p| *p != at);
+            marks.push(at);
+            marks.sort_unstable();
+            while marks.len() > MARKS {
+                let mut crowded = 1;
+                let mut closest = usize::MAX;
+                for i in 1..marks.len() {
+                    let gap = marks[i] - marks[i - 1];
+                    if gap < closest {
+                        closest = gap;
+                        crowded = i;
+                    }
+                }
+                marks.remove(crowded);
+            }
+        }
+        // What a conversation actually does: one mark just before the project
+        // it is about, and then a cluster at the far end as it goes on. The
+        // early one is the one every *new* question needs, and the rule has to
+        // keep it - it was losing it that cost 13.7 seconds against 2.1.
+        let mut marks = Vec::new();
+        for at in [5659, 5757, 5821, 5835, 5902, 6400, 7000] {
+            thin(&mut marks, at);
+        }
+        assert!(marks.len() <= MARKS);
+        assert_eq!(marks[0], 5659, "the mark in front of the project is kept");
+        assert!(marks.windows(2).all(|w| w[0] < w[1]), "in order: {marks:?}");
+        // And the same position twice is one mark, not two.
+        let mut marks = Vec::new();
+        thin(&mut marks, 100);
+        thin(&mut marks, 100);
+        assert_eq!(marks, vec![100]);
+    }
 
     #[test]
     fn what_is_already_read_is_never_the_whole_question() {
