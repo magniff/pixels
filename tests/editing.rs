@@ -5143,13 +5143,17 @@ fn today_is_answered_without_being_asked_which_day_it_is() {
 #[test]
 fn a_day_with_no_year_means_the_next_one_there_is() {
     // Which is what somebody asking how long until Christmas means by it, and
-    // what stopped the model reaching for a year out of its training.
+    // what stopped the model reaching for a year out of its training. It says
+    // when the one before was as well: a day that comes round is asked about
+    // in both directions - "when is the next and how long since the last" is
+    // one question - and answering half of it is how the other half came to be
+    // counted by hand, and wrongly: 274 days, then 306, then 366, where it was
+    // 245.
     let said = notes::clock::about("12-25").unwrap();
-    assert!(said.contains("25 December"), "{said}");
-    assert!(
-        !said.contains("days ago"),
-        "the next one, not the last one: {said}"
-    );
+    assert!(said.contains("The next 25 December"), "{said}");
+    assert!(said.contains("The one before was"), "{said}");
+    assert!(said.contains("days from today"), "{said}");
+    assert!(said.contains("days ago"), "{said}");
 }
 
 #[test]
@@ -5341,11 +5345,15 @@ fn asked_for_today_the_clock_says_not_to_count_from_it() {
     // what actually landed: 6 out of 6 afterwards, against 4.
     let now = notes::clock::about("today").unwrap();
     assert!(now.contains("the time is"), "{now}");
-    assert!(now.contains("ask again for that day"), "{now}");
+    assert!(now.contains("Do not work out how far off"), "{now}");
+    // With the form spelled out rather than described. An instruction to ask
+    // "with the day instead" was followed about as often as it was ignored;
+    // naming 12-25 in it is what carried.
+    assert!(now.contains("12-25"), "{now}");
     // And not on the answers that are already about another day, which say how
     // far off it is and have nothing to warn against.
     let then = notes::clock::about("12-25").unwrap();
-    assert!(!then.contains("ask again for that day"), "{then}");
+    assert!(!then.contains("Do not work out"), "{then}");
     assert!(then.contains("days from today"), "{then}");
 }
 

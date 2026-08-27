@@ -29,14 +29,44 @@ pub fn about(what: &str) -> Result<String, String> {
         // 120. Telling it here - a line before it writes - is worth more than
         // another sentence in a description it read five thousand tokens ago.
         return Ok(format!(
-            "{}. To find how far off another day is, ask again for that day \
-             rather than counting from this one: you cannot count days and \
-             this can.",
+            "{}. Do not work out how far off another day is by counting from \
+             this one - you cannot count days and this can. Ask it again with \
+             the day instead: 12-25 for Christmas, 11-03 for the third of \
+             November. It answers with the next one and the one before, so \
+             that is both directions in a single question.",
             now.said()
         ));
     }
-    // A day and a month with no year means the next one there is, which is
-    // what somebody asking how long until Christmas means by it.
+    // A day and a month with no year is not one day, it is one that comes
+    // round - and asked about one of those, people mean both ends of it. "When
+    // is the next Christmas and how long since the last" is one question, and
+    // answering half of it is how the other half gets counted by hand: asked
+    // that, the model called this once and then worked the rest out itself,
+    // making the last Christmas 274 days ago, then 306, then a Wednesday. It
+    // was 245 days and a Thursday. So a recurring day answers about both, and
+    // there is nothing left to count.
+    if parse(&asked).is_none() {
+        if let Some(next) = coming(&asked, &now) {
+            let here = days_from_civil((now.year, now.month, now.day));
+            let last = (next.0 - 1, next.1, next.2);
+            let (to, since) = (days_from_civil(next) - here, here - days_from_civil(last));
+            return Ok(format!(
+                "The next {} is {}, a {}, {}. The one before was {}, a {}, {} ago. Today is {}.",
+                stamp((0, next.1, next.2)).rsplit_once(' ').map_or_else(
+                    || stamp((0, next.1, next.2)),
+                    |(day_month, _)| day_month.to_string()
+                ),
+                stamp(next),
+                weekday(days_from_civil(next)),
+                plural(to, "from today"),
+                stamp(last),
+                weekday(days_from_civil(last)),
+                plural(since, ""),
+                now.said()
+            ));
+        }
+    }
+
     let Some(then) = parse(&asked).or_else(|| coming(&asked, &now)) else {
         return Err(format!(
             "{what} is not a date this understands - write it as 2026-12-25, or 12-25 for the \
@@ -67,13 +97,40 @@ pub fn about(what: &str) -> Result<String, String> {
             then.2
         )
     });
+    // The same day a year either side, because a date asked about by name is
+    // usually one that comes round, and the question after "when is the next"
+    // is "and when was the last". Asked with the year spelled out, the model
+    // got the one it asked for right and then invented the other: 366 days,
+    // 80 days, where it was 245.
+    let before = (then.0 - 1, then.1, then.2);
+    let gap_before = days_from_civil((now.year, now.month, now.day)) - days_from_civil(before);
+    let neighbour = format!(
+        " The same day a year earlier, {}, was a {} and was {} days ago.",
+        stamp(before),
+        weekday(days_from_civil(before)),
+        gap_before
+    );
     Ok(format!(
-        "{} is a {}, {when}. Today is {}.{}",
+        "{} is a {}, {when}.{neighbour} Today is {}.{}",
         stamp(then),
         weekday(days_from_civil(then)),
         now.said(),
         stale.unwrap_or_default()
     ))
+}
+
+/// A count of days, said the way somebody would say it.
+fn plural(days: i64, tail: &str) -> String {
+    let n = match days {
+        0 => "today".to_string(),
+        1 => "1 day".to_string(),
+        d => format!("{d} days"),
+    };
+    match (days, tail.is_empty()) {
+        (0, _) => n,
+        (_, true) => n,
+        _ => format!("{n} {tail}"),
+    }
 }
 
 /// `12-25` and the like: the next time that day comes round.
