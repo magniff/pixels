@@ -12,6 +12,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::context::session::{LlamaStateSeqFlags, SeqState};
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
@@ -55,6 +56,18 @@ const RESERVE: usize = 2048;
 /// dispatch that has already started, and only a shorter dispatch helps.
 const MOUTHFUL: usize = 128;
 
+/// How far short of the end of a question to take a mark, in tokens.
+///
+/// Only for the models that need one. The end of a question is the chat
+/// template's way of saying "your turn"; the next question says the same thing
+/// with the answer written into it, and the two stop agreeing a few tokens
+/// before the end. Measured on Qwen3.5: a 5,367-token question and the one
+/// after it shared 5,363. So a mark at the very end is past the common part
+/// and worth nothing, and this is the distance back from it - sixteen times
+/// the gap that was actually there, because the cost of being wrong is reading
+/// the whole thing again and the cost of being generous is 64 tokens.
+const MARGIN: usize = 64;
+
 /// Where the weights are, unless `PIXUI_MODEL` says otherwise.
 pub fn default_path() -> PathBuf {
     std::env::var_os("PIXUI_MODEL")
@@ -90,6 +103,20 @@ struct Held {
     /// question read against a cache that says it holds something it does not
     /// is answered from somebody else's sentence.
     seen: Vec<LlamaToken>,
+    /// A point the sequence can be put back to, for a model that cannot be cut.
+    ///
+    /// The position it was taken at, and llama.cpp's own snapshot of the
+    /// running state there. Only ever one: it is fifty megabytes and a tenth of
+    /// a second to take, which is worth paying once a question and not more.
+    mark: Option<(usize, SeqState)>,
+    /// Whether `trims` has been found out yet, rather than assumed.
+    ///
+    /// It is only learnt by trying, and the first question has nothing in the
+    /// cache to try it against. So until it is known a mark is taken anyway -
+    /// once, costing a tenth of a second on a model that turns out not to need
+    /// one. The alternative is that the first question a conversation asks
+    /// twice is read twice.
+    probed: bool,
     /// Whether this model's cache can be cut back to a common prefix at all.
     ///
     /// Not every one can. A model that carries a recurrent state rather than a
@@ -138,6 +165,8 @@ impl Held {
         Ok(Self {
             ctx,
             seen: Vec::new(),
+            mark: None,
+            probed: false,
             trims: true,
             room,
             model,
@@ -151,25 +180,55 @@ impl Held {
     /// the one its first word is sampled from, so it has to go through a decode
     /// to have logits - a question asked twice still costs one token, not none.
     fn keep_prefix(&mut self, wanted: &[LlamaToken]) -> usize {
-        if !self.trims {
-            self.forget();
-            return 0;
-        }
         let common = shared_prefix(&self.seen, wanted);
-        if common < self.seen.len() {
-            // Everything past the common part is somebody else's conversation.
+        if self.trims {
+            if common == self.seen.len() {
+                // The cache is the front of this question already.
+                return common;
+            }
+            // Everything past the common part is somebody else's
+            // conversation. Trying to drop it is also the only way to find out
+            // whether this model lets anybody do that.
+            self.probed = true;
             if self
                 .ctx
                 .kv_cache_seq_rm(0, Some(common as u32), None)
-                .is_err()
+                .is_ok()
             {
-                self.trims = false;
-                self.forget();
-                return 0;
+                self.seen.truncate(common);
+                return common;
             }
-            self.seen.truncate(common);
+            // It does not. Which is learnt here, on the second question a
+            // conversation asks - and the mark taken during the first one is
+            // exactly what is needed now, so this must fall through to it
+            // rather than throw it away and start again.
+            self.trims = false;
         }
-        common
+        self.rewind(common)
+    }
+
+    /// Put the sequence back to the mark, if the mark is inside what is shared.
+    ///
+    /// For the models that cannot be cut. Restoring the running state is what
+    /// makes the cut legal: the same `kv_cache_seq_rm` that answers "couldn't
+    /// remove partial sequence" against a live sequence answers `Ok` the
+    /// moment the state behind it has been put back to where that position
+    /// was. Measured exact - after a rewind and a re-read, the same top token
+    /// and not one logit different.
+    fn rewind(&mut self, common: usize) -> usize {
+        let Some((at, state)) = self.mark.take() else {
+            self.forget();
+            return 0;
+        };
+        if at > common
+            || self.ctx.state_seq_set(&state, 0).is_err()
+            || self.ctx.kv_cache_seq_rm(0, Some(at as u32), None).is_err()
+        {
+            self.forget();
+            return 0;
+        }
+        self.seen.truncate(at);
+        at
     }
 
     /// Give up on what is remembered, after anything that leaves the cache and
@@ -177,6 +236,7 @@ impl Held {
     fn forget(&mut self) {
         self.ctx.clear_kv_cache();
         self.seen.clear();
+        self.mark = None;
     }
 
     /// The same weights with a bigger context around them.
@@ -192,6 +252,7 @@ impl Held {
             model,
             backend,
             trims,
+            probed,
             ..
         } = self;
         drop(ctx);
@@ -203,6 +264,8 @@ impl Held {
         Ok(Self {
             ctx,
             seen: Vec::new(),
+            mark: None,
+            probed,
             trims,
             room,
             model,
@@ -568,8 +631,13 @@ impl Local {
         // same turns with one more on the end. Only the tail is new, and only
         // the tail is read.
         let already = held.keep_prefix(&tokens);
+        let (trims, probed) = (held.trims, held.probed);
         let Held {
-            ctx, model, seen, ..
+            ctx,
+            model,
+            seen,
+            mark,
+            ..
         } = held;
 
         // The question is read a batch at a time rather than all at once.
@@ -583,7 +651,26 @@ impl Local {
         let mut batch = LlamaBatch::new(per, 1);
         let last = tokens.len() - 1;
         let mut at = already;
-        for chunk in tokens[already..].chunks(per) {
+        // Where to stop and take a mark, for a model that needs one. Short of
+        // the end on purpose: what the next question shares with this one runs
+        // out a few tokens before the end of it, because the tail is the
+        // template's way of saying "your turn" and the next question spells
+        // that same moment differently. A mark taken at the very end would sit
+        // past the common part and be no use. See MARGIN.
+        let stop = (!trims || !probed)
+            .then(|| tokens.len().saturating_sub(MARGIN).max(already))
+            .filter(|stop| *stop > already);
+        let mut spans = Vec::new();
+        let mut from = already;
+        for edge in [stop.unwrap_or(tokens.len()), tokens.len()] {
+            while from < edge {
+                let to = (from + per).min(edge);
+                spans.push((from, to));
+                from = to;
+            }
+        }
+        for (open, close) in spans {
+            let chunk = &tokens[open..close];
             // A stop asked for while the question is still being read is a
             // stop: there is nothing written yet to hand back, and the reply
             // below is the one an empty answer already produces.
@@ -605,6 +692,14 @@ impl Local {
             // of the truth is worse than no account, because the next question
             // is answered against it.
             seen.extend_from_slice(chunk);
+            if stop == Some(close) {
+                // Fifty megabytes and a tenth of a second, once. Against
+                // reading five thousand tokens again, which is nine seconds.
+                *mark = ctx
+                    .state_seq_get(0, LlamaStateSeqFlags::PARTIAL_ONLY)
+                    .ok()
+                    .map(|state| (seen.len(), state));
+            }
             // Say how far in it has got. Before this the first word out of the
             // worker was the first word of the answer, so the whole of reading
             // a long question - eight seconds of it, on the model this ships
