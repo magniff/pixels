@@ -839,10 +839,20 @@ fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
 /// in another window, the answer was the colour it used to be.
 fn a_note_changed_behind_its_back(app: &mut App) -> Result<(), String> {
     fresh_chat(app)?;
+    // Made the way it was made when this was reported: by the model, and
+    // accepted - not written here. A note this program created and saved
+    // itself is a different path to one it found on disk.
+    asking(app, "create a note called bike.md saying the bike is RED")?;
+    if accept_all(app) == 0 {
+        return Err(format!(
+            "{WRONG}it proposed nothing: {:?}",
+            last_answer(app).chars().take(120).collect::<String>()
+        ));
+    }
     let bike = app.dir.join("bike.md");
-    std::fs::write(&bike, "# Bike\n\nThe bike is RED.\n")
-        .map_err(|e| format!("could not write the note: {e}"))?;
-    app.steps(60);
+    if !bike.exists() {
+        return Err(format!("no bike.md on disk. vault: {:?}", app.vault()));
+    }
     asking(app, "what colour is the bike? one word.")?;
     let said = last_answer(app).to_lowercase();
     if !said.contains("red") {
