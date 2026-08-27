@@ -175,6 +175,20 @@ impl App {
         self.steps(4);
     }
 
+    /// Roll the wheel up, to see what is above what is on screen.
+    fn scroll_to_top(&mut self) {
+        let mid = Point {
+            x: self.canvas.width() / 2,
+            y: self.canvas.height() / 2,
+        };
+        for _ in 0..40 {
+            self.input.mouse = mid;
+            self.input.wheel = 3.0;
+            self.step();
+        }
+        self.steps(3);
+    }
+
     /// Roll the wheel down over the middle of the window until the newest
     /// thing said is on screen.
     ///
@@ -194,6 +208,20 @@ impl App {
             self.step();
         }
         self.steps(3);
+    }
+
+    /// A few notches of wheel, for walking down a long transcript.
+    fn scroll_by(&mut self, notches: f32) {
+        let mid = Point {
+            x: self.canvas.width() / 2,
+            y: self.canvas.height() / 2,
+        };
+        for _ in 0..3 {
+            self.input.mouse = mid;
+            self.input.wheel = notches;
+            self.step();
+        }
+        self.steps(2);
     }
 
     fn read(&self, path: &str) -> Option<String> {
@@ -310,6 +338,47 @@ fn a_note_typed_by_hand(app: &mut App) -> Result<(), String> {
 /// depending. A scene that can put itself in the state it needs is a scene
 /// that can be run on its own to find out why it failed, and one whose failure
 /// does not take the rest down with it.
+/// Begin a conversation of this scene's own.
+///
+/// Each scene had been talking into the one the last scene left open, and a
+/// transcript that long is its own problem: the newest change sits below the
+/// fold, an older one waits above it, and only what is on the screen can be
+/// clicked. Which is true for anybody - but a person having a new conversation
+/// starts one, and so does this. It also means a scene that fails does not
+/// hand the next one a panel still waiting for an answer.
+fn fresh_chat(app: &mut App) -> Result<(), String> {
+    if app.app.chat.is_some() {
+        // Answer anything outstanding first, or the panel will not close.
+        chatting(app)?;
+        app.key(Key::Escape);
+        app.steps(4);
+    }
+    app.press(Key::Char('e'), cmd(Key::Char('e')));
+    app.key(Key::Escape);
+    app.press(Key::Enter, cmd(Key::Enter));
+    app.steps(4);
+    // A project that already has conversations in it offers the list of them
+    // rather than starting another straight away, and the first row of that
+    // list is the new one.
+    if app.app.chat.is_none() && app.ui.find("chat0").is_some() {
+        app.click("chat0")?;
+        app.steps(6);
+    }
+    let fresh = app
+        .app
+        .chat
+        .as_ref()
+        .is_some_and(|c| c.turns.is_empty());
+    if !fresh {
+        return Err(format!(
+            "could not start a new conversation. on screen: {:?}",
+            app.on_screen()
+        ));
+    }
+    let _ = app.click("chat-field");
+    Ok(())
+}
+
 fn chatting(app: &mut App) -> Result<(), String> {
     if app.app.chat.is_none() {
         app.press(Key::Char('e'), cmd(Key::Char('e')));
@@ -333,12 +402,30 @@ fn chatting(app: &mut App) -> Result<(), String> {
     // change to every file in the project, and asked to rewrite them all in
     // French one did exactly that. Six left standing was enough to leave the
     // next scene typing into a panel that was still waiting for an answer.
+    //
+    // From the top, because a change waiting to be answered may be anywhere in
+    // the conversation and only what is on screen can be clicked - which is
+    // true for anybody, not only for this. Rolling to the bottom and looking
+    // there found nothing and gave up, with the panel still held.
     for _ in 0..40 {
-        app.scroll_to_end();
-        if app.ui.find("chat-field").is_some() || app.click("REJECT").is_err() {
+        if app.ui.find("chat-field").is_some() {
             break;
         }
-        app.steps(4);
+        app.scroll_to_top();
+        let mut answered = false;
+        for _ in 0..20 {
+            if app.click("REJECT").is_ok() {
+                answered = true;
+                app.steps(4);
+            } else if app.ui.find("chat-field").is_some() {
+                break;
+            } else {
+                app.scroll_by(-4.0);
+            }
+        }
+        if !answered {
+            break;
+        }
     }
     // Click into the box before typing, the way somebody coming back to a
     // conversation does. The keyboard may be anywhere after a button was
@@ -370,6 +457,20 @@ fn accept_all(app: &mut App) -> usize {
     let mut taken = 0;
     for _ in 0..40 {
         app.scroll_to_end();
+        // Looked for, then clicked once. Clicking to find out whether it was
+        // there took the change and then reported that there had been none,
+        // because the second click found the button gone - which it was,
+        // having just been pressed.
+        if app.ui.find("ACCEPT").is_none() {
+            // It may be further up: only what is on screen can be clicked.
+            app.scroll_to_top();
+            for _ in 0..20 {
+                if app.ui.find("ACCEPT").is_some() {
+                    break;
+                }
+                app.scroll_by(-4.0);
+            }
+        }
         if app.click("ACCEPT").is_err() {
             break;
         }
@@ -381,6 +482,7 @@ fn accept_all(app: &mut App) -> usize {
 
 /// Ask a question that only a tool can answer, and check it went and asked.
 fn a_question_the_model_must_look_up(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
     let began = Instant::now();
     asking(app, "what is the date today? answer with the year in figures.")?;
     let took = began.elapsed();
@@ -412,6 +514,7 @@ fn a_question_the_model_must_look_up(app: &mut App) -> Result<(), String> {
 
 /// Ask it to write a file, take the change, and look for the file.
 fn a_file_the_model_writes(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
     asking(
         app,
         "create a note called kettle.md containing one line: the kettle is broken.",
@@ -445,6 +548,7 @@ fn a_file_the_model_writes(app: &mut App) -> Result<(), String> {
 
 /// Offer a change and turn it down. The point is that nothing moves.
 fn a_change_turned_down(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
     chatting(app)?;
     // Notes only. The transcript of this very conversation is written as it
     // goes, and that is not the vault being changed behind anybody's back.
@@ -533,6 +637,7 @@ fn a_passage_the_model_rewrites(app: &mut App) -> Result<(), String> {
 /// put them somewhere. Each of those works on its own; this is the one that
 /// says whether they work together.
 fn several_tools_from_one_question(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
     asking(
         app,
         "work out 384 * 517, and find out what day of the week christmas falls on this year. \
@@ -634,6 +739,7 @@ fn day_count(date: &str) -> Option<(String, String)> {
 /// one was described as two. All four are the same mistake - a number derived
 /// instead of read - so this asks for all of them at once.
 fn a_family_of_birthdays(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
     let (mine, _) = day_count("1989-07-31").ok_or("the clock cannot say")?;
     let (hers, her_age) = day_count("2024-12-23").ok_or("the clock cannot say")?;
 
@@ -698,6 +804,7 @@ fn a_family_of_birthdays(app: &mut App) -> Result<(), String> {
 /// to have got the three before it right. Which is why it is here: it fails
 /// loudly for any of half a dozen reasons, and quietly for none.
 fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
     let (mine, _) = day_count("1989-07-31").ok_or("the clock cannot say")?;
     let (met, _) = day_count("2010-12-01").ok_or("the clock cannot say")?;
     let (alive, together) = (
