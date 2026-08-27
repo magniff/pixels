@@ -5330,3 +5330,21 @@ fn what_was_looked_up_reads_as_a_sentence() {
     // And a tool added after this was written still gets a sentence.
     assert_eq!(said("translate", "hola"), "USED TRANSLATE ON HOLA");
 }
+
+#[test]
+fn asked_for_today_the_clock_says_not_to_count_from_it() {
+    // Asked how long until Christmas, the model called the clock, read today's
+    // date off it, and then counted the days in its head: 86, where the answer
+    // was 120. The tool could have answered the actual question - give it
+    // 12-25 and it says how far off that is - and its description already said
+    // so. Saying it again in the answer, a line before the model writes, is
+    // what actually landed: 6 out of 6 afterwards, against 4.
+    let now = notes::clock::about("today").unwrap();
+    assert!(now.contains("the time is"), "{now}");
+    assert!(now.contains("ask again for that day"), "{now}");
+    // And not on the answers that are already about another day, which say how
+    // far off it is and have nothing to warn against.
+    let then = notes::clock::about("12-25").unwrap();
+    assert!(!then.contains("ask again for that day"), "{then}");
+    assert!(then.contains("days from today"), "{then}");
+}

@@ -22,7 +22,18 @@ pub fn about(what: &str) -> Result<String, String> {
     let now = today()?;
     let asked = what.trim().to_lowercase();
     if asked.is_empty() || asked == "today" || asked == "now" {
-        return Ok(now.said());
+        // The nudge is in the answer rather than only in the description
+        // because this is the moment the mistake gets made. Asked how long
+        // until Christmas the model calls this, gets the date, and then counts
+        // the days in its head: measured, it answered 86 where the answer was
+        // 120. Telling it here - a line before it writes - is worth more than
+        // another sentence in a description it read five thousand tokens ago.
+        return Ok(format!(
+            "{}. To find how far off another day is, ask again for that day \
+             rather than counting from this one: you cannot count days and \
+             this can.",
+            now.said()
+        ));
     }
     // A day and a month with no year means the next one there is, which is
     // what somebody asking how long until Christmas means by it.
