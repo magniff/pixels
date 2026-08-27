@@ -562,11 +562,28 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
         // the wrong one is still understood.
         let named = attr(head, "into").or_else(|| attr(head, "file"));
         let what = match kind {
-            "edit" => lines_attr(head).map(|(from, to)| What::Edit {
-                from,
-                to,
-                text: body,
-            }),
+            "edit" => lines_attr(head)
+                .map(|(from, to)| What::Edit {
+                    from,
+                    to,
+                    text: body.clone(),
+                })
+                // An edit of no particular lines, of a file it has named, is a
+                // write: here is what the file should say. Models reach for
+                // `edit` as the general word for changing something, and a new
+                // file has no lines to name - asked to make a note of four
+                // birthdays, one wrote `<edit file="ages.md">` with the whole
+                // note in it, and the block was dropped on the floor for want
+                // of a `lines`. Nothing was offered and nothing was written.
+                //
+                // Only when a file is named. A bare `<edit>` means the note in
+                // front of you, and reading that as "replace all of it" is too
+                // much to infer from something left out.
+                .or_else(|| {
+                    named
+                        .is_some()
+                        .then(|| What::Write { text: body.clone() })
+                }),
             // The rest are about a file by name and none of them means
             // anything without one. `create` as well as `write`, because it is
             // the word a model reaches for and refusing it would be pedantry

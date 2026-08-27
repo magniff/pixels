@@ -622,15 +622,17 @@ fn finish(
 ) -> Reply {
     turns.push(Turn {
         mine: true,
-        text: if looping {
-            "You have already looked that up and the answer is above. Answer now, \
-             from what you have, without looking anything else up."
-                .into()
-        } else {
-            "That is as much looking up as there is time for. Answer now, from what \
-             you have, without looking anything else up."
-                .into()
-        },
+        text: format!(
+            "{} Answer now, from what you already have above, and do not look \
+             anything else up - there is nothing left to look up with. If you were \
+             asked to write or change a file, write the block for it now, with the \
+             values you have. Plain words and the block, nothing else.",
+            if looping {
+                "You have already looked that up, and the answer is above."
+            } else {
+                "That is as much looking up as there is time for."
+            }
+        ),
     });
     let mut watch = Watching {
         beat,

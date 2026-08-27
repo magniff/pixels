@@ -5715,3 +5715,38 @@ fn an_enormous_argument_is_cut_before_it_is_drawn() {
     };
     assert_eq!(small.said(), "WORKED OUT 384 * 517");
 }
+
+#[test]
+fn an_edit_of_no_particular_lines_is_a_write() {
+    use notes::chat::proposals;
+    // `edit` is the general word for changing something, and a file that does
+    // not exist yet has no lines to name. Asked to make a note of four
+    // birthdays, a model wrote the whole note inside `<edit file="ages.md">`
+    // with no `lines`, and it was dropped for want of one: nothing offered,
+    // nothing written, and the block left sitting in the prose.
+    let said = "Here you go.\n\n<edit file=\"ages.md\">\n# Ages\n\n- Me: 13,541 days\n</edit>";
+    let (prose, changes) = proposals(said);
+    assert_eq!(changes.len(), 1, "still dropped: {prose:?}");
+    assert_eq!(changes[0].file.as_deref(), Some("ages.md"));
+    assert_eq!(
+        changes[0].headline("notes.md"),
+        "WRITE  ages.md",
+        "read as laying the file down"
+    );
+    assert!(prose.contains("Here you go"), "{prose:?}");
+    assert!(!prose.contains("<edit"), "the block is lifted out: {prose:?}");
+
+    // An edit that does name its lines is still an edit.
+    let lined = "<edit file=\"ages.md\" lines=\"2-3\">\nnew text\n</edit>";
+    let (_, changes) = proposals(lined);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].headline("notes.md"), "ages.md  LINES 2-3");
+
+    // And a bare edit naming neither lines nor a file is left alone: that
+    // would mean replacing the whole of the note in front of you, which is too
+    // much to read into something left out.
+    let bare = "<edit>\neverything\n</edit>";
+    let (prose, changes) = proposals(bare);
+    assert!(changes.is_empty(), "{changes:?} from {bare:?}");
+    assert!(prose.contains("<edit>"), "left visible instead: {prose:?}");
+}
