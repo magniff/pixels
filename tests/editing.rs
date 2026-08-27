@@ -5502,3 +5502,89 @@ fn a_reply_cannot_decide_its_own_change_or_disguise_it_as_a_call() {
     assert_eq!(chat.turns.last().expect("a turn").text, plain);
     let _ = Turn { mine: true, text: String::new() };
 }
+
+#[test]
+fn every_part_of_a_multi_step_answer_is_kept() {
+    use notes::llm::{Ask, Assistant, Backend, Reply, Tool, Turn, Watcher};
+    /// A model answering a three-part question the way they do: a part, then
+    /// a tool, then the next part.
+    struct InParts(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Backend for InParts {
+        fn name(&self) -> String {
+            "IN PARTS".into()
+        }
+        fn edit(&mut self, _ask: &Ask, _w: &mut dyn Watcher) -> Reply {
+            let n = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(match n {
+                0 => "1234 * 5678 is 7006652.\n<tool_call><function=date><parameter=when>1969-07-20</parameter></function></tool_call>".into(),
+                1 => "1969-07-20 was a Sunday.\n<tool_call><function=date><parameter=when>12-25</parameter></function></tool_call>".into(),
+                _ => "There are 120 days until the next 25 December.".to_string(),
+            })
+        }
+    }
+    let mut a = Assistant::spawn(Box::new(InParts(std::sync::Arc::new(
+        std::sync::atomic::AtomicUsize::new(0),
+    ))));
+    a.ask(Ask {
+        turns: vec![Turn {
+            mine: true,
+            text: "three things, one at a time".into(),
+        }],
+        tools: vec![Tool {
+            name: "date",
+            about: "what day it is",
+            takes: ("when", "a date"),
+        }],
+        ..Default::default()
+    });
+    let said = loop {
+        if let Some(r) = a.poll() {
+            break r.expect("an answer");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let (prose, looked) = notes::chat::lookups(&said);
+    // Every part, not just the last. Before this the conversation showed
+    // "There are 120 days until the next 25 December." and nothing else: the
+    // first two answers were written, and thrown away with the tool call that
+    // followed them.
+    assert!(prose.contains("7006652"), "the first part is gone: {prose:?}");
+    assert!(prose.contains("Sunday"), "the second part is gone: {prose:?}");
+    assert!(prose.contains("120 days"), "the last part is gone: {prose:?}");
+    // In the order they were said.
+    let (a1, a2) = (
+        prose.find("7006652").unwrap(),
+        prose.find("Sunday").unwrap(),
+    );
+    assert!(a1 < a2 && a2 < prose.find("120 days").unwrap(), "{prose:?}");
+    assert_eq!(looked.len(), 2, "and what it looked up is still recorded");
+}
+
+#[test]
+fn a_reply_asking_for_three_things_at_once_gets_all_three() {
+    use notes::llm::calls;
+    // Models batch them: given three things to find out, all three blocks
+    // arrive in one reply. Reading only the first dropped the rest, and since
+    // the reply was then all machinery with one call consumed, what showed up
+    // in the conversation was the raw tags of the calls that never ran.
+    let said = "<tool_call>\n<function=calc>\n<parameter=expression>\n384 * 517\n</parameter>\n</function>\n</tool_call>\n\
+                <tool_call>\n<function=date>\n<parameter=when>\n12-25\n</parameter>\n</function>\n</tool_call>";
+    let asked = calls(said);
+    assert_eq!(
+        asked,
+        vec![
+            ("calc".to_string(), "384 * 517".to_string()),
+            ("date".to_string(), "12-25".to_string()),
+        ],
+        "both of them, in order"
+    );
+    // One is still one, and the first of many is still the first.
+    let single = "<tool_call><function=date><parameter=when>today</parameter></function></tool_call>";
+    assert_eq!(calls(single).len(), 1);
+    assert_eq!(
+        notes::llm::called(said),
+        Some(("calc".into(), "384 * 517".into()))
+    );
+    // And a reply with no call in it asks for nothing.
+    assert!(calls("just a sentence").is_empty());
+}

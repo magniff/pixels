@@ -69,6 +69,16 @@ pub fn available(web_allowed: bool) -> Vec<Tool> {
 /// an empty result it fills the gap, and that is where a llama.cpp version that
 /// has never existed came from.
 pub fn run(name: &str, arg: &str) -> String {
+    // Changing a file is not a tool, and is the one thing models most often
+    // try to call as though it were: `<function=write>` with the name and the
+    // contents as parameters. Answering "there is no tool called write" is
+    // true and useless - it tried again, and again, and the conversation ended
+    // with nothing said. So it is told the shape that does work.
+    if let "edit" | "write" | "create" | "delete" | "merge" = name {
+        return format!(
+            "{name} is not a tool. Changing a file is not something you call: write a              <{name}> block in your reply instead, at the top level and outside any code              fence, exactly as the instructions above describe. Nothing happens to the file              until they accept it."
+        );
+    }
     let done = match name {
         "calc" => calc::evaluate(arg),
         "date" => clock::about(arg),

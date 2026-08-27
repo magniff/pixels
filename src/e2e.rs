@@ -567,13 +567,16 @@ fn several_tools_from_one_question(app: &mut App) -> Result<(), String> {
     }
     // Worked out here rather than written down, so this still runs next year.
     let sum = crate::calc::evaluate("384 * 517").unwrap_or_default();
-    // Up to "Today is", because the answer about another day says what day
-    // *this* is as well and that is not the one being asked about.
+    // The first weekday the answer names, which is the one it is about. It
+    // goes on to name two more - the same day a year earlier, and today - and
+    // picking whichever came first in a list of weekday names rather than
+    // first in the sentence had this expecting a Thursday of a Friday.
     let christmas = crate::clock::about("12-25").unwrap_or_default();
-    let about_it = christmas.split("Today is").next().unwrap_or_default().to_string();
     let day = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         .into_iter()
-        .find(|d| about_it.contains(d))
+        .filter_map(|d| christmas.find(d).map(|at| (at, d)))
+        .min_by_key(|(at, _)| *at)
+        .map(|(_, d)| d)
         .unwrap_or("");
     let found = app
         .vault()

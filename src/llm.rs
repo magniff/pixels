@@ -297,8 +297,30 @@ pub fn without_machinery(said: &str) -> &str {
 /// The model's own format, which is why the parsing is this short: the tag and
 /// one parameter, exactly as the chat template told it to write them.
 pub fn called(reply: &str) -> Option<(String, String)> {
-    let after = reply.split("<function=").nth(1)?;
+    calls(reply).into_iter().next()
+}
+
+/// Every call a reply is making, in the order it made them.
+///
+/// More than one, because models ask for more than one at a time: given three
+/// things to find out, they write all three blocks in a single reply. Reading
+/// only the first meant the rest were dropped on the floor - and since the
+/// reply was then all machinery with the first call consumed, what the person
+/// waiting saw was the raw tags of the calls that never ran.
+pub fn calls(reply: &str) -> Vec<(String, String)> {
+    reply
+        .split("<function=")
+        .skip(1)
+        .filter_map(one_call)
+        .collect()
+}
+
+/// One call, from the text just after its `<function=`.
+fn one_call(after: &str) -> Option<(String, String)> {
     let name = after.split('>').next()?.trim().to_string();
+    // Only up to the end of this call: a reply making three of them must not
+    // read the second one's argument as the first one's.
+    let after = after.split("</function>").next().unwrap_or(after);
     let param = after.split("<parameter=").nth(1)?;
     // Everything past the parameter's own `>`, up to its closing tag. Splitting
     // on `>` first would eat the `>` of `</parameter>` and leave the tag in the
@@ -409,6 +431,14 @@ fn answer(
     let mut turns = ask.turns.clone();
     let mut used: Vec<Used> = Vec::new();
     let mut step = 0u8;
+    // What it has said so far, across every pass.
+    //
+    // A question in three parts is answered in three passes, and each pass
+    // writes its part and then reaches for the next tool. Only the last pass
+    // used to survive: asked for a product, a weekday and a day count, the
+    // conversation showed "3. 120 days until the next 25 December" and
+    // nothing else. The first two answers had been written and thrown away.
+    let mut so_far: Vec<String> = Vec::new();
     loop {
         let mut watch = Watching {
             beat,
@@ -431,52 +461,87 @@ fn answer(
         // asked it to stop writing is more use than nothing, and it is what
         // you were looking at when you pressed the button.
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
-            let mut out: String = used.iter().map(Used::written).collect();
-            out.push_str(without_machinery(&said).trim());
-            return Ok(out);
+            return Ok(assembled(&used, &so_far, without_machinery(&said)));
         }
 
-        let Some((tool, arg)) = called(&said).filter(|_| !ask.tools.is_empty()) else {
+        let asked_for = if ask.tools.is_empty() {
+            Vec::new()
+        } else {
+            calls(&said)
+        };
+        let Some((tool, arg)) = asked_for.first().cloned() else {
             // Whatever it looked up goes in front of what it said, so the
             // answer arrives with its working. Anything that looked like a
             // call and was not one comes out here rather than being read as
             // prose: a half-written block is not something to show anybody.
-            let mut out: String = used.iter().map(Used::written).collect();
-            out.push_str(without_machinery(&said).trim());
-            return Ok(out);
+            return Ok(assembled(&used, &so_far, without_machinery(&said)));
         };
         // Out of steps, or going round in one. Either way the thing to do is
         // not to give up: it has been looking things up all this time and the
         // answers are sitting in the turns behind it.
         let repeat = used.iter().any(|u| u.tool == tool && u.arg == arg);
         if step >= STEPS || repeat {
+            keep(&mut so_far, &said);
             turns.push(Turn {
                 mine: false,
                 text: said,
             });
-            return finish(backend, &ask, turns, used, beat, words, stop, repeat);
+            return finish(backend, &ask, turns, used, so_far, beat, words, stop, repeat);
         }
-        step += 1;
+        // What it wrote before reaching for the tool is part of the answer.
+        keep(&mut so_far, &said);
         let _ = beat.send(Progress {
             looking: true,
-            steps: step,
+            steps: step.saturating_add(1),
             ..at
         });
-        let result = crate::tools::run(&tool, &arg);
-        // The call and its answer become two more turns, in the shapes the
-        // model's own template expects: what it said, then a user turn holding
-        // the response, which the template reads as a tool result rather than
-        // as somebody asking something new.
+        // Every call it made, not only the first. The call and its answers
+        // become two more turns, in the shapes the model's own template
+        // expects: what it said, then a user turn holding the responses, which
+        // the template reads as tool results rather than as somebody asking
+        // something new.
+        let mut answers = String::new();
+        for (tool, arg) in asked_for {
+            let result = crate::tools::run(&tool, &arg);
+            answers.push_str(&format!("<tool_response>\n{result}\n</tool_response>\n"));
+            used.push(Used { tool, arg, result });
+            step = step.saturating_add(1);
+        }
         turns.push(Turn {
             mine: false,
             text: said,
         });
         turns.push(Turn {
             mine: true,
-            text: format!("<tool_response>\n{result}\n</tool_response>"),
+            text: answers.trim_end().to_string(),
         });
-        used.push(Used { tool, arg, result });
+        let _ = (tool, arg);
     }
+}
+
+/// Keep the part of a pass that is prose rather than machinery.
+fn keep(so_far: &mut Vec<String>, said: &str) {
+    let plain = without_machinery(said).trim();
+    // The same sentence twice is one sentence: a model that repeats its
+    // working before each call would otherwise say everything n times.
+    if !plain.is_empty() && !so_far.iter().any(|p| p == plain) {
+        so_far.push(plain.to_string());
+    }
+}
+
+/// Everything looked up, then everything said, in the order it was said.
+///
+/// `last` has already had the machinery taken off it - the caller does that,
+/// because only the caller knows whether what looked like machinery was any.
+fn assembled(used: &[Used], so_far: &[String], last: &str) -> String {
+    let mut out: String = used.iter().map(Used::written).collect();
+    let mut parts: Vec<&str> = so_far.iter().map(String::as_str).collect();
+    let last = last.trim();
+    if !last.is_empty() && !parts.contains(&last) {
+        parts.push(last);
+    }
+    out.push_str(&parts.join("\n\n"));
+    out
 }
 
 /// One more pass, with the tools taken away.
@@ -496,6 +561,7 @@ fn finish(
     ask: &Ask,
     mut turns: Vec<Turn>,
     used: Vec<Used>,
+    so_far: Vec<String>,
     beat: &Sender<Progress>,
     words: &Sender<String>,
     stop: &std::sync::atomic::AtomicBool,
@@ -530,14 +596,12 @@ fn finish(
         },
         &mut watch,
     )?);
-    let mut out: String = used.iter().map(Used::written).collect();
     // There were no tools to call on this pass, so anything shaped like a call
     // is not one - it is the model carrying on out of habit, and what it wrote
     // inside is all the answer there is. Stripping it left nothing at all, and
     // the conversation showed four lookups followed by a blank.
     let plain = without_machinery(&said).trim();
-    out.push_str(if plain.is_empty() { said.trim() } else { plain });
-    Ok(out)
+    Ok(assembled(&used, &so_far, if plain.is_empty() { &said } else { plain }))
 }
 
 /// How long the weights stay resident after the last question.
