@@ -660,6 +660,20 @@ impl Local {
         // position to pick a better one.
         let ceiling = held.model.n_ctx_train();
         let text = render(&held.model, &system, ask, thinks)?;
+        // `PIXUI_PROMPT=<file>` writes out exactly what the model is given,
+        // every time it is given anything. For when the application and the
+        // answer disagree about what the notes say and there is no telling,
+        // from the outside, which of them is wrong.
+        if let Some(where_to) = std::env::var_os("PIXUI_PROMPT") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(where_to)
+            {
+                let _ = writeln!(f, "\n===== PROMPT ({} chars) =====\n{text}", text.len());
+            }
+        }
         let tokens = held
             .model
             .str_to_token(&text, AddBos::Never)
