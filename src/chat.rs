@@ -177,6 +177,14 @@ pub struct Chat {
     /// the vault list and the note. Told to it once by the application, which
     /// is the thing that assembles them, rather than worked out every frame.
     pub overhead: usize,
+    /// The one-line-per-note index as the model was last shown it.
+    ///
+    /// Held with the project and for the same reason. It is derived from what
+    /// the notes say - a title, a first line, the headings - so editing a note
+    /// moves it, and it sits in front of the project, so moving it threw the
+    /// project away too. The delta below kept the project still while the line
+    /// above it shifted, and the reading happened anyway.
+    shown_index: String,
     /// The project as the model was last shown it, whole.
     ///
     /// Not saved with the conversation, and deliberately: a chat opened
@@ -708,6 +716,7 @@ impl Chat {
             scroll: ScrollState::default(),
             follow: true,
             overhead: 0,
+            shown_index: String::new(),
             shown: Vec::new(),
         }
     }
@@ -827,20 +836,47 @@ impl Chat {
     /// So correct while the correction is the smaller number, and when a
     /// project has been told it is wrong in so many places that the list is
     /// longer than the project, show it the project.
-    pub fn context(&mut self, now: &[(String, String)]) -> (String, Option<String>) {
-        if self.shown.is_empty() {
-            self.shown = now.to_vec();
-            return (crate::digest::project(now), None);
-        }
-        let Some(moved) = crate::digest::since(&self.shown, now) else {
-            return (crate::digest::project(&self.shown), None);
+    pub fn context(
+        &mut self,
+        index: &str,
+        now: &[(String, String)],
+    ) -> (String, String, Option<String>) {
+        let afresh = |chat: &mut Self| {
+            chat.shown_index = index.to_string();
+            chat.shown = now.to_vec();
+            (index.to_string(), crate::digest::project(now), None)
         };
-        let afresh = crate::digest::project(now);
-        if moved.len() >= afresh.len() {
-            self.shown = now.to_vec();
-            return (afresh, None);
+        if self.shown.is_empty() {
+            return afresh(self);
         }
-        (crate::digest::project(&self.shown), Some(moved))
+        let moved = crate::digest::since(&self.shown, now);
+        let listed = (self.shown_index != index).then(|| {
+            format!(
+                "The list of notes at the top is out of date. It is now:\n\n{index}"
+            )
+        });
+        // Only the index moved, or nothing did. An index on its own is a note
+        // renamed or its first line changed, which is cheap to say and does
+        // not justify writing the project out again.
+        let Some(moved) = moved else {
+            return (
+                self.shown_index.clone(),
+                crate::digest::project(&self.shown),
+                listed,
+            );
+        };
+        let both = match listed {
+            Some(listed) => format!("{moved}\n\n{listed}"),
+            None => moved,
+        };
+        if both.len() >= crate::digest::project(now).len() + index.len() {
+            return afresh(self);
+        }
+        (
+            self.shown_index.clone(),
+            crate::digest::project(&self.shown),
+            Some(both),
+        )
     }
 
     /// Write it out, choosing a name the first time.

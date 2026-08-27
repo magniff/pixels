@@ -858,18 +858,38 @@ fn a_note_changed_behind_its_back(app: &mut App) -> Result<(), String> {
     if !said.contains("red") {
         return Err(format!("{WRONG}it should say red: {said:?}"));
     }
-    // Now somebody else writes it. A whole second, because a filesystem that
-    // keeps seconds cannot tell two writes inside one apart.
+    // Somebody else writes it. A whole second, because a filesystem that keeps
+    // seconds cannot tell two writes inside one apart.
     std::thread::sleep(Duration::from_millis(1100));
     std::fs::write(&bike, "# Bike\n\nThe bike is GREEN.\n")
         .map_err(|e| format!("could not rewrite the note: {e}"))?;
     app.steps(90);
     asking(app, "and now? one word.")?;
     let said = last_answer(app).to_lowercase();
-    if said.contains("green") {
+    if !said.contains("green") {
+        return Err(format!("the first change was missed: {said:?}"));
+    }
+
+    // And again, with a change of the model's own in between - which is where
+    // it stopped noticing when this was reported. Its own edit leaves the note
+    // unsaved for a moment, and a file saved in that moment used to lose.
+    asking(app, "make it PURPLE")?;
+    if accept_all(app) == 0 {
+        return Err(format!(
+            "{WRONG}it proposed nothing: {:?}",
+            last_answer(app).chars().take(120).collect::<String>()
+        ));
+    }
+    std::thread::sleep(Duration::from_millis(1100));
+    std::fs::write(&bike, "# Bike\n\nThe bike is YELLOW.\n")
+        .map_err(|e| format!("could not rewrite the note: {e}"))?;
+    app.steps(20);
+    asking(app, "and now? one word.")?;
+    let said = last_answer(app).to_lowercase();
+    if said.contains("yellow") {
         Ok(())
     } else {
-        Err(format!("still the old colour: {said:?}"))
+        Err(format!("missed the change after its own edit: {said:?}"))
     }
 }
 

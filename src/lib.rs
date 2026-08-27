@@ -1343,10 +1343,10 @@ impl Notes {
             .filter(|n| n.project == here)
             .map(|n| (n.filename(), n.buffer.to_text()))
             .collect();
-        let (within, since) = talk.context(&files);
+        let (vault, within, since) = talk.context(&digest::vault(&self.notes), &files);
         llm::Ask {
             turns: talk.turns.clone(),
-            vault: digest::vault(&self.notes),
+            vault,
             file: self.note().slug(),
             within: Some(within),
             since,
