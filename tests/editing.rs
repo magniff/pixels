@@ -5348,3 +5348,37 @@ fn asked_for_today_the_clock_says_not_to_count_from_it() {
     assert!(!then.contains("ask again for that day"), "{then}");
     assert!(then.contains("days from today"), "{then}");
 }
+
+#[test]
+fn copying_a_turn_gives_what_is_on_the_screen() {
+    use notes::chat::{copyable, Chat};
+    use notes::llm::Turn;
+    // A reply carries the record of what it looked up, and the panel draws
+    // that as a sentence rather than as the block it is written in. Pasting
+    // the block into a note would hand over wiring nobody asked for.
+    let said = "<used tool=\"date\" arg=\"today\">\nThursday 27 August 2026\n</used>\n\nIt is Thursday.";
+    let theirs = Turn { mine: false, text: said.into() };
+    assert_eq!(copyable(&theirs), "It is Thursday.");
+    // What a change offered says is kept, because that is content: it is the
+    // lines it wants to put in the file.
+    let with_edit = Turn {
+        mine: false,
+        text: "Here you go.\n\n<edit file=\"notes.md\" lines=\"1\">\nfixed\n</edit>".into(),
+    };
+    assert!(copyable(&with_edit).contains("<edit file=\"notes.md\""));
+    assert!(copyable(&with_edit).contains("fixed"));
+    // A question is copied as it was asked.
+    let mine = Turn { mine: true, text: "  what day is it?  ".into() };
+    assert_eq!(copyable(&mine), "what day is it?");
+
+    // And the whole conversation reads like the file it is saved as.
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    chat.turns = vec![mine, theirs];
+    let whole = chat.transcript();
+    assert!(whole.starts_with('#'), "{whole}");
+    assert!(whole.contains("## you"), "{whole}");
+    assert!(whole.contains("## assistant"), "{whole}");
+    assert!(whole.contains("what day is it?"), "{whole}");
+    assert!(whole.contains("It is Thursday."), "{whole}");
+    assert!(!whole.contains("<used"), "no machinery in it: {whole}");
+}

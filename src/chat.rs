@@ -249,6 +249,20 @@ impl Lookup {
     }
 }
 
+/// What one turn comes to on the clipboard.
+///
+/// What is on the screen, not what is on disk. A reply carries the record of
+/// what it looked up, and that is drawn as a sentence rather than as the block
+/// it is written in - so pasting the block somewhere else would hand over
+/// wiring nobody asked for. What a change it offered says is kept, because
+/// that is content: it is the lines it wants to put in the file.
+pub fn copyable(turn: &Turn) -> String {
+    if turn.mine {
+        return turn.text.trim().to_string();
+    }
+    lookups(&turn.text).0.trim().to_string()
+}
+
 /// Lift the record of what was looked up out of a reply.
 ///
 /// Kept in the transcript rather than reported and forgotten: an answer that
@@ -721,6 +735,22 @@ impl Chat {
     }
 
     /// Write it out, choosing a name the first time.
+    /// The whole conversation, in the shape somebody would want it pasted.
+    ///
+    /// The same headings the file on disk uses, so a conversation copied into
+    /// a note and one saved beside it read alike - and the same turns the
+    /// panel draws, so it holds no machinery.
+    pub fn transcript(&self) -> String {
+        let mut out = format!("# {}\n\n", self.title());
+        for turn in &self.turns {
+            out.push_str(if turn.mine { MINE } else { THEIRS });
+            out.push_str("\n\n");
+            out.push_str(&fence_markers(&copyable(turn)));
+            out.push_str("\n\n");
+        }
+        out.trim_end().to_string()
+    }
+
     pub fn save(&mut self, dir: &Path) -> std::io::Result<()> {
         if self.turns.is_empty() {
             return Ok(());
@@ -1290,6 +1320,27 @@ impl Chat {
         }
 
         // ---- the transcript ------------------------------------------------
+        // A strip above it for the things that are about the whole
+        // conversation rather than about one turn in it. Outside the scroll
+        // area on purpose: a control that scrolls away is one you go looking
+        // for.
+        let (bar, body) = body.split_top(line_h + 5);
+        // Right edge in line with the buttons on the turns below it, which are
+        // inside the scroll area and so inset by its gutter.
+        let whole = Rect::new(
+            bar.right() - Ui::SCROLL_GUTTER - 4 - 62,
+            bar.y + 3,
+            62,
+            line_h,
+        );
+        let mut copied = if self.turns.is_empty() {
+            false
+        } else {
+            ui.button_at(whole, "COPY ALL", pixui::Tone::Neutral).clicked
+        };
+        if copied {
+            pixui::clipboard::copy(&self.transcript());
+        }
         let width = body.w - Ui::SCROLL_GUTTER - 8;
         let mut state = self.scroll;
         let mut answered = None;
@@ -1309,13 +1360,24 @@ impl Chat {
                     ("ASSISTANT", th.positive.face)
                 };
                 font::draw_text_styled(ui.canvas, head.x + 4, head.y, who, tint, true);
-                // A rule from the end of the name to the edge, which is what
+                // The button asks for its click before the rule is drawn under
+                // it, because the first thing to ask for a place on the screen
+                // is the thing that gets it.
+                let take = Rect::new(head.right() - line_h, head.y, line_h, line_h);
+                if ui
+                    .icon_button_at(take, &format!("copy-turn-{i}"), pixui::icon::COPY, pixui::Tone::Neutral)
+                    .clicked
+                {
+                    pixui::clipboard::copy(&copyable(turn));
+                    copied = true;
+                }
+                // A rule from the end of the name to the button, which is what
                 // separates two turns without a box around each of them.
                 let from = head.x + 6 + font::advance_width(who);
                 ui.canvas.hline(
                     from,
                     head.y + line_h / 2,
-                    head.right() - from,
+                    take.x - 4 - from,
                     th.well_border,
                 );
                 // What it said, and separately what it offered to do. The
@@ -1436,6 +1498,9 @@ impl Chat {
             state.shown = state.target;
         }
         self.scroll = state;
+        if copied {
+            self.notice = Some("copied to the clipboard".into());
+        }
 
         // ---- what to say next ----------------------------------------------
         let field = Rect::new(foot.x, foot.y + 2, foot.w, 15);

@@ -144,6 +144,19 @@ pub const PAGE: &[&str] = &[
     "#######",
 ];
 
+/// Two pages, one behind the other: copy.
+#[rustfmt::skip]
+pub const COPY: &[&str] = &[
+    "..#####",
+    "..#...#",
+    "#####.#",
+    "#...#.#",
+    "#...###",
+    "#...#..",
+    "#...#..",
+    "#####..",
+];
+
 /// A right-pointing chevron, for disclosure.
 #[rustfmt::skip]
 pub const CHEVRON: &[&str] = &[
