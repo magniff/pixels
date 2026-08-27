@@ -551,6 +551,40 @@ impl Notes {
     /// files that have gone are let go of, on the same terms.
     ///
     /// Returns how many notes moved, so a caller can say so.
+    /// Write out what is unsaved here and nobody else has touched.
+    ///
+    /// Only worth doing before a question, and it exists to tell two states
+    /// apart that look identical from the outside. A note is "unsaved" from
+    /// the moment a change is accepted until the save that follows a pause -
+    /// but nothing has diverged, it simply has not been written yet. A note
+    /// that is unsaved *and* whose file has moved underneath is a real
+    /// disagreement, and the typing wins that one.
+    ///
+    /// Without this, the first was mistaken for the second: a change accepted
+    /// and then a file edited outside, in the seconds before the save, and the
+    /// edit was passed over as though there were work to protect. Which is
+    /// exactly the moment somebody is most likely to do it - they have just
+    /// watched the file change and gone to look at it.
+    fn settle(&mut self) {
+        for note in &mut self.notes {
+            let Some(path) = note.path.clone() else { continue };
+            if !note.buffer.dirty || stamp(&path) != note.seen {
+                continue;
+            }
+            if std::fs::write(&path, note.buffer.to_text()).is_ok() {
+                note.buffer.mark_saved();
+                note.seen = stamp(&path);
+            }
+        }
+    }
+
+    /// Everything that has to be true before a question is asked about the
+    /// vault: what is ours is written down, and what is theirs is read in.
+    pub fn before_asking(&mut self) -> usize {
+        self.settle();
+        self.take_up_changes()
+    }
+
     pub fn take_up_changes(&mut self) -> usize {
         let mut moved = 0;
         for note in &mut self.notes {
@@ -559,14 +593,26 @@ impl Notes {
             if now == note.seen {
                 continue;
             }
-            // Somebody's unsaved work is not something to throw away because
-            // another program touched the same file.
-            if note.buffer.dirty {
-                continue;
-            }
             match std::fs::read_to_string(&path) {
                 Ok(text) if text != note.buffer.to_text() => {
-                    note.buffer = Buffer::from_text(&text);
+                    // Whoever wrote last wins, and somebody who saved a file
+                    // meant to. That includes over a buffer here that has not
+                    // been saved yet: it is the same person either way, and
+                    // the one thing they did on purpose was save the file.
+                    //
+                    // Taken as an edit rather than by replacing the buffer, so
+                    // `u` puts back whatever was in it. Nothing is lost by
+                    // this, only moved one keystroke away.
+                    let buf = &mut note.buffer;
+                    buf.checkpoint();
+                    let old = buf.line_count();
+                    buf.insert_lines(
+                        old,
+                        &text.split('\n').map(str::to_string).collect::<Vec<_>>(),
+                    );
+                    buf.delete_lines(0, old - 1);
+                    buf.clamp_cursor(false);
+                    buf.mark_saved();
                     note.seen = now;
                     moved += 1;
                 }
@@ -584,8 +630,13 @@ impl Notes {
             .filter_map(|n| n.path)
             .collect();
         let before = self.notes.len();
+        // A note that has never been written is not a note that has been
+        // deleted - it is one this program has only just made, waiting for the
+        // save that follows a pause. Dropping those threw away every file the
+        // assistant created, in the seconds between accepting it and its
+        // reaching the disk.
         self.notes.retain(|n| match &n.path {
-            Some(p) => here.contains(p) || n.buffer.dirty,
+            Some(p) => here.contains(p) || n.seen.is_none(),
             None => true,
         });
         moved += before - self.notes.len();
@@ -1281,8 +1332,10 @@ impl Notes {
     fn chat_ask(&mut self, talk: &mut chat::Chat) -> llm::Ask {
         // Before anything is described to the model, make sure what is being
         // described is what is on disk. A question asked about a file somebody
-        // edited in another window should be answered about that file.
-        self.take_up_changes();
+        // edited in another window should be answered about that file - and
+        // what is merely waiting to be saved here should not be mistaken for
+        // work in danger, which is what `settle` is for.
+        self.before_asking();
         let here = self.note().project.clone();
         let files: Vec<(String, String)> = self
             .notes

@@ -5929,17 +5929,59 @@ fn a_note_changed_by_something_else_is_taken_up() {
     app.take_up_changes();
     assert!(!app.notes.iter().any(|n| n.filename() == "kettle.md"), "the gone one");
 
-    // And what somebody has typed and not saved is worth more than tidiness.
+    // Somebody who saves a file meant to, and that holds even over a buffer
+    // here that has not been saved yet: it is the same person, and saving the
+    // file is the thing they did on purpose. Waiting for the pause before a
+    // save is the reason the two can disagree at all.
     let i = app.notes.iter().position(|n| n.filename() == "bike.md").expect("there");
     app.notes[i].buffer = notes::text::Buffer::from_text("# Bike\n\nmine, unsaved\n");
     app.notes[i].buffer.dirty = true;
     std::thread::sleep(std::time::Duration::from_millis(1100));
     std::fs::write(dir.join("bike.md"), "# Bike\n\ntheirs\n").expect("rewritten again");
+    assert!(app.take_up_changes() > 0, "the save was passed over");
+    assert!(text(&app).contains("theirs"), "the file did not win: {:?}", text(&app));
+    // And nothing is lost by it - only moved one keystroke away.
+    let i = app.notes.iter().position(|n| n.filename() == "bike.md").expect("there");
+    app.notes[i].buffer.undo();
+    assert!(
+        app.notes[i].buffer.to_text().contains("mine, unsaved"),
+        "undo should put back what was typed: {:?}",
+        app.notes[i].buffer.to_text()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_note_only_just_made_is_not_mistaken_for_one_deleted() {
+    // Taking up what changed on disk also lets go of files that have gone -
+    // and a note the assistant has just made has not gone, it has not arrived
+    // yet. Waiting for the save that follows a pause is the whole of the
+    // difference, and for a second or so it looks exactly like a deletion.
+    // Every file the assistant created was thrown away in that second.
+    let dir = std::env::temp_dir().join(format!("notes-newborn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a vault");
+    std::fs::write(dir.join("one.md"), "# One\n").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+
+    // What accepting a change leaves behind: named, unsaved, not on disk.
+    app.apply_change(&notes::chat::Change {
+        file: Some("kettle.md".into()),
+        what: notes::chat::What::Write {
+            text: "# Kettle\n\nThe kettle is broken.\n".into(),
+        },
+        state: None,
+    });
+    assert!(app.notes.iter().any(|n| n.filename() == "kettle.md"), "made");
+    assert!(!dir.join("kettle.md").exists(), "and not on disk yet");
+
     app.take_up_changes();
     assert!(
-        text(&app).contains("mine, unsaved"),
-        "an unsaved note was thrown away: {:?}",
-        text(&app)
+        app.notes.iter().any(|n| n.filename() == "kettle.md"),
+        "the new note was thrown away before it was saved"
     );
+    // And it reaches the disk when it is meant to.
+    app.before_asking();
+    assert!(dir.join("kettle.md").exists(), "still not written");
     let _ = std::fs::remove_dir_all(&dir);
 }
