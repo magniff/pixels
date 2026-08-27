@@ -80,7 +80,7 @@ const MARKS: usize = 3;
 pub fn default_path() -> PathBuf {
     std::env::var_os("PIXUI_MODEL")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("models/Qwen3-1.7B-Q4_K_M.gguf"))
+        .unwrap_or_else(|| PathBuf::from("models/Qwen3.5-9B-Q4_K_M.gguf"))
 }
 
 /// The weights, and the working memory that borrows them.

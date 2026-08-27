@@ -74,9 +74,11 @@ system's — they are built from the same widgets as everything else.
 **An assistant, on your machine** — select something, press `Cmd-Enter`, and
 ask for a change.
 
-- Qwen3, Qwen3.5 or GPT-OSS 20B through llama.cpp, on the GPU where there is
-  one; no key, no account, and nothing leaves the machine unless you switch the
-  next one on
+- Qwen3.5 9B or Ornith 1.5 9B through llama.cpp, on the GPU where there is one;
+  no key, no account, and nothing leaves the machine unless you switch the next
+  one on. Two rather than a list, because seven were measured on a 24GB Mac and
+  these are the two that answered every question and said so when they could
+  not — the reasoning behind the shortlist is in `settings.rs`, with the table
 - **Working sums out** rather than remembering them, and **knowing what the
   time and the date are**, which are two things a language model cannot do and
   does not know it cannot do. Both happen on the machine, so both are always on

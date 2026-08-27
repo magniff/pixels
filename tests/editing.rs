@@ -2862,7 +2862,7 @@ fn settings_survive_a_round_trip_through_a_file() {
         font: "COZETTE".into(),
         assist: false,
         web: true,
-        model: Some("Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
+        model: Some("Ornith-1.5-9B-Q4_K_M.gguf".into()),
         // A prompt has newlines in it, and the format is one line per setting.
         prompt: "first line\nsecond line\nand a backslash \\ too".into(),
     };

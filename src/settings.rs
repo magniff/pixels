@@ -46,41 +46,52 @@ pub struct Weights {
     pub note: &'static str,
 }
 
+/// The two that earned their place.
+///
+/// Seven were tried on a 24GB Mac against the same battery: six questions with
+/// a checkable answer, two it cannot know - where the answer is saying so -
+/// and one asking for a change in the block format this app reads.
+///
+/// | model | on disk | right | writing | later questions |
+/// | --- | --- | --- | --- | --- |
+/// | Qwen3.5 9B | 5.7 GB | 6/6 | 20.7 tok/s | 0.30 s |
+/// | Ornith 1.5 9B | 5.8 GB | 6/6 | 20.9 tok/s | 0.30 s |
+/// | Qwen3 14B | 9.0 GB | 6/6 | 12.5 tok/s | 0.48 s |
+/// | Qwen3.8 27B (IQ3_S) | 12.0 GB | 5/6 | 9.0 tok/s | 0.85 s |
+/// | gpt-oss 20b | 12.1 GB | 3/6 | 40.7 tok/s | 1.48 s |
+///
+/// Nothing beat the two 9Bs, and the reason is memory rather than merit: 24GB
+/// of it leaves the GPU about sixteen, so a model much past nine gigabytes
+/// spends what is left of the machine on itself. Qwen3.8's smallest release is
+/// 27B, which only fits by quantising it down to where it is slower than a 9B
+/// and no more right.
+///
+/// gpt-oss 20b came out because it was the largest and the worst: three out of
+/// six, by never reaching for the clock at all and inventing instead - a
+/// Saturday, seven days until Christmas, a date of 20231124, a llama.cpp
+/// release numbered v0.1.0beta. A model that says it does not know is worth
+/// more here than a bigger one that does not know it does not.
+///
+/// Two others were tried and are not here for reasons of this application
+/// rather than of theirs. LFM2.5 8B writes at 70 tokens a second, three times
+/// anything else, and scored nothing because it calls its tools in a syntax
+/// this does not parse. Gemma 4 will not load at all: its chat template is
+/// eighteen thousand characters of Jinja and the llama.cpp this builds against
+/// answers every one of them with the same error.
 pub const CATALOGUE: &[Weights] = &[
-    Weights {
-        label: "QWEN3 1.7B",
-        file: "Qwen3-1.7B-Q4_K_M.gguf",
-        url: "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
-        megabytes: 1170,
-        note: "PROOFREADS AND TIGHTENS",
-    },
-    Weights {
-        label: "QWEN3 4B",
-        file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-        url: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-        megabytes: 2400,
-        note: "REWRITES AND CHANGES TONE",
-    },
     Weights {
         label: "QWEN3.5 9B",
         file: "Qwen3.5-9B-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
-        megabytes: 5681,
-        note: "REWRITES WELL FOR ITS SIZE",
+        megabytes: 5680,
+        note: "SAYS WHEN IT DOES NOT KNOW",
     },
     Weights {
-        label: "QWEN3 14B",
-        file: "Qwen3-14B-Q4_K_M.gguf",
-        url: "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
-        megabytes: 9002,
-        note: "THINKS BEFORE IT REWRITES",
-    },
-    Weights {
-        label: "GPT-OSS 20B",
-        file: "gpt-oss-20b-MXFP4.gguf",
-        url: "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-MXFP4.gguf",
-        megabytes: 12100,
-        note: "REASONS ABOUT WHAT YOU MEANT",
+        label: "ORNITH 1.5 9B",
+        file: "Ornith-1.5-9B-Q4_K_M.gguf",
+        url: "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf",
+        megabytes: 5780,
+        note: "ANSWERS SHORT, LOOKS THINGS UP",
     },
 ];
 
