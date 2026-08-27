@@ -5280,6 +5280,32 @@ fn nobody_is_shown_the_calling_out() {
 
     // The other spelling, in case the outer tag never arrives.
     assert_eq!(without_machinery("ok <function=calc>").trim(), "ok");
+
+    // A call in the middle keeps what is on both sides of it. The old rule cut
+    // everything from the first tag onwards, so a model that said something,
+    // looked something up and then carried on lost the second half.
+    let around = "First, the sum.\n<tool_call><function=calc><parameter=expression>2+2</parameter></function></tool_call>\nAnd that is that.";
+    let kept = without_machinery(around);
+    assert!(kept.contains("First, the sum."), "{kept:?}");
+    assert!(kept.contains("And that is that."), "{kept:?}");
+    assert!(!kept.contains('<'), "{kept:?}");
+
+    // Other families spell it differently, and a closing tag whose opening
+    // never arrived is not language either.
+    for machinery in [
+        "<|tool_call_start|>[date(when='today')]<|tool_call_end|>",
+        "[TOOL_CALL]calc(1+1)[/TOOL_CALL]",
+        "</tool_call>",
+        "</parameter>\n</function>\n</tool_call>",
+    ] {
+        let said = format!("Here you go.\n{machinery}");
+        let kept = without_machinery(&said);
+        assert_eq!(kept, "Here you go.", "left machinery in: {kept:?}");
+    }
+
+    // And two calls in one reply take both of themselves away.
+    let twice = "<tool_call><function=calc><parameter=expression>1</parameter></function></tool_call>\n<tool_call><function=date><parameter=when>today</parameter></function></tool_call>";
+    assert_eq!(without_machinery(twice), "");
 }
 
 #[test]
@@ -5587,4 +5613,49 @@ fn a_reply_asking_for_three_things_at_once_gets_all_three() {
     );
     // And a reply with no call in it asks for nothing.
     assert!(calls("just a sentence").is_empty());
+}
+
+#[test]
+fn a_reply_that_was_only_machinery_says_so_rather_than_nothing() {
+    use notes::llm::{Ask, Assistant, Backend, Reply, Tool, Turn, Watcher};
+    /// A model whose whole reply is a call it got the shape of wrong.
+    struct AllTags;
+    impl Backend for AllTags {
+        fn name(&self) -> String {
+            "ALL TAGS".into()
+        }
+        fn edit(&mut self, _ask: &Ask, _w: &mut dyn Watcher) -> Reply {
+            // No `<parameter=`, so it is not a call; all tags, so nothing is
+            // left of it once they come off.
+            Ok("<tool_call>\n<function=write file=\"sums.md\">\n</function>\n</tool_call>".into())
+        }
+    }
+    let mut a = Assistant::spawn(Box::new(AllTags));
+    a.ask(Ask {
+        turns: vec![Turn {
+            mine: true,
+            text: "write the sum into a note".into(),
+        }],
+        tools: vec![Tool {
+            name: "calc",
+            about: "sums",
+            takes: ("expression", "a sum"),
+        }],
+        ..Default::default()
+    });
+    let said = loop {
+        if let Some(r) = a.poll() {
+            break r.expect("an answer");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let (prose, _) = notes::chat::lookups(&said);
+    let (prose, _) = notes::chat::proposals(&prose);
+    // Not blank, and not tags. A turn with nothing in it reads as the
+    // application having lost the answer, and the tags are the inside of the
+    // thing they asked a question of.
+    assert!(!prose.trim().is_empty(), "a blank turn: {said:?}");
+    for bracket in ["<tool_call", "<function=", "</function", "</tool_call", "<parameter"] {
+        assert!(!prose.contains(bracket), "{bracket} reached the panel: {prose:?}");
+    }
 }

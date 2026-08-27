@@ -276,21 +276,63 @@ impl Used {
 /// Anything said *before* the call is kept - "let me check" is worth reading -
 /// and an unterminated block takes the rest with it, since a block half written
 /// is a block still being written.
-pub fn without_machinery(said: &str) -> &str {
-    let Some(at) = said.find("<tool_call").or_else(|| said.find("<function=")) else {
-        return said;
-    };
-    // Only when it really is one. A model that opens a call block and then
-    // writes something else inside it has still written something, and cutting
-    // there hands back an empty reply - which is what happened: asked to make
-    // a file, Qwen3.5 wrapped one of this app's own change blocks in a call it
-    // never finished, and the conversation showed a blank turn where the
-    // answer should have been. Better the machinery than nothing.
-    if called(said).is_none() && said[..at].trim().is_empty() {
-        return said;
+pub fn without_machinery(said: &str) -> String {
+    let mut out = String::with_capacity(said.len());
+    let mut rest = said;
+    loop {
+        // The earliest thing that starts a call, whichever spelling it is in.
+        let Some((at, opener)) = OPENERS
+            .iter()
+            .filter_map(|o| rest.find(o).map(|i| (i, *o)))
+            .min_by_key(|(i, _)| *i)
+        else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..at]);
+        let after = &rest[at + opener.len()..];
+        // Past the end of this call, if it has one. A block half written is a
+        // block still being written, and what follows it is nothing: that is
+        // the streaming case, where the tags arrive before the answer does.
+        let Some(shut) = CLOSERS
+            .iter()
+            .filter_map(|c| after.find(c).map(|i| (i + c.len(), *c)))
+            .min_by_key(|(i, _)| *i)
+            .map(|(i, _)| i)
+        else {
+            break;
+        };
+        rest = &after[shut..];
     }
-    &said[..at]
+    // Whatever is left of the wrapping, for the spellings that arrive without
+    // their opening or in an order nobody predicted. None of it is language.
+    for stray in STRAYS {
+        out = out.replace(stray, "");
+    }
+    out.trim().to_string()
 }
+
+/// What a model writes to begin reaching for a tool.
+///
+/// More than one spelling, because more than one family is spoken to here and
+/// each was trained on its own. The list is what has actually been seen coming
+/// out of a model in this application, not everything that exists.
+const OPENERS: &[&str] = &["<tool_call", "<function=", "<|tool_call_start|>", "[TOOL_CALL]"];
+
+/// And what ends one.
+const CLOSERS: &[&str] = &["</tool_call>", "</function>", "<|tool_call_end|>", "[/TOOL_CALL]"];
+
+/// Leftovers: a closing tag whose opening never came, and the parameter
+/// wrapping that sits inside a call and sometimes outlives it.
+const STRAYS: &[&str] = &[
+    "</tool_call>",
+    "</function>",
+    "</parameter>",
+    "<|tool_call_end|>",
+    "<|tool_call_start|>",
+    "[/TOOL_CALL]",
+    "[TOOL_CALL]",
+];
 
 /// The tool call a reply is making, if it is making one.
 ///
@@ -461,7 +503,7 @@ fn answer(
         // asked it to stop writing is more use than nothing, and it is what
         // you were looking at when you pressed the button.
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
-            return Ok(assembled(&used, &so_far, without_machinery(&said)));
+            return Ok(assembled(&used, &so_far, &without_machinery(&said)));
         }
 
         let asked_for = if ask.tools.is_empty() {
@@ -474,7 +516,7 @@ fn answer(
             // answer arrives with its working. Anything that looked like a
             // call and was not one comes out here rather than being read as
             // prose: a half-written block is not something to show anybody.
-            return Ok(assembled(&used, &so_far, without_machinery(&said)));
+            return Ok(assembled(&used, &so_far, &without_machinery(&said)));
         };
         // Out of steps, or going round in one. Either way the thing to do is
         // not to give up: it has been looking things up all this time and the
@@ -521,11 +563,11 @@ fn answer(
 
 /// Keep the part of a pass that is prose rather than machinery.
 fn keep(so_far: &mut Vec<String>, said: &str) {
-    let plain = without_machinery(said).trim();
+    let plain = without_machinery(said);
     // The same sentence twice is one sentence: a model that repeats its
     // working before each call would otherwise say everything n times.
-    if !plain.is_empty() && !so_far.iter().any(|p| p == plain) {
-        so_far.push(plain.to_string());
+    if !plain.is_empty() && !so_far.contains(&plain) {
+        so_far.push(plain);
     }
 }
 
@@ -539,6 +581,17 @@ fn assembled(used: &[Used], so_far: &[String], last: &str) -> String {
     let last = last.trim();
     if !last.is_empty() && !parts.contains(&last) {
         parts.push(last);
+    }
+    // A reply that was nothing but a call it got wrong leaves nothing behind
+    // once the tags are off it, and a turn with nothing in it reads as the
+    // application having lost the answer. Say what happened instead: the
+    // lookups are shown above it either way, so this is the only line missing.
+    if parts.is_empty() {
+        parts.push(if used.is_empty() {
+            "It did not answer."
+        } else {
+            "It looked that up but did not say anything about it."
+        });
     }
     out.push_str(&parts.join("\n\n"));
     out
@@ -597,11 +650,17 @@ fn finish(
         &mut watch,
     )?);
     // There were no tools to call on this pass, so anything shaped like a call
-    // is not one - it is the model carrying on out of habit, and what it wrote
-    // inside is all the answer there is. Stripping it left nothing at all, and
-    // the conversation showed four lookups followed by a blank.
-    let plain = without_machinery(&said).trim();
-    Ok(assembled(&used, &so_far, if plain.is_empty() { &said } else { plain }))
+    // was not one - it was the model carrying on out of habit. What it wrote
+    // is gone with the tags either way, and handing those back instead was
+    // showing somebody the inside of the thing they asked a question of.
+    // Better to say plainly that there is no answer, when there is none.
+    let plain = without_machinery(&said);
+    let ending = if plain.is_empty() && so_far.is_empty() {
+        "I looked those up but could not put an answer together."
+    } else {
+        &plain
+    };
+    Ok(assembled(&used, &so_far, ending))
 }
 
 /// How long the weights stay resident after the last question.
