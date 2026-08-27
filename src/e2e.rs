@@ -690,6 +690,41 @@ fn a_family_of_birthdays(app: &mut App) -> Result<(), String> {
     }
 }
 
+/// A sum whose parts all have to be looked up, and a share of a life.
+///
+/// The one that looked right and was out by 929 days. Every figure in it comes
+/// from somewhere different - two birthdays, a third date years later, and a
+/// division of one by another - and the only way to get the last one right is
+/// to have got the three before it right. Which is why it is here: it fails
+/// loudly for any of half a dozen reasons, and quietly for none.
+fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
+    let (mine, _) = day_count("1989-07-31").ok_or("the clock cannot say")?;
+    let (met, _) = day_count("2010-12-01").ok_or("the clock cannot say")?;
+    let (alive, together) = (
+        mine.parse::<f64>().unwrap_or(1.0),
+        met.parse::<f64>().unwrap_or(0.0),
+    );
+    let share = format!("{:.1}", 100.0 * together / alive);
+
+    asking(
+        app,
+        "my bd is jul 31 1989 and i met my wife on dec 1 2010. how many days have i been alive, \
+         how many days have we been together, and what percentage of my life is that?",
+    )?;
+    let said = last_answer(app).replace(',', "");
+    let missing: Vec<String> = [(&mine, "days alive"), (&met, "days together"), (&share, "the share")]
+        .into_iter()
+        .filter(|(want, _)| !said.contains(want.as_str()))
+        .map(|(want, what)| format!("{what} ({want})"))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    // A share worked out from the right two numbers is allowed to be rounded
+    // differently; what is not allowed is the numbers themselves being wrong.
+    Err(format!("{WRONG}missing {missing:?}: {said:?}"))
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -725,6 +760,7 @@ const SCENES: &[Scene] = &[
     ("several tools from one question", several_tools_from_one_question),
     ("a change turned down", a_change_turned_down),
     ("a family of birthdays", a_family_of_birthdays),
+    ("a share of a lifetime", a_share_of_a_lifetime),
     ("a passage the model rewrites", a_passage_the_model_rewrites),
     ("the conversation is kept", the_conversation_is_kept),
 ];
