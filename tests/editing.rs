@@ -5659,3 +5659,59 @@ fn a_reply_that_was_only_machinery_says_so_rather_than_nothing() {
         assert!(!prose.contains(bracket), "{bracket} reached the panel: {prose:?}");
     }
 }
+
+#[test]
+fn a_date_with_its_month_written_out_is_understood() {
+    // The rule was ISO and nothing else, because 07/31 and 31/07 are the same
+    // six characters meaning two different days. A month with a name is not in
+    // doubt, and refusing it cost the answer: asked how many days somebody had
+    // been alive from "jul 31 1989", the model could not turn that into a date
+    // this would take, did the arithmetic itself, and was out by 819 days.
+    let want = notes::clock::about("1989-07-31").unwrap();
+    for spelling in [
+        "jul 31 1989",
+        "31 july 1989",
+        "July 31, 1989",
+        "31 Jul 1989",
+        "  JULY 31 1989  ",
+    ] {
+        assert_eq!(
+            notes::clock::about(spelling).unwrap(),
+            want,
+            "{spelling:?} should be the same day"
+        );
+    }
+    // May is the awkward one: three letters long to begin with.
+    assert!(notes::clock::about("may 1 2000").unwrap().contains("1 May 2000"));
+    // Without a year it is a day that comes round, like 12-25.
+    let named = notes::clock::about("25 december").unwrap();
+    assert_eq!(named, notes::clock::about("12-25").unwrap());
+    assert!(named.contains("The next 25 December"), "{named}");
+    // And figures alone are still refused, because they are still ambiguous.
+    assert!(notes::clock::about("07/31/1989").is_err());
+    assert!(notes::clock::about("next tuesday").is_err());
+}
+
+#[test]
+fn an_enormous_argument_is_cut_before_it_is_drawn() {
+    use notes::chat::Lookup;
+    // One model answered "how many days have I been alive" by reaching for the
+    // calculator with four hundred ones added together. The panel draws what
+    // was looked up on one line, and that is not a line.
+    let huge = Lookup {
+        tool: "calc".into(),
+        arg: "1 + ".repeat(200) + "1",
+        result: String::new(),
+    };
+    let said = huge.said();
+    assert!(said.len() < 80, "{} characters: {said:?}", said.len());
+    assert!(said.ends_with("..."), "{said:?}");
+    assert!(said.starts_with("WORKED OUT 1 + 1"), "{said:?}");
+    // An ordinary one is untouched.
+    let small = Lookup {
+        tool: "calc".into(),
+        arg: "384 * 517".into(),
+        result: String::new(),
+    };
+    assert_eq!(small.said(), "WORKED OUT 384 * 517");
+}

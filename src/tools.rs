@@ -47,8 +47,10 @@ fn calendar() -> Tool {
                 answer. A day with no year, like 12-25, means the next one there is.",
         takes: (
             "when",
-            "Leave it as today for the date now, 2026-12-25 for a particular day, or 12-25 for \
-             the next time that day comes round.",
+            "Leave it as today for the date now. For a particular day, 2026-12-25, or the \
+             month written out in either order - 31 July 1989, July 31 1989. For a day that \
+             comes round every year, leave the year off: 12-25, or 25 December. Pass the day \
+             somebody gave you rather than working anything out from it.",
         ),
     }
 }

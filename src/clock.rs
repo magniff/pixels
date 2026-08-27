@@ -45,6 +45,13 @@ pub fn about(what: &str) -> Result<String, String> {
     // making the last Christmas 274 days ago, then 306, then a Wednesday. It
     // was 245 days and a Thursday. So a recurring day answers about both, and
     // there is nothing left to count.
+    // A month by name, which `parse` will not take and which nobody writing to
+    // a person would think twice about.
+    let asked = match named(&asked) {
+        Some((Some(year), month, day)) => format!("{year}-{month:02}-{day:02}"),
+        Some((None, month, day)) => format!("{month:02}-{day:02}"),
+        None => asked,
+    };
     if parse(&asked).is_none() {
         if let Some(next) = coming(&asked, &now) {
             let here = days_from_civil((now.year, now.month, now.day));
@@ -208,9 +215,66 @@ fn today() -> Result<Now, String> {
     })
 }
 
-/// `2026-12-25`, and nothing more forgiving: a date written any other way is
-/// ambiguous about which number is the month, and guessing at that is how a
-/// note ends up with the wrong date in it.
+/// The months, by the first three letters of each, which is all anybody
+/// abbreviates them to.
+const MONTHS: [&str; 12] = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+];
+
+/// A date written with the month's name in it, in whichever order.
+///
+/// `31 jul 1989`, `July 31, 1989`, `jul 31 1989`. The rule below refuses
+/// everything but `1989-07-31` because `07/31` and `31/07` are the same six
+/// characters meaning two different days - but a month written out is not
+/// ambiguous, and refusing it cost the answer: asked how many days somebody
+/// had been alive from "jul 31 1989", the model could not turn that into a
+/// date this would take, tried to do the arithmetic inside the calculator
+/// instead, and was out by eight hundred days.
+///
+/// The year may be missing, in which case this is a day that comes round and
+/// the caller treats it as one.
+fn named(text: &str) -> Option<(Option<i64>, i64, i64)> {
+    let words: Vec<&str> = text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let month = words.iter().find_map(|w| {
+        let w = w.to_lowercase();
+        (w.len() >= 3).then(|| {
+            MONTHS
+                .iter()
+                .position(|m| m.starts_with(&w) || w.starts_with(&m[..3]))
+        })?
+    })? as i64
+        + 1;
+    let mut year = None;
+    let mut day = None;
+    for w in &words {
+        let Ok(n) = w.parse::<i64>() else { continue };
+        if w.len() == 4 && (1000..=9999).contains(&n) {
+            year.get_or_insert(n);
+        } else if (1..=31).contains(&n) {
+            day.get_or_insert(n);
+        }
+    }
+    Some((year, month, day?))
+}
+
+/// `2026-12-25`, and nothing more forgiving *in figures*: a date written any
+/// other way in numbers alone is ambiguous about which of them is the month,
+/// and guessing at that is how a note ends up with the wrong date in it. A
+/// month with a name is not in doubt, and [`named`] takes those.
 fn parse(text: &str) -> Option<(i64, i64, i64)> {
     let mut parts = text.trim().split('-');
     let year: i64 = parts.next()?.trim().parse().ok()?;
@@ -228,21 +292,10 @@ fn parse(text: &str) -> Option<(i64, i64, i64)> {
 }
 
 fn stamp((year, month, day): (i64, i64, i64)) -> String {
-    const MONTHS: [&str; 12] = [
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ];
-    format!("{day} {} {year}", MONTHS[(month - 1).clamp(0, 11) as usize])
+    let name = MONTHS[(month - 1).clamp(0, 11) as usize];
+    let mut titled = name.to_string();
+    titled[..1].make_ascii_uppercase();
+    format!("{day} {titled} {year}")
 }
 
 fn weekday(days: i64) -> &'static str {

@@ -212,6 +212,16 @@ pub struct Lookup {
     pub result: String,
 }
 
+/// A tool's argument, at a length that fits on a line.
+fn shortened(arg: &str) -> String {
+    const ROOM: usize = 48;
+    let flat = arg.split_whitespace().collect::<Vec<_>>().join(" ");
+    match flat.char_indices().nth(ROOM) {
+        None => flat,
+        Some((at, _)) => format!("{}...", flat[..at].trim_end()),
+    }
+}
+
 impl Lookup {
     /// What it did, in words.
     ///
@@ -221,7 +231,12 @@ impl Lookup {
     /// so - but showing it is not the same as showing the arguments it was
     /// made with.
     pub fn said(&self) -> String {
-        let arg = self.arg.trim();
+        // Cut, because an argument can be enormous. Asked how many days
+        // somebody had been alive, one model reached for the calculator with
+        // four hundred ones added together, and the whole of it would have
+        // been drawn across the panel as a single line.
+        let arg = &shortened(self.arg.trim());
+        let arg: &str = arg;
         let now =
             arg.is_empty() || arg.eq_ignore_ascii_case("today") || arg.eq_ignore_ascii_case("now");
         match self.tool.as_str() {
