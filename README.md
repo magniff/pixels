@@ -176,6 +176,12 @@ for the run and thrown away after, with its own settings, so it cannot touch the
 notes you keep. `tools/e2e.sh Ornith` picks a model by name and
 `E2E_ONLY="turned down" tools/e2e.sh` runs one scene.
 
+The scenes are the things people actually do: a note typed by hand and saved,
+a question that needs a tool, a file the model writes and you accept, several
+tools from one question, a change turned down with the vault checked unmoved, a
+conversation about birthdays ending in a note of them, a passage rewritten in
+the editor, and the transcript found on disk afterwards.
+
 It tells two kinds of failure apart, because they mean different things. A
 button that is not there, a question that never went, a file not written after
 the change was accepted — those are this code, and they set the exit status. An

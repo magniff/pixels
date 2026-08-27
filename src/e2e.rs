@@ -598,6 +598,94 @@ fn several_tools_from_one_question(app: &mut App) -> Result<(), String> {
     }
 }
 
+/// What the clock says about a day, in the two shapes this scene checks.
+///
+/// Read off the tool rather than written down, so this still means something
+/// next year: the answer to "how many days have I been alive" moves every
+/// night.
+fn day_count(date: &str) -> Option<(String, String)> {
+    let said = crate::clock::about(date).ok()?;
+    let days = said
+        .split_whitespace()
+        .zip(said.split_whitespace().skip(1))
+        .find(|(_, next)| next.starts_with("days"))
+        .map(|(n, _)| n.to_string())?;
+    // "612 days ago - 1 year and 8 months." -> "1 year and 8 months"
+    let age = said
+        .split(" ago - ")
+        .nth(1)?
+        .split('.')
+        .next()?
+        .trim()
+        .to_string();
+    Some((days, age))
+}
+
+/// A conversation about birthdays, ending in a note about them.
+///
+/// The one that was reported, and it went wrong in four different places
+/// before it went right: a date written the way people write it was refused,
+/// the day count was worked out by hand and came out eight hundred days off,
+/// the note was written into a block that parsed as nothing, and a child of
+/// one was described as two. All four are the same mistake - a number derived
+/// instead of read - so this asks for all of them at once.
+fn a_family_of_birthdays(app: &mut App) -> Result<(), String> {
+    let (mine, _) = day_count("1989-07-31").ok_or("the clock cannot say")?;
+    let (hers, her_age) = day_count("2024-12-23").ok_or("the clock cannot say")?;
+
+    // A date the way somebody types it, not the way a machine takes it.
+    asking(app, "my bd is jul 31 1989, how many days i've been alive")?;
+    let said = last_answer(app).replace(',', "");
+    if !said.contains(&mine) {
+        return Err(format!("{WRONG}{mine} days, it said: {said:?}"));
+    }
+
+    // The age of a small child, which is the one it kept getting wrong: 612
+    // days divided by 365 and rounded is two, and she is one.
+    asking(
+        app,
+        "our daughter eva was born 23 dec 2024. how old is she in years, and in days?",
+    )?;
+    let said = last_answer(app).replace(',', "").to_lowercase();
+    if !said.contains(&hers) {
+        return Err(format!("{WRONG}{hers} days, it said: {said:?}"));
+    }
+    let years = her_age.split_whitespace().next().unwrap_or_default();
+    let wrong_by_one = format!("{} years", years.parse::<i64>().unwrap_or(0) + 1);
+    if said.contains(&wrong_by_one) {
+        return Err(format!(
+            "{WRONG}she is {her_age}, and it said {wrong_by_one}: {said:?}"
+        ));
+    }
+
+    // And the note, which is where the whole thing was falling on the floor.
+    asking(
+        app,
+        "make a note called ages.md with both of us in it, our birthdays and how many days old we each are",
+    )?;
+    if accept_all(app) == 0 {
+        // Announcing the change instead of proposing it is the model ignoring
+        // the one instruction it is given twice. The application has nothing
+        // to answer for when there is nothing to offer.
+        return Err(format!(
+            "{WRONG}nothing was proposed: {:?}",
+            last_answer(app).chars().take(200).collect::<String>()
+        ));
+    }
+    let found = app
+        .vault()
+        .into_iter()
+        .find(|f| f.ends_with("ages.md"))
+        .ok_or_else(|| format!("no ages.md after it was accepted. vault: {:?}", app.vault()))?;
+    let text = app.read(&found).unwrap_or_default().replace(',', "");
+    let missing: Vec<&String> = [&mine, &hers].into_iter().filter(|d| !text.contains(*d)).collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{WRONG}{found} is missing {missing:?}: {text:?}"))
+    }
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -632,6 +720,7 @@ const SCENES: &[Scene] = &[
     ("a file the model writes", a_file_the_model_writes),
     ("several tools from one question", several_tools_from_one_question),
     ("a change turned down", a_change_turned_down),
+    ("a family of birthdays", a_family_of_birthdays),
     ("a passage the model rewrites", a_passage_the_model_rewrites),
     ("the conversation is kept", the_conversation_is_kept),
 ];
