@@ -329,7 +329,11 @@ fn chatting(app: &mut App) -> Result<(), String> {
     // previous scene left standing is turned down before this one asks
     // anything: turned down rather than taken, because a scene should only
     // change the vault on purpose.
-    for _ in 0..6 {
+    // Until the box comes back, not a fixed few times: one reply can propose a
+    // change to every file in the project, and asked to rewrite them all in
+    // French one did exactly that. Six left standing was enough to leave the
+    // next scene typing into a panel that was still waiting for an answer.
+    for _ in 0..40 {
         app.scroll_to_end();
         if app.ui.find("chat-field").is_some() || app.click("REJECT").is_err() {
             break;
@@ -364,7 +368,7 @@ fn asking(app: &mut App, question: &str) -> Result<(), String> {
 /// Take every change on offer, one after another.
 fn accept_all(app: &mut App) -> usize {
     let mut taken = 0;
-    for _ in 0..6 {
+    for _ in 0..40 {
         app.scroll_to_end();
         if app.click("ACCEPT").is_err() {
             break;

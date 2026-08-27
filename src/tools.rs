@@ -25,7 +25,10 @@ fn arithmetic() -> Tool {
                 looks: you do sums the way you do everything else, by what the answer ought to \
                 look like, and you will be confidently a few thousand out. Takes the usual \
                 signs and brackets, powers with ^, and sqrt, abs, round, floor, ceil, min, max, \
-                log, ln, exp, sin, cos, tan, and pi.",
+                log, ln, exp, sin, cos, tan, and pi. It knows nothing about dates: it \
+                cannot subtract one from another, and a year multiplied by 365.25 is not \
+                how long somebody has been alive. Anything with a date in it goes to the \
+                date tool, which answers in days and in years and is never a day out.",
         takes: (
             "expression",
             "The sum on its own, as you would write it: 384 * 517, or (12.5 + 3) / 4, or sqrt(2).",

@@ -511,24 +511,36 @@ fn answer(
         } else {
             calls(&said)
         };
-        let Some((tool, arg)) = asked_for.first().cloned() else {
+        if asked_for.is_empty() {
             // Whatever it looked up goes in front of what it said, so the
             // answer arrives with its working. Anything that looked like a
             // call and was not one comes out here rather than being read as
             // prose: a half-written block is not something to show anybody.
             return Ok(assembled(&used, &so_far, &without_machinery(&said)));
-        };
-        // Out of steps, or going round in one. Either way the thing to do is
-        // not to give up: it has been looking things up all this time and the
-        // answers are sitting in the turns behind it.
-        let repeat = used.iter().any(|u| u.tool == tool && u.arg == arg);
-        if step >= STEPS || repeat {
+        }
+        // The ones worth running: not already answered, and not asked twice in
+        // the same breath. Both happen, and the second one badly - asked for a
+        // percentage of a lifetime, a model wrote the same sum forty-four
+        // times in one reply, and every one of them ran, because the check for
+        // going round in circles only ever looked at the first.
+        let mut fresh: Vec<(String, String)> = Vec::new();
+        for call in &asked_for {
+            let seen = used.iter().any(|u| (&u.tool, &u.arg) == (&call.0, &call.1));
+            if !seen && !fresh.contains(call) {
+                fresh.push(call.clone());
+            }
+        }
+        // Out of steps, or nothing left to ask that has not been asked. Either
+        // way the thing to do is not to give up: it has been looking things up
+        // all this time and the answers are sitting in the turns behind it.
+        let looping = fresh.is_empty();
+        if step >= STEPS || looping {
             keep(&mut so_far, &said);
             turns.push(Turn {
                 mine: false,
                 text: said,
             });
-            return finish(backend, &ask, turns, used, so_far, beat, words, stop, repeat);
+            return finish(backend, &ask, turns, used, so_far, beat, words, stop, looping);
         }
         // What it wrote before reaching for the tool is part of the answer.
         keep(&mut so_far, &said);
@@ -537,13 +549,16 @@ fn answer(
             steps: step.saturating_add(1),
             ..at
         });
-        // Every call it made, not only the first. The call and its answers
-        // become two more turns, in the shapes the model's own template
-        // expects: what it said, then a user turn holding the responses, which
-        // the template reads as tool results rather than as somebody asking
-        // something new.
+        // Every call it made, not only the first, and no more of them than
+        // there are steps left. The calls and their answers become two more
+        // turns, in the shapes the model's own template expects: what it said,
+        // then a user turn holding the responses, which the template reads as
+        // tool results rather than as somebody asking something new.
         let mut answers = String::new();
-        for (tool, arg) in asked_for {
+        for (tool, arg) in fresh {
+            if step >= STEPS {
+                break;
+            }
             let result = crate::tools::run(&tool, &arg);
             answers.push_str(&format!("<tool_response>\n{result}\n</tool_response>\n"));
             used.push(Used { tool, arg, result });
@@ -557,7 +572,6 @@ fn answer(
             mine: true,
             text: answers.trim_end().to_string(),
         });
-        let _ = (tool, arg);
     }
 }
 

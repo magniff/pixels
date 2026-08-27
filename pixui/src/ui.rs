@@ -633,7 +633,21 @@ impl<'a> Ui<'a> {
     /// what makes a slider survive a sloppy drag.
     pub fn interact(&mut self, id: Id, rect: Rect) -> Response {
         if self.state.indexing {
-            self.state.placed.insert(id, rect);
+            // Only where it can actually be reached. A widget scrolled out of
+            // its pane is still visited - that is how an immediate mode pass
+            // works - but it is not on the screen, and a harness that clicks
+            // the middle of it clicks the pane it is hidden behind. Eight
+            // buttons went unanswered that way, all of them above the fold.
+            let clip = self.canvas.clip_rect();
+            let seen = rect.x < clip.right()
+                && clip.x < rect.right()
+                && rect.y < clip.bottom()
+                && clip.y < rect.bottom();
+            if seen {
+                self.state.placed.insert(id, rect);
+            } else {
+                self.state.placed.remove(&id);
+            }
         }
         let p: Point = self.input.mouse;
         // Blocked input means blocked: a widget drawn under a modal must not
