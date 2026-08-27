@@ -6032,3 +6032,34 @@ fn a_file_named_with_its_folder_still_lands_in_the_folder() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_change_it_proposed_is_not_sent_back_as_a_copy_of_the_file() {
+    use notes::chat::without_bodies;
+    // A change block is a copy of a file, and a copy goes stale. Left in the
+    // conversation it is worse than stale: the model wrote it, so when the
+    // file later says something else it has its own word against a correction
+    // and takes its own. Reported exactly so - a change to a note the model
+    // itself wrote was never believed, while the same change to a note that
+    // was already there was believed at once, and a conversation started
+    // fresh got it right, having nothing of its own to argue with.
+    let said = "Here you go.\n\n<write file=\"bike.md\" state=\"applied\">\n# Bike\n\nThe bike is red.\n</write>\n\nAnything else?";
+    let sent = without_bodies(said);
+    assert!(sent.contains("Here you go."), "{sent}");
+    assert!(sent.contains("Anything else?"), "{sent}");
+    assert!(sent.contains("bike.md"), "it should still know what it did: {sent}");
+    assert!(sent.contains("accepted"), "and what became of it: {sent}");
+    // The part that matters: no copy of the file.
+    assert!(!sent.contains("The bike is red"), "the stale copy went too: {sent}");
+    assert!(!sent.contains("<write"), "and the block with it: {sent}");
+
+    // A change still waiting, and one turned down, say so.
+    let waiting = "<edit file=\"a.md\" lines=\"1\">\nnew text\n</edit>";
+    assert!(without_bodies(waiting).contains("waiting"), "{waiting}");
+    let turned = "<delete file=\"a.md\" state=\"rejected\"></delete>";
+    assert!(without_bodies(turned).contains("turned down"));
+
+    // A reply with no block in it is untouched.
+    let plain = "The bike is red.";
+    assert_eq!(without_bodies(plain), plain);
+}

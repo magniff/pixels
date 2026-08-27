@@ -1379,7 +1379,21 @@ impl Notes {
             .collect();
         let (vault, within, since) = talk.context(&digest::vault(&self.notes), &files);
         llm::Ask {
-            turns: talk.turns.clone(),
+            // What it said, without the bodies of the changes it proposed: a
+            // block is a copy of a file, and the file itself is above, once
+            // and current. See `chat::without_bodies`.
+            turns: talk
+                .turns
+                .iter()
+                .map(|t| llm::Turn {
+                    mine: t.mine,
+                    text: if t.mine {
+                        t.text.clone()
+                    } else {
+                        chat::without_bodies(&t.text)
+                    },
+                })
+                .collect(),
             vault,
             file: self.note().slug(),
             within: Some(within),

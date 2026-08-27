@@ -505,6 +505,45 @@ fn undecided(reply: &str) -> String {
     out
 }
 
+/// A past turn as the model should see it, with the bodies of changes taken
+/// out of it.
+///
+/// A change block is a copy of a file, and a copy of a file goes stale. Left
+/// in the conversation it is worse than stale: it is a copy the model wrote
+/// itself, so when the file later says something else, the model has its own
+/// word against a correction, and takes its own. Reported exactly that way -
+/// "if the model set the text it won't accept the change of it at all, if the
+/// text was there already the change is accepted just fine", and a conversation
+/// started fresh gets it right, having nothing of its own to disagree with.
+///
+/// So what it proposed is still there - it should know what it did - but the
+/// text of it is not, because the text of it is in the project, once, and
+/// current. The stored transcript keeps the whole thing: this is only what is
+/// sent, and the panel still draws the diff.
+pub fn without_bodies(text: &str) -> String {
+    let mut out = String::new();
+    let mut at = 0;
+    for (kind, tag, open, close) in blocks(text) {
+        let head = &text[tag..open];
+        let named = attr(head, "into")
+            .or_else(|| attr(head, "file"))
+            .unwrap_or_else(|| "the note".into());
+        let done = match state_attr(head) {
+            Some(true) => "and it was accepted",
+            Some(false) => "and it was turned down",
+            None => "and it is still waiting to be answered",
+        };
+        out.push_str(&text[at..tag]);
+        out.push_str(&format!(
+            "[you proposed a {kind} to `{named}` here, {done}. What that file says \
+             now is in the project above, which is the only version to go by.]"
+        ));
+        at = close + kind.len() + 3;
+    }
+    out.push_str(&text[at..]);
+    out.trim().to_string()
+}
+
 /// Split a reply into what it said and what it proposed.
 ///
 /// The blocks are lifted out of the prose rather than left in it: a reply is
