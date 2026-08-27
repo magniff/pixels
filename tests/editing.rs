@@ -5992,3 +5992,43 @@ fn a_note_only_just_made_is_not_mistaken_for_one_deleted() {
     assert!(dir.join("kettle.md").exists(), "still not written");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_file_named_with_its_folder_still_lands_in_the_folder() {
+    // The instructions ask for the name on its own, and models mostly give it.
+    // Not always: with a project open, one answered
+    // `<write file="new-one/bike.md">` - the project's own name on the front.
+    // Joined to the project's folder a second time, that is bound for
+    // `new-one/new-one/bike.md`, which does not exist. The write failed with
+    // "no such file or directory", quietly, and the note sat in the editor
+    // marked unsaved forever, about a file that was nowhere.
+    let dir = std::env::temp_dir().join(format!("notes-folded-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("new-one")).expect("a project");
+    std::fs::write(dir.join("new-one/seed.md"), "# Seed\n").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    let i = app.notes.iter().position(|n| n.filename() == "seed.md").expect("there");
+    app.current = i;
+
+    app.apply_change(&notes::chat::Change {
+        file: Some("new-one/bike.md".into()),
+        what: notes::chat::What::Write {
+            text: "# Bike\n\nThe bike is red.\n".into(),
+        },
+        state: None,
+    });
+    assert_eq!(app.keep_up(), 1, "the write did not happen");
+    assert!(
+        dir.join("new-one/bike.md").exists(),
+        "not where it belongs. vault holds: {:?}",
+        std::fs::read_dir(dir.join("new-one")).unwrap().flatten()
+            .map(|e| e.file_name()).collect::<Vec<_>>()
+    );
+    assert!(!dir.join("new-one/new-one").exists(), "a folder inside itself");
+    // And nothing is left claiming to be unsaved.
+    assert!(
+        !app.notes.iter().any(|n| n.buffer.dirty),
+        "still marked unsaved after being written"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

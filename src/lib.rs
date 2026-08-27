@@ -362,6 +362,25 @@ pub fn notes_dir() -> PathBuf {
 /// Separate from opening the vault because a vault can be read without being
 /// entered: `--ask` wants the notes to tell the model about, and has no
 /// business seeding a directory or installing a reference note to do it.
+/// A file name with any folder in front of it taken off.
+///
+/// The instructions ask for the name on its own, and models mostly give it -
+/// but not always: asked to make a note while a project was open, one answered
+/// `<write file="new-one/bike.md">` with the project's own name on the front.
+/// That was joined to the project's folder a second time, so the note was
+/// bound for `new-one/new-one/bike.md`, a folder that does not exist. The write
+/// failed, silently, and the conversation went on answering out of a note that
+/// had never reached the disk - which is exactly as wrong as it sounds, and
+/// looked from the outside like a file that would not change.
+fn bare(named: &str) -> String {
+    named
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(named)
+        .trim()
+        .to_string()
+}
+
 /// When a file was last written, as the filesystem has it.
 fn stamp(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
@@ -519,6 +538,7 @@ impl Notes {
     /// and choosing a name for somebody is not this function's business.
     pub fn keep_up(&mut self) -> usize {
         let mut written = 0;
+        let mut failed: Vec<String> = Vec::new();
         for note in &mut self.notes {
             if !note.buffer.dirty {
                 continue;
@@ -526,13 +546,26 @@ impl Notes {
             let Some(path) = note.path.clone() else {
                 continue;
             };
-            if std::fs::write(&path, note.buffer.to_text()).is_ok() {
-                note.buffer.mark_saved();
-                // What this program wrote is not a change made behind its
-                // back, so the mark moves with the file.
-                note.seen = stamp(&path);
-                written += 1;
+            // The folder first, for a note in a project that has only just
+            // been named. And a write that fails is said out loud: one that
+            // failed quietly left the editor showing a note that was not
+            // anywhere, and nothing to say so.
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
+            match std::fs::write(&path, note.buffer.to_text()) {
+                Ok(()) => {
+                    note.buffer.mark_saved();
+                    // What this program wrote is not a change made behind its
+                    // back, so the mark moves with the file.
+                    note.seen = stamp(&path);
+                    written += 1;
+                }
+                Err(e) => failed.push(format!("{}: {e}", path.display())),
+            }
+        }
+        if let Some(why) = failed.first() {
+            self.status = format!("COULD NOT WRITE {why}").to_uppercase();
         }
         written
     }
@@ -1011,7 +1044,8 @@ impl Notes {
         let here = self.note().project.clone();
         let named = change
             .file
-            .clone()
+            .as_deref()
+            .map(bare)
             .unwrap_or_else(|| self.note().filename());
         let found = self
             .notes
