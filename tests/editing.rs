@@ -4509,7 +4509,7 @@ fn a_tool_that_fails_says_so_rather_than_saying_nothing() {
     // The one answer that reliably makes a model invent is no answer at all:
     // handed an empty result it fills the gap, and it filled one with a
     // llama.cpp version that has never existed.
-    let said = notes::tools::run("no-such-tool", "anything");
+    let said = notes::tools::run("no-such-tool", "anything", "");
     assert!(!said.trim().is_empty());
     assert!(said.contains("no tool called"), "{said}");
 }
@@ -5635,6 +5635,115 @@ fn the_correction_stays_on_the_question_when_a_tool_is_used() {
 
     // And no backend is left to place it a second time.
     assert!(seen.iter().all(|a| a.since.is_none()));
+}
+
+#[test]
+fn a_conversation_that_has_outgrown_the_room_is_read_from_its_newest_turns() {
+    use notes::llm::{fitted, Turn};
+    let turn = |mine: bool, text: &str| Turn {
+        mine,
+        text: text.to_string(),
+    };
+    let turns: Vec<Turn> = (0..10)
+        .map(|i| turn(i % 2 == 0, &format!("turn {i} {}", "x".repeat(50))))
+        .collect();
+    // Measured in characters, which is a stand-in for tokens and as good.
+    let size = |turns: &[Turn]| turns.iter().map(|t| t.text.len()).sum::<usize>();
+
+    // Room for all of it: nothing touched, not even a note saying so.
+    let kept = fitted(&turns, 10_000, size);
+    assert_eq!(kept, turns);
+
+    // Room for about four. The oldest go, two at a time, and what is left
+    // still opens with a question - and says that it is not the whole story.
+    let kept = fitted(&turns, 330, size);
+    assert!(kept.len() < turns.len(), "nothing was let go of");
+    assert!(kept[0].mine, "the kept part must open with a question");
+    assert!(
+        kept[0].text.starts_with("[Earlier turns"),
+        "{}",
+        kept[0].text
+    );
+    assert!(kept[0].text.contains("turn 6"), "{}", kept[0].text);
+    assert_eq!(
+        kept.last(),
+        turns.last(),
+        "the newest turn is never let go of"
+    );
+    assert!(size(&kept) <= 330 + 80, "still over: {}", size(&kept));
+
+    // A question that does not fit on its own is still sent, and on its own.
+    let kept = fitted(&turns, 10, size);
+    assert_eq!(kept.len(), 1);
+    assert!(kept[0].text.ends_with(&turns[9].text));
+}
+
+#[test]
+fn letters_in_any_alphabet_survive_the_fold_to_ascii() {
+    use notes::llm::to_ascii;
+    // The punctuation with an ASCII spelling gets it, as before.
+    assert_eq!(
+        to_ascii("well \u{2014} yes \u{201c}so\u{201d}"),
+        "well -- yes \"so\""
+    );
+    // Decoration goes. A party emoji is not something a 5x7 font has words for.
+    assert_eq!(
+        to_ascii("done \u{1f389} at last \u{2192} next"),
+        "done at last next"
+    );
+    // Letters stay, whatever alphabet they are in. They used to go with the
+    // emoji, and a line of a note copied into an edit came back with its
+    // name misspelt and was written to disk that way.
+    assert_eq!(
+        to_ascii("M\u{fc}ller drinks caf\u{e9}"),
+        "M\u{fc}ller drinks caf\u{e9}"
+    );
+    assert_eq!(
+        to_ascii("\u{414}\u{430}\u{43d}\u{438}\u{43b}\u{430}"),
+        "\u{414}\u{430}\u{43d}\u{438}\u{43b}\u{430}"
+    );
+}
+
+#[test]
+fn an_answer_that_is_code_keeps_its_fence() {
+    use notes::llm::{clean_reply, without_thinking};
+    let code = "```rust\nfn main() {}\n```";
+    // A passage handed back is unwrapped: the fence was never asked for.
+    assert_eq!(clean_reply(code), "fn main() {}");
+    // An answer in a conversation is not: somebody asked for code, and the
+    // fence is what makes it code on the page.
+    assert_eq!(without_thinking(code), code);
+    // Both take the deliberation off.
+    let thought = "<think>\nhmm\n</think>\n\nThe bike is red.";
+    assert_eq!(without_thinking(thought), "The bike is red.");
+    assert_eq!(clean_reply(thought), "The bike is red.");
+}
+
+#[test]
+fn reading_a_note_by_name_prefers_the_project_in_question() {
+    let dir = std::env::temp_dir().join(format!("notes-readhere-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (project, text) in [
+        ("one", "# One\n\nfrom one\n"),
+        ("two", "# Two\n\nfrom two\n"),
+    ] {
+        std::fs::create_dir_all(dir.join(project)).expect("a project");
+        std::fs::write(dir.join(project).join("notes.md"), text).expect("a note");
+    }
+    // The tool reads the vault the application is pointed at.
+    let was = std::env::var_os("PIXUI_NOTES_DIR");
+    std::env::set_var("PIXUI_NOTES_DIR", &dir);
+    let from_one = notes::tools::run("read", "notes.md", "one/other.md");
+    let from_two = notes::tools::run("read", "notes.md", "two/other.md");
+    match was {
+        Some(v) => std::env::set_var("PIXUI_NOTES_DIR", v),
+        None => std::env::remove_var("PIXUI_NOTES_DIR"),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    // Two notes of one name, and the one read is the one in the project the
+    // question is about. It used to be whichever the vault listed first.
+    assert!(from_one.contains("from one"), "{from_one}");
+    assert!(from_two.contains("from two"), "{from_two}");
 }
 
 #[test]
@@ -6958,7 +7067,7 @@ fn asking_to_read_a_note_is_heard_in_either_shape() {
     assert_eq!(notes::llm::without_machinery(block), "I should check.");
 
     // A note that is not there says so rather than saying nothing.
-    let missing = notes::tools::run("read", "nowhere-at-all.md");
+    let missing = notes::tools::run("read", "nowhere-at-all.md", "");
     assert!(missing.contains("no note called"), "{missing}");
 }
 

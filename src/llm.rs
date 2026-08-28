@@ -197,6 +197,42 @@ deletes, because those are accepted separately and half a merge loses a note.
 made it.
 - Asked to change nothing, write no block.";
 
+/// As much of a conversation as fits, counted from the newest turn back.
+///
+/// `measure` says how long a set of turns comes to, in whatever unit `limit`
+/// is in; it is asked as few times as the answer allows. The oldest turns go
+/// first, two at a time - a question and its answer - so what is left still
+/// begins with somebody asking something, which is the only shape the chat
+/// templates take. The newest turn is never let go of: a question that does
+/// not fit on its own is a different problem, and the caller's.
+///
+/// Whatever is left is told that it is not the whole story, in a line on the
+/// front of its first turn, so the model does not answer "you never asked
+/// about that" about something it was asked three hours ago.
+pub fn fitted(turns: &[Turn], limit: usize, measure: impl Fn(&[Turn]) -> usize) -> Vec<Turn> {
+    if turns.is_empty() || measure(turns) <= limit {
+        return turns.to_vec();
+    }
+    const LEFT_OUT: &str = "[Earlier turns of this conversation have been left out to make room.]";
+    // The first turn that could open the kept part: a question, at the
+    // earliest, and past the pairs let go of so far.
+    let mut from = 0;
+    loop {
+        // Two at a time, then forward to the next thing somebody asked.
+        from = (from + 2).min(turns.len() - 1);
+        while from < turns.len() - 1 && !turns[from].mine {
+            from += 1;
+        }
+        let mut kept = turns[from..].to_vec();
+        if let Some(first) = kept.first_mut() {
+            first.text = format!("{LEFT_OUT}\n\n{}", first.text);
+        }
+        if from >= turns.len() - 1 || measure(&kept) <= limit {
+            return kept;
+        }
+    }
+}
+
 /// What came back, or why nothing did.
 pub type Reply = Result<String, String>;
 
@@ -775,7 +811,7 @@ fn answer(
             if step >= STEPS {
                 break;
             }
-            let result = crate::tools::run(&tool, &arg);
+            let result = crate::tools::run(&tool, &arg, &ask.file);
             answers.push_str(&format!("<tool_response>\n{result}\n</tool_response>\n"));
             used.push(Used { tool, arg, result });
             step = step.saturating_add(1);
@@ -1059,21 +1095,21 @@ impl Assistant {
     }
 }
 
-/// Take the answer out of whatever a model wrapped it in.
+/// A reply with the deliberation taken off, and nothing else.
 ///
-/// Small models announce themselves — "Here is the proofread version:" — and
-/// fence things they were not asked to fence. The prompt asks for the passage
-/// between `<text>` and `</text>` precisely so this can be exact rather than a
-/// guess about which opening sentence is a preamble and which is the text.
-/// Everything else here is a fallback for a model that ignored that.
-pub fn clean_reply(text: &str) -> String {
+/// Reasoning models answer in channels: the deliberation first, the answer
+/// last, both in the same stream. Only the last one was asked for. The thinking
+/// is dropped rather than shown — an editor that pauses to explain itself for
+/// four hundred words before touching your sentence is a worse editor, however
+/// interesting the four hundred words are.
+///
+/// This is the whole of what a *conversation* gets tidied by. The rest of
+/// [`clean_reply`] is for a passage handed back - fences and quotes it was not
+/// asked to wrap the passage in - and applied to a reply in a conversation it
+/// took a code block off the front of an answer that was code because somebody
+/// had asked for code.
+pub fn without_thinking(text: &str) -> String {
     let mut out = text.trim();
-
-    // Reasoning models answer in channels: the deliberation first, the answer
-    // last, both in the same stream. Only the last one was asked for. The
-    // thinking is dropped rather than shown — an editor that pauses to explain
-    // itself for four hundred words before touching your sentence is a worse
-    // editor, however interesting the four hundred words are.
     if let Some(start) = out.rfind("<|channel|>final<|message|>") {
         out = &out[start + "<|channel|>final<|message|>".len()..];
     }
@@ -1085,7 +1121,19 @@ pub fn clean_reply(text: &str) -> String {
     if let Some(start) = out.rfind("</think>") {
         out = &out[start + "</think>".len()..];
     }
-    out = out.trim();
+    out.trim().to_string()
+}
+
+/// Take the answer out of whatever a model wrapped it in.
+///
+/// Small models announce themselves — "Here is the proofread version:" — and
+/// fence things they were not asked to fence. The prompt asks for the passage
+/// between `<text>` and `</text>` precisely so this can be exact rather than a
+/// guess about which opening sentence is a preamble and which is the text.
+/// Everything else here is a fallback for a model that ignored that.
+pub fn clean_reply(text: &str) -> String {
+    let out = without_thinking(text);
+    let mut out = out.as_str();
 
     // The delimiters, when they are there. A missing closing tag still tells
     // us where the answer began, which is the half that matters.
@@ -1120,8 +1168,17 @@ pub fn clean_reply(text: &str) -> String {
 /// The font is 5x7 and ASCII. A model that answers with em dashes, curly
 /// quotes and a couple of party emoji is not wrong — it is writing for a
 /// different screen — but every one of those lands in a note as a missing-glyph
-/// box. The common punctuation has an obvious ASCII spelling and gets it;
-/// anything left over is dropped rather than drawn as a box.
+/// box. The common punctuation has an obvious ASCII spelling and gets it; the
+/// decoration - emoji, arrows, the symbols - is dropped rather than drawn as a
+/// box.
+///
+/// Letters are kept, whatever alphabet they are in. This used to drop them
+/// with the emoji, and it is applied to the whole reply, change blocks and
+/// all: a note with a name like Müller or a line of Cyrillic in it, copied by
+/// the model into an edit, came back with those characters gone and was then
+/// written to disk that way. The editor draws a letter it has no glyph for as
+/// a question mark, which is what a person's own typing gets, and a question
+/// mark on screen is a different thing from a letter missing from the file.
 ///
 /// Applied to every backend's answer, because the limit belongs to the editor
 /// rather than to whichever model happened to answer.
@@ -1129,7 +1186,7 @@ pub fn to_ascii(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
-            c if c.is_ascii() => out.push(c),
+            c if c.is_ascii() || c.is_alphanumeric() => out.push(c),
             // An em dash is two hyphens in ASCII prose; a single one reads as a
             // hyphenated word and joins the two clauses it was separating.
             '\u{2014}' | '\u{2015}' => out.push_str("--"),

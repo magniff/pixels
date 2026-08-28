@@ -146,11 +146,13 @@ struct Held {
     marks: Vec<(usize, SeqState)>,
     /// Whether `trims` has been found out yet, rather than assumed.
     ///
-    /// It is only learnt by trying, and the first question has nothing in the
-    /// cache to try it against. So until it is known a mark is taken anyway -
-    /// once, costing a tenth of a second on a model that turns out not to need
-    /// one. The alternative is that the first question a conversation asks
-    /// twice is read twice.
+    /// It is only learnt by trying, and trying means asking the cache to give
+    /// up a tail it holds - which happens the first time a question shares
+    /// less than everything with the last one, and not before. A conversation
+    /// that only ever grows never asks. So until it is known a mark is taken
+    /// on every question, a tenth of a second and fifty megabytes each, on a
+    /// model that may turn out not to need one. The alternative is that the
+    /// first question to part from the conversation is read from the start.
     probed: bool,
     /// Whether this model's cache can be cut back to a common prefix at all.
     ///
@@ -168,6 +170,17 @@ struct Held {
     model: Box<LlamaModel>,
     backend: Box<LlamaBackend>,
 }
+
+/// The most room a context is ever given, in tokens.
+///
+/// The model's own ceiling is a quarter of a million tokens, and a context is
+/// paid for in memory whether or not it is used - so growing towards that
+/// number by doubling, which is what happens to a conversation that goes on,
+/// ends at a context the machine cannot hold. Thirty-two thousand tokens is
+/// a hundred kilobytes of conversation and about six hundred megabytes of
+/// cache on the model this ships against, and a conversation longer than that
+/// is not read whole: see `fitted`, which lets the oldest turns go.
+const MOST: u32 = 32_768;
 
 /// How much room the first context gets, before any question has been seen.
 ///
@@ -285,6 +298,12 @@ impl Held {
     /// again is loading the weights, which is the part that takes seconds and
     /// gigabytes. Taken by value so the old context is dropped, by name,
     /// before the model it borrows is looked at again.
+    ///
+    /// A bigger context that will not open is not the end of the weights. It
+    /// used to be: the old context was gone by then, the failure took the
+    /// model with it on the way out, and the next question loaded thirteen
+    /// gigabytes again to find out that it would not fit either. The old size
+    /// is reopened instead, and the caller sees the room did not grow.
     fn regrown(self, room: u32) -> Result<Self, String> {
         let Self {
             ctx,
@@ -292,12 +311,19 @@ impl Held {
             backend,
             trims,
             probed,
+            room: had,
             ..
         } = self;
         drop(ctx);
-        let ctx = model
-            .new_context(&backend, Self::params(room))
-            .map_err(|e| format!("context: {e}"))?;
+        let (ctx, room) = match model.new_context(&backend, Self::params(room)) {
+            Ok(ctx) => (ctx, room),
+            Err(_) => (
+                model
+                    .new_context(&backend, Self::params(had))
+                    .map_err(|e| format!("context: {e}"))?,
+                had,
+            ),
+        };
         // SAFETY: as in `open` - same boxes, same drop order, same invariant.
         let ctx: LlamaContext<'static> = unsafe { std::mem::transmute(ctx) };
         Ok(Self {
@@ -669,7 +695,36 @@ impl Local {
         // than set by hand: it is the model's own number, the same on every
         // machine, and nobody sitting in front of a note editor is in a
         // position to pick a better one.
-        let ceiling = held.model.n_ctx_train();
+        let ceiling = held.model.n_ctx_train().min(MOST);
+        // A conversation that has outgrown the room is read from its newest
+        // turns, not refused. An edit is one passage and either fits or does
+        // not; a conversation is as long as it has gone on, and the oldest
+        // of it is what the model can best do without.
+        let fitted;
+        let ask = if ask.talking() {
+            let (model, limit) = (&held.model, ceiling as usize - RESERVE);
+            let turns = super::fitted(&ask.turns, limit, |turns| {
+                let asked = Ask {
+                    turns: turns.to_vec(),
+                    ..ask.clone()
+                };
+                render(model, &system, &asked, thinks)
+                    .and_then(|t| {
+                        model
+                            .str_to_token(&t, AddBos::Never)
+                            .map_err(|e| format!("tokenising: {e}"))
+                    })
+                    .map(|t| t.len())
+                    .unwrap_or(usize::MAX)
+            });
+            fitted = Ask {
+                turns,
+                ..ask.clone()
+            };
+            &fitted
+        } else {
+            ask
+        };
         let text = render(&held.model, &system, ask, thinks)?;
         // `PIXUI_PROMPT=<file>` writes out what the model is given, every time
         // it is given anything. For when the application and the answer
@@ -734,6 +789,12 @@ impl Local {
             self.loaded = Some(held.regrown(want)?);
         }
         let held = self.loaded.as_mut().expect("loaded above");
+        if held.room < want {
+            return Err(format!(
+                "there is not enough memory for a question this long - {} tokens",
+                tokens.len()
+            ));
+        }
 
         // What of this question the last one already read. Almost all of it,
         // for a conversation: the same system prompt, the same project, the
@@ -840,6 +901,17 @@ impl Local {
         // The clock the rate is measured on starts here, once the weights are
         // in and the question has been read.
         let mut writing_since = std::time::Instant::now();
+        // A passage handed back is unwrapped from whatever it was wrapped in;
+        // an answer in a conversation only has its thinking taken off. The
+        // fence a passage should not have is the fence an answer that is code
+        // needs.
+        let tidy = |text: &str| {
+            if ask.talking() {
+                super::without_thinking(text)
+            } else {
+                super::clean_reply(text)
+            }
+        };
 
         // The sampler Qwen3 asks for outside its thinking mode. Greedy decoding
         // was the obvious choice and the wrong one: at temperature zero a small
@@ -916,7 +988,7 @@ impl Local {
             // arrive rather than a number going up. The markers the reply is
             // wrapped in are taken out on the way, or the first thing on
             // screen is machinery.
-            watch.tick(report, &super::clean_reply(&String::from_utf8_lossy(&out)));
+            watch.tick(report, &tidy(&String::from_utf8_lossy(&out)));
         }
 
         let text = String::from_utf8_lossy(&out).to_string();
@@ -926,7 +998,7 @@ impl Local {
         if text.contains("<|channel|>") && !text.contains("<|channel|>final") {
             return Err("the model thought for longer than there was room for".into());
         }
-        let text = super::clean_reply(&text);
+        let text = tidy(&text);
         if text.is_empty() {
             // Being stopped before it had said anything is not the same as
             // having nothing to say, and the two used to come back identical.

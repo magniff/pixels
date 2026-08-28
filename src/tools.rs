@@ -64,7 +64,12 @@ fn calendar() -> Tool {
 /// It exists because of what a model does when it is told a file has changed:
 /// it tries to go and look, and until this it had nothing to look with, so it
 /// answered from the last thing it had been told - which was often its own.
-fn look_at(named: &str) -> Result<String, String> {
+///
+/// `here` is the note the conversation is about, folder and all, and decides
+/// between two notes of the same name: a `notes.md` in the project being
+/// looked at is the one meant, and the one in some other project is not. It
+/// used to be whichever the vault listed first.
+fn look_at(named: &str, here: &str) -> Result<String, String> {
     let wanted = named
         .rsplit(['/', '\\'])
         .next()
@@ -74,10 +79,14 @@ fn look_at(named: &str) -> Result<String, String> {
     if wanted.is_empty() {
         return Err("no note was named".into());
     }
+    let project = here.rsplit_once(['/', '\\']).map(|(p, _)| p).unwrap_or("");
     let dir = crate::notes_dir();
-    let found = crate::read_vault(&dir)
+    let mut same: Vec<_> = crate::read_vault(&dir)
         .into_iter()
-        .find(|note| note.filename().to_lowercase() == wanted);
+        .filter(|note| note.filename().to_lowercase() == wanted)
+        .collect();
+    same.sort_by_key(|note| note.project != project);
+    let found = same.into_iter().next();
     match found {
         Some(note) => Ok(format!(
             "`{}` says, as of now:\n\n{}",
@@ -118,7 +127,7 @@ pub fn available(web_allowed: bool) -> Vec<Tool> {
 /// Nothing at all is the one answer that reliably makes a model invent: handed
 /// an empty result it fills the gap, and that is where a llama.cpp version that
 /// has never existed came from.
-pub fn run(name: &str, arg: &str) -> String {
+pub fn run(name: &str, arg: &str, here: &str) -> String {
     // Changing a file is not a tool, and is the one thing models most often
     // try to call as though it were: `<function=write>` with the name and the
     // contents as parameters. Answering "there is no tool called write" is
@@ -135,7 +144,7 @@ pub fn run(name: &str, arg: &str) -> String {
     let done = match name {
         "calc" => calc::evaluate(arg),
         "date" => clock::about(arg),
-        "read" => look_at(arg),
+        "read" => look_at(arg, here),
         "weather" => web::weather(arg),
         "wikipedia" => web::wikipedia(arg),
         "release" => web::release(arg),
