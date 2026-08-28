@@ -925,7 +925,7 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
         })
         .flatten()
         .collect();
-    let changes = changes
+    let changes: Vec<Change> = changes
         .into_iter()
         .filter(|c| {
             !(matches!(c.what, What::Delete)
@@ -933,6 +933,68 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
                     .as_deref()
                     .is_some_and(|f| folded.contains(&own_name(f))))
         })
+        .collect();
+    // A write of one file and deletes of others in the same reply is a merge
+    // said the way the instructions say not to say it - and models say it
+    // that way anyway. Taken one at a time, in whichever order the buttons
+    // are pressed, a delete can go first and a day's note is gone before the
+    // week's is made. Read as the merge it is, the parts are gathered before
+    // anything moves, and it is one answer instead of three.
+    let writes: Vec<usize> = changes
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| matches!(c.what, What::Write { .. }) && c.file.is_some())
+        .map(|(i, _)| i)
+        .collect();
+    let deletes: Vec<usize> = changes
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| matches!(c.what, What::Delete) && c.file.is_some())
+        .map(|(i, _)| i)
+        .collect();
+    let changes: Vec<Change> = if writes.len() == 1 && !deletes.is_empty() {
+        let w = writes[0];
+        let into = changes[w].file.clone();
+        let target = own_name(into.as_deref().unwrap_or(""));
+        let from: Vec<String> = deletes
+            .iter()
+            .filter_map(|&d| changes[d].file.clone())
+            .filter(|f| own_name(f) != target)
+            .collect();
+        let text = match &changes[w].what {
+            What::Write { text } => text.clone(),
+            _ => String::new(),
+        };
+        let merged = Change {
+            file: into,
+            what: What::Merge { from, text },
+            state: changes[w].state,
+        };
+        changes
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| *i != w && !deletes.contains(i))
+            .map(|(_, c)| c)
+            .chain(std::iter::once(merged))
+            .collect()
+    } else {
+        changes
+    };
+    // Several blocks aimed at the same place in one reply are drafts, and
+    // the last is the one meant. A model thinking as it wrote put down a
+    // pair of edits, said "wait, I need to recalculate", put down another
+    // pair, and again - six blocks, three for one line of one file, and only
+    // the last pair right. Offered all six, nothing was taken. The last block
+    // for each place stands for the rest.
+    let places: Vec<(Option<String>, String)> = changes
+        .iter()
+        .map(|c| (c.file.as_deref().map(own_name), c.headline("")))
+        .collect();
+    let changes = changes
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !places[i + 1..].contains(&places[*i]))
+        .map(|(_, c)| c)
         .collect();
     (prose, changes)
 }

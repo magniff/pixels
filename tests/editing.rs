@@ -3786,12 +3786,16 @@ fn two_projects_can_hold_the_same_filename() {
 
 #[test]
 fn the_three_verbs_are_read_back_as_what_they_are() {
-    let reply = "Three things.\n\n<edit file=\"a.md\" lines=\"2-3\">two\n</edit>\n\n<write file=\"b.md\">all of it</write>\n\n<delete file=\"c.md\"></delete>";
-    let (prose, changes) = chat::proposals(reply);
+    // The edit and the write together; the delete on its own, because a
+    // write with a delete beside it is read as the merge it is - see
+    // `a_write_with_deletes_beside_it_is_the_merge_it_is`.
+    let reply = "Three things.\n\n<edit file=\"a.md\" lines=\"2-3\">two\n</edit>\n\n<write file=\"b.md\">all of it</write>";
+    let (prose, mut changes) = chat::proposals(reply);
     assert_eq!(
         prose, "Three things.",
         "and none of the machinery is left in it"
     );
+    changes.extend(chat::proposals("<delete file=\"c.md\"></delete>").1);
     assert_eq!(changes.len(), 3);
     assert_eq!(changes[0].file.as_deref(), Some("a.md"));
     assert_eq!(
@@ -5893,6 +5897,60 @@ fn a_call_with_the_argument_left_out_is_still_a_call() {
     // And the shape the instructions show is not read as a call to nothing.
     assert!(calls("<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n</function>").len() == 1);
     assert!(calls("nothing here").is_empty());
+}
+
+#[test]
+fn the_last_block_aimed_at_a_place_stands_for_the_earlier_ones() {
+    use notes::chat::{proposals, What};
+    // A model thinking as it writes: a pair of edits, "wait", another pair.
+    let said = "<edit file=\"prices.md\" lines=\"7\">| Eggs | 0.75 |</edit>\n\
+                <edit file=\"summary.md\" lines=\"5-7\">- wrong\n- wrong\n- wrong</edit>\n\n\
+                Wait, I need to recalculate.\n\n\
+                <edit file=\"prices.md\" lines=\"7\">| Eggs | 0.75 |</edit>\n\
+                <edit file=\"summary.md\" lines=\"5-7\">- right\n- right\n- right</edit>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 2, "{changes:?}");
+    let summary = changes
+        .iter()
+        .find(|c| c.file.as_deref() == Some("summary.md"))
+        .unwrap();
+    match &summary.what {
+        What::Edit { text, .. } => assert!(text.contains("right"), "{text}"),
+        other => panic!("{other:?}"),
+    }
+    // Two edits to different lines of one file are two edits.
+    let said = "<edit file=\"a.md\" lines=\"2\">x</edit>\n<edit file=\"a.md\" lines=\"9\">y</edit>";
+    assert_eq!(proposals(said).1.len(), 2);
+}
+
+#[test]
+fn a_write_with_deletes_beside_it_is_the_merge_it_is() {
+    use notes::chat::{proposals, What};
+    // Word for word, after the tool it tried first had been answered.
+    let said =
+        "<used tool=\"write\" arg=\"week.md\">\nwrite is not a tool. Changing a file is not \
+                something you call: write a <write> block in your reply instead.\n</used>\n\n\
+                <write file=\"week.md\"># Monday\n\n- Swim\n\n# Tuesday\n\n- Climb\n</write>\n\
+                <delete file=\"monday.md\"></delete>\n<delete file=\"tuesday.md\"></delete>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].file.as_deref(), Some("week.md"));
+    match &changes[0].what {
+        What::Merge { from, text } => {
+            assert_eq!(from, &["monday.md".to_string(), "tuesday.md".to_string()]);
+            assert!(text.contains("Swim") && text.contains("Climb"), "{text}");
+        }
+        other => panic!("read as {other:?}"),
+    }
+    // A write on its own is a write; a delete on its own is a delete.
+    assert!(matches!(
+        proposals("<write file=\"a.md\">x</write>").1[0].what,
+        What::Write { .. }
+    ));
+    assert!(matches!(
+        proposals("<delete file=\"a.md\"></delete>").1[0].what,
+        What::Delete
+    ));
 }
 
 #[test]
