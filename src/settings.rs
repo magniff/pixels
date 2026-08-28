@@ -54,8 +54,8 @@ pub struct Weights {
 ///
 /// | model | on disk | right | writing | cold | scenes |
 /// | --- | --- | --- | --- | --- | --- |
-/// | Qwen3.6 35B-A3B (IQ3_XXS) | 13.2 GB | 7/7 | 37.5 tok/s | 12 s | 9/9, 16/18 |
-/// | Gemma 4 26B-A4B (Q3_K_XL) | 12.9 GB | - | - | 10 s | 16/18 |
+/// | Qwen3.6 35B-A3B (IQ3_XXS) | 13.2 GB | 7/7 | 37.5 tok/s | 12 s | 9/9, 24/27 |
+/// | Gemma 4 26B-A4B (Q3_K_XL) | 12.9 GB | - | - | 10 s | 25/27 |
 /// | LFM2 24B-A2B (IQ4_XS) | 12.7 GB | - | - | 12 s | 11/18 |
 /// | Trinity Mini 26B-A3B (Q3_K_M) | 12.1 GB | - | - | 13 s | 4/18 |
 /// | Qwen3.5 35B-A3B (IQ3_XXS) | 13.1 GB | 7/7 | 36.6 tok/s | 15 s | 7/9 |
@@ -66,13 +66,18 @@ pub struct Weights {
 ///
 /// The last column is `tools/e2e.sh`, which drives the whole application and
 /// then looks at the vault - nine scenes when the first six were measured,
-/// eighteen by the time the last three were. Qwen3.6 is the only one that has
-/// answered every scene of the nine.
+/// twenty-seven by the time the last three were. Qwen3.6 is the only one that
+/// has answered every scene of the nine. Both miss the same two of the
+/// twenty-seven: a list sorted after somebody else changed it, and one other
+/// each.
 ///
-/// Gemma 4 is the other one worth having. Level with Qwen3.6 on the eighteen
-/// and faster on most of them - twenty seconds against thirty-three on the
-/// scene that changes a file behind its back - and terser: asked for one
-/// word it gives one. What it gets wrong is its own: told the next Christmas
+/// Gemma 4 is the other one worth having. A scene ahead of Qwen3.6 on the
+/// twenty-seven, and it took the nine that exercise the conversation itself -
+/// a merge, a delete, a change turned down and asked for again, an answer
+/// stopped halfway, a conversation reopened - eight to Qwen's six. Faster on
+/// most of them - twenty seconds against thirty-three on the scene that
+/// changes a file behind its back - and terser: asked for one word it gives
+/// one. What it gets wrong is its own: told the next Christmas
 /// is a Friday and the last was a Thursday, it answers Thursday; asked about
 /// a note in another project it sometimes says the web is switched off. It
 /// would not load at all until its turns were written out by hand, because
