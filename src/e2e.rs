@@ -1486,6 +1486,346 @@ fn a_long_note_changed_in_two_places(app: &mut App) -> Result<(), String> {
     }
 }
 
+/// Close the conversation and open it again from the list.
+///
+/// The first row of the list is a new conversation; the one after it is the
+/// most recent. Coming back to a conversation is a different path from
+/// starting one - what it was shown is gone and has to be shown again - and
+/// a follow-up that leans on what was said before is the test of it.
+fn reopened(app: &mut App) -> Result<(), String> {
+    if app.app.chat.is_some() {
+        chatting(app)?;
+        app.key(Key::Escape);
+        app.steps(4);
+    }
+    app.press(Key::Char('e'), cmd(Key::Char('e')));
+    app.key(Key::Escape);
+    app.press(Key::Enter, cmd(Key::Enter));
+    app.steps(4);
+    if app.app.chat.is_none() {
+        app.click("chat1")?;
+        app.steps(6);
+    }
+    let turns = app.app.chat.as_ref().map(|c| c.turns.len()).unwrap_or(0);
+    if turns == 0 {
+        return Err(format!(
+            "the conversation did not come back. on screen: {:?}",
+            app.on_screen()
+        ));
+    }
+    let _ = app.click("chat-field");
+    Ok(())
+}
+
+/// Two notes folded into one, in a single step.
+///
+/// The one verb that changes two files at once, and the reason it exists: a
+/// write plus a delete are answered separately, and half of that is a note
+/// duplicated or a note lost. Never tested end to end until now.
+fn two_notes_folded_into_one(app: &mut App) -> Result<(), String> {
+    let (a, b) = (app.dir.join("monday.md"), app.dir.join("tuesday.md"));
+    std::fs::write(&a, "# Monday\n\n- Swim\n").map_err(|e| format!("{e}"))?;
+    std::fs::write(&b, "# Tuesday\n\n- Climb\n").map_err(|e| format!("{e}"))?;
+    looking_at(app, "", "monday")?;
+    fresh_chat(app)?;
+    asking(
+        app,
+        "merge monday.md and tuesday.md into one note called week.md, keeping both lists",
+    )?;
+    taken(app)?;
+    let (_, week) = on_disk(app, "week.md")?;
+    if !week.contains("Swim") || !week.contains("Climb") {
+        return Err(format!("{WRONG}week.md is missing a list: {week:?}"));
+    }
+    if a.exists() || b.exists() {
+        return Err(format!(
+            "the parts are still there after the merge: monday {} tuesday {}",
+            a.exists(),
+            b.exists()
+        ));
+    }
+    Ok(())
+}
+
+/// A note taken away on request here, and one in another project left alone.
+fn a_note_deleted_here_and_not_there(app: &mut App) -> Result<(), String> {
+    let gone = app.dir.join("scratch.md");
+    std::fs::write(&gone, "# Scratch\n\nnothing much\n").map_err(|e| format!("{e}"))?;
+    let garden = app.dir.join("garden");
+    std::fs::create_dir_all(&garden).map_err(|e| format!("{e}"))?;
+    let kept = garden.join("seeds.md");
+    std::fs::write(&kept, "# Seeds\n\nbeans\n").map_err(|e| format!("{e}"))?;
+    looking_at(app, "", "spend")?;
+    fresh_chat(app)?;
+
+    asking(app, "delete scratch.md")?;
+    taken(app)?;
+    if gone.exists() {
+        return Err("scratch.md is still on disk after the delete was taken".into());
+    }
+    asking(app, "now delete garden/seeds.md as well")?;
+    accept_all(app);
+    if !kept.exists() {
+        return Err("a note in another project was deleted".into());
+    }
+    Ok(())
+}
+
+/// A change turned down, then a different one asked for.
+///
+/// What was refused must not come back, and the next request must land.
+fn turned_down_then_asked_for_differently(app: &mut App) -> Result<(), String> {
+    let path = app.dir.join("motto.md");
+    let started = "# Motto\n\nSlow and steady.\n";
+    std::fs::write(&path, started).map_err(|e| format!("{e}"))?;
+    looking_at(app, "", "motto")?;
+    fresh_chat(app)?;
+
+    asking(app, "change the motto to 'Fast and loose.'")?;
+    // Turned down, by the button.
+    app.scroll_to_end();
+    if app.click("REJECT").is_err() {
+        return Err(format!(
+            "{WRONG}nothing was proposed to turn down: {:?}",
+            last_answer(app).chars().take(120).collect::<String>()
+        ));
+    }
+    app.steps(6);
+    app.saved();
+    let now = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    if now != started {
+        return Err(format!("a change that was turned down was made: {now:?}"));
+    }
+
+    asking(app, "no - make it 'Measure twice, cut once.'")?;
+    taken(app)?;
+    let now = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    if !now.contains("Measure twice") {
+        return Err(format!("{WRONG}the second request did not land: {now:?}"));
+    }
+    if now.contains("Fast and loose") {
+        return Err(format!("{WRONG}the refused text came back: {now:?}"));
+    }
+    Ok(())
+}
+
+/// An answer stopped halfway, and the next question still answered.
+///
+/// While the model writes there is no box to type in, only a button to stop
+/// it. Pressing that keeps what was written so far, and the conversation has
+/// to carry on afterwards as if nothing had happened - which means the
+/// model's memory of the question has to be put right, since it was cut off.
+fn an_answer_stopped_and_the_next_still_comes(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
+    let before = app.app.chat.as_ref().map(|c| c.turns.len()).unwrap_or(0);
+    app.typed("write me a long story about a lighthouse keeper, at least four paragraphs");
+    app.key(Key::Enter);
+    // Until it has said something, then stop it.
+    let began = Instant::now();
+    loop {
+        app.step();
+        std::thread::sleep(Duration::from_millis(5));
+        let said = app.app.helper.partial().split_whitespace().count();
+        if said >= 12 {
+            break;
+        }
+        if began.elapsed() > PATIENCE {
+            return Err("it never started writing".into());
+        }
+    }
+    if app.ui.find("chat-field").is_some() {
+        return Err("the box is there to type in while the model is answering".into());
+    }
+    app.click("STOP")?;
+    app.wait()?;
+    let after = app.app.chat.as_ref().map(|c| c.turns.len()).unwrap_or(0);
+    if after != before + 2 {
+        return Err(format!(
+            "stopping lost the answer so far: {before} turns before, {after} after"
+        ));
+    }
+    let kept = last_answer(app);
+    if kept.split_whitespace().count() < 6 {
+        return Err(format!(
+            "what was written before the stop is gone: {kept:?}"
+        ));
+    }
+    // And the conversation carries on.
+    asking(app, "never mind the story. what is 12 * 12?")?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 144.0, 0.0) {
+        return Err(format!("{WRONG}144, it said: {answer:?}"));
+    }
+    Ok(())
+}
+
+/// Letters in other alphabets survive being copied by the model.
+///
+/// The reply is folded to what the font can draw, and it used to drop every
+/// letter it had no glyph for - so a name copied into a new note came back
+/// misspelt and was written to disk that way. Now the letters stay and the
+/// editor draws a question mark for the ones it cannot; the file is right.
+fn letters_in_other_alphabets_survive_a_copy(app: &mut App) -> Result<(), String> {
+    let path = app.dir.join("names.md");
+    std::fs::write(
+        &path,
+        "# Names\n\nPeople to thank:\n\n- Müller, who fixed the café's sign\n- Данила, who painted it\n",
+    )
+    .map_err(|e| format!("{e}"))?;
+    looking_at(app, "", "names")?;
+    fresh_chat(app)?;
+    asking(
+        app,
+        "make a note called thanks.md containing exactly the two names from the list in names.md, one per line",
+    )?;
+    taken(app)?;
+    let (_, thanks) = on_disk(app, "thanks.md")?;
+    for want in ["Müller", "Данила"] {
+        if !thanks.contains(want) {
+            return Err(format!("{want} did not survive the copy: {thanks:?}"));
+        }
+    }
+    Ok(())
+}
+
+/// A section added to the end of a note, and an item moved within it.
+///
+/// Structure, not values: a heading and a list put in below what is there,
+/// and then one line of that list moved to the top of it. The second is the
+/// edit models find hardest - a line has to go away in one place and come
+/// back in another, in a single block.
+fn a_section_added_then_reordered(app: &mut App) -> Result<(), String> {
+    let path = app.dir.join("plan.md");
+    std::fs::write(&path, "# Plan\n\nA quiet week.\n").map_err(|e| format!("{e}"))?;
+    looking_at(app, "", "plan")?;
+    fresh_chat(app)?;
+
+    asking(
+        app,
+        "add a section called Todo at the end with three items: buy milk, call mum, fix the tap",
+    )?;
+    taken(app)?;
+    let now = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    let low = now.to_lowercase();
+    if !low.contains("todo") || !low.contains("buy milk") || !low.contains("fix the tap") {
+        return Err(format!("{WRONG}the section did not land: {now:?}"));
+    }
+    if !low.contains("a quiet week") {
+        return Err(format!(
+            "{WRONG}adding a section took the note with it: {now:?}"
+        ));
+    }
+
+    asking(app, "move 'fix the tap' to the top of the todo list")?;
+    taken(app)?;
+    let now = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    let low = now.to_lowercase();
+    let at = |item: &str| {
+        low.find(item)
+            .ok_or_else(|| format!("{WRONG}{item} is gone after the move: {now:?}"))
+    };
+    let (tap, milk, mum) = (at("fix the tap")?, at("buy milk")?, at("call mum")?);
+    if !(tap < milk && tap < mum) {
+        return Err(format!("{WRONG}not moved to the top: {now:?}"));
+    }
+    if low.matches("fix the tap").count() != 1 {
+        return Err(format!("{WRONG}moved by copying, not by moving: {now:?}"));
+    }
+    Ok(())
+}
+
+/// Three notes read for one answer.
+///
+/// Several lookups in a single question, all of them reads, and the answer
+/// is only right if every one came back and was added up.
+fn three_notes_read_for_one_answer(app: &mut App) -> Result<(), String> {
+    let barn = app.dir.join("barn");
+    std::fs::create_dir_all(&barn).map_err(|e| format!("{e}"))?;
+    for (name, text) in [
+        (
+            "hens.md",
+            "# Hens\n\nCounted at dusk.\n\nThere are 14 hens.\n",
+        ),
+        (
+            "goats.md",
+            "# Goats\n\nCounted at dusk.\n\nThere are 5 goats.\n",
+        ),
+        (
+            "geese.md",
+            "# Geese\n\nCounted at dusk.\n\nThere are 9 geese.\n",
+        ),
+    ] {
+        std::fs::write(barn.join(name), text).map_err(|e| format!("{e}"))?;
+    }
+    looking_at(app, "new-one", "zzqqseed")?;
+    fresh_chat(app)?;
+    asking(
+        app,
+        "read barn/hens.md, barn/goats.md and barn/geese.md and tell me how many animals there are in all",
+    )?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 28.0, 0.0) {
+        return Err(format!("{WRONG}28, it said: {answer:?}"));
+    }
+    Ok(())
+}
+
+/// A conversation closed, opened again, and carried on.
+fn a_conversation_reopened_carries_on(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
+    asking(
+        app,
+        "how many days are there from 1 March 2024 to 1 March 2025?",
+    )?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 365.0, 0.0) {
+        return Err(format!("{WRONG}365, it said: {answer:?}"));
+    }
+    reopened(app)?;
+    // A follow-up with nothing in it but "that": only right if the
+    // conversation came back with what it had said.
+    asking(app, "and that in weeks, to one decimal place?")?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 52.1, 0.05) {
+        return Err(format!("{WRONG}52.1 after reopening, it said: {answer:?}"));
+    }
+    Ok(())
+}
+
+/// A change taken, then undone in the editor, and the model asked about it.
+///
+/// Accepting a change is an edit like any other and `u` takes it back. The
+/// model was told its change was taken; what it must not do is go on
+/// believing it after the person changed their mind by hand.
+fn a_change_undone_in_the_editor_is_seen(app: &mut App) -> Result<(), String> {
+    let path = app.dir.join("door.md");
+    std::fs::write(&path, "# Door\n\nThe door is BLUE.\n").map_err(|e| format!("{e}"))?;
+    looking_at(app, "", "door")?;
+    fresh_chat(app)?;
+    asking(app, "make the door GREEN")?;
+    taken(app)?;
+    let now = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    if !now.contains("GREEN") {
+        return Err(format!("{WRONG}the change did not land: {now:?}"));
+    }
+    // Back to the editor, and undo it by hand.
+    app.key(Key::Escape);
+    app.steps(4);
+    app.press(Key::Char('e'), cmd(Key::Char('e')));
+    app.key(Key::Escape);
+    app.key(Key::Char('u'));
+    app.saved();
+    let now = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    if !now.contains("BLUE") {
+        return Err(format!(
+            "undo in the editor did not put the door back: {now:?}"
+        ));
+    }
+    reopened(app)?;
+    asking(app, "what colour is the door now? one word.")?;
+    said(app, &["blue"]).map_err(|e| format!("{WRONG}after the undo, {e}"))
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -1558,6 +1898,39 @@ const SCENES: &[Scene] = &[
     (
         "figures from another project brought here",
         figures_from_another_project_brought_here,
+    ),
+    ("two notes folded into one", two_notes_folded_into_one),
+    (
+        "a note deleted here and not there",
+        a_note_deleted_here_and_not_there,
+    ),
+    (
+        "turned down, then asked for differently",
+        turned_down_then_asked_for_differently,
+    ),
+    (
+        "an answer stopped and the next still comes",
+        an_answer_stopped_and_the_next_still_comes,
+    ),
+    (
+        "letters in other alphabets survive a copy",
+        letters_in_other_alphabets_survive_a_copy,
+    ),
+    (
+        "a section added then reordered",
+        a_section_added_then_reordered,
+    ),
+    (
+        "three notes read for one answer",
+        three_notes_read_for_one_answer,
+    ),
+    (
+        "a conversation reopened carries on",
+        a_conversation_reopened_carries_on,
+    ),
+    (
+        "a change undone in the editor is seen",
+        a_change_undone_in_the_editor_is_seen,
     ),
     ("the conversation is kept", the_conversation_is_kept),
 ];
