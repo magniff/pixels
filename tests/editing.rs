@@ -5873,6 +5873,47 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
 }
 
 #[test]
+fn what_a_tool_answered_is_quoted_and_not_proposed() {
+    use notes::chat::{proposals, without_bodies};
+    // Straight out of a real conversation. The model tried to call `write` as
+    // though it were a tool; it was told the shape that does work, and that
+    // answer has a block written out in it. Then it wrote the real one.
+    let said = "<used tool=\"write\" arg=\"bike.md\">\nwrite is not a tool. Changing a file \
+                is not something you call: write a <write> block in your reply instead. \
+                Nothing happens to the file until they accept it.\n</used>\n\nMade it.\n\
+                <write file=\"bike.md\">The bike is red.</write>";
+
+    // One change, and it is the one it actually proposed.
+    let (prose, changes) = proposals(said);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(prose.contains("Made it."), "{prose}");
+
+    // And sending the turn back leaves the tool's answer alone. It used to eat
+    // the `</used>` and come back as two changes and half a sentence, so the
+    // conversation carried a proposal that was never made.
+    let sent = without_bodies(said);
+    assert!(sent.contains("</used>"), "the answer was cut into: {sent}");
+    assert_eq!(
+        sent.matches("you proposed").count(),
+        1,
+        "one change was proposed, not two: {sent}"
+    );
+    assert!(
+        !sent.contains("`the note`"),
+        "the block inside the answer was read as a change: {sent}"
+    );
+
+    // A note that talks about the machinery is quoted the same way. Reading one
+    // back must not be a way of getting a change made.
+    let read = "<used tool=\"read\" arg=\"how-to.md\">\n`how-to.md` says, as of now:\n\n\
+                   1 | Write <delete file=\"wanted.md\"></delete> to remove one.\n</used>\n\nThat is how.";
+    assert!(
+        proposals(read).1.is_empty(),
+        "a note quoted itself into a change"
+    );
+}
+
+#[test]
 fn a_list_that_moves_on_its_own_is_said_at_the_end_and_not_at_the_front() {
     use notes::chat::Chat;
     let file = |n: &str, t: &str| (n.to_string(), t.to_string());
@@ -5897,10 +5938,12 @@ fn a_list_that_moves_on_its_own_is_said_at_the_end_and_not_at_the_front() {
     // the whole prompt again and saying the new list twice.
     assert!(!again.contains("other.md"), "{again}");
 
-    // Still stale next time, so still said - the front is what it was.
+    // And said once. The front stays as it was, but the model has been told,
+    // and telling it again every turn afterwards is how a conversation ends up
+    // reading as a standing instruction that something needs doing about it.
     let (third, _, moved) = chat.context(listed, &files);
-    assert_eq!(third, shown);
-    assert!(moved.is_some_and(|m| m.contains("other.md")));
+    assert_eq!(third, shown, "the front still does not move");
+    assert!(moved.is_none(), "it has already been told: {moved:?}");
 }
 
 #[test]

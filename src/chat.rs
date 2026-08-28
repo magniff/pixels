@@ -185,6 +185,16 @@ pub struct Chat {
     /// project away too. The delta below kept the project still while the line
     /// above it shifted, and the reading happened anyway.
     shown_index: String,
+    /// The index as the model was last *told* it, wherever it was told.
+    ///
+    /// The same pairing as `front` and `known` below, and needed for the same
+    /// reason. `shown_index` is what sits at the top of the conversation and
+    /// must not move. This is what the model has actually been told, whether
+    /// at the top or in a correction since - and without it a list that had
+    /// been corrected once was corrected again every turn afterwards, because
+    /// the thing it was being compared against was the copy at the front that
+    /// is never going to change.
+    known_index: String,
     /// The project as the model was last shown it, whole.
     ///
     /// Not saved with the conversation, and deliberately: a chat opened
@@ -630,6 +640,23 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
 /// which block is the second one.
 fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
     const KINDS: &[&str] = &["edit", "write", "create", "delete", "merge"];
+    // What a tool answered is quoted whole, and quoting is not proposing. A
+    // note read back that has `<write ...>` written in it, or an answer that
+    // shows the shape of a block to a model that tried to call one, is text
+    // *about* a change: taken for a change it puts a file in front of somebody
+    // that nobody asked for, and it took the closing tag of the real block
+    // with it, so the reply came out as two changes and a mangled sentence.
+    let mut quoted: Vec<(usize, usize)> = Vec::new();
+    let mut scan = 0usize;
+    while let Some(i) = text[scan..].find("<used") {
+        let from = scan + i;
+        let end = match text[from..].find("</used>") {
+            Some(j) => from + j + "</used>".len(),
+            None => text.len(),
+        };
+        quoted.push((from, end));
+        scan = end;
+    }
     let mut out = Vec::new();
     let mut at = 0usize;
     let mut in_code = false;
@@ -642,6 +669,10 @@ fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
         in_code ^= fences(&text[at..start]);
         if in_code {
             at = start + 1;
+            continue;
+        }
+        if let Some(&(_, end)) = quoted.iter().find(|(a, b)| start >= *a && start < *b) {
+            at = end;
             continue;
         }
         let Some(open) = text[start..].find('>').map(|i| start + i + 1) else {
@@ -762,6 +793,7 @@ impl Chat {
             follow: true,
             overhead: 0,
             shown_index: String::new(),
+            known_index: String::new(),
             front: Vec::new(),
             known: Vec::new(),
         }
@@ -900,6 +932,7 @@ impl Chat {
         // of the question is not.
         let afresh = |chat: &mut Self, moved: Option<String>| {
             chat.shown_index = index.to_string();
+            chat.known_index = index.to_string();
             chat.front = now.to_vec();
             chat.known = now.to_vec();
             (index.to_string(), crate::digest::project(now), moved)
@@ -910,7 +943,7 @@ impl Chat {
         // Against what it has been told, not against what is at the front: a
         // note first mentioned in a correction is not new the second time.
         let moved = crate::digest::since(&self.known, now);
-        let listed = (self.shown_index != index)
+        let listed = (self.known_index != index)
             .then(|| format!("The list of notes at the top is out of date. It is now:\n\n{index}"));
         // Both are corrections, and both are paid for the same way, so both go
         // through the same choice. What must not happen is the front being
@@ -935,6 +968,7 @@ impl Chat {
         }
         // Told, so next time only what moves after this has to be said.
         self.known = now.to_vec();
+        self.known_index = index.to_string();
         (
             self.shown_index.clone(),
             crate::digest::project(&self.front),

@@ -126,7 +126,10 @@ pub fn run(name: &str, arg: &str) -> String {
     // with nothing said. So it is told the shape that does work.
     if let "edit" | "write" | "create" | "delete" | "merge" = name {
         return format!(
-            "{name} is not a tool. Changing a file is not something you call: write a              <{name}> block in your reply instead, at the top level and outside any code              fence, exactly as the instructions above describe. Nothing happens to the file              until they accept it."
+            "{name} is not a tool. Changing a file is not something you call: write a \
+             <{name}> block in your reply instead, at the top level and outside any code \
+             fence, exactly as the instructions above describe. Nothing happens to the file \
+             until they accept it."
         );
     }
     let done = match name {
