@@ -373,12 +373,7 @@ pub fn notes_dir() -> PathBuf {
 /// had never reached the disk - which is exactly as wrong as it sounds, and
 /// looked from the outside like a file that would not change.
 fn bare(named: &str) -> String {
-    named
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(named)
-        .trim()
-        .to_string()
+    chat::own_name(named)
 }
 
 /// When a file was last written, as the filesystem has it.

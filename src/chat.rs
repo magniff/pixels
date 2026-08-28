@@ -355,13 +355,37 @@ pub struct Folder<'a> {
 
 impl Folder<'_> {
     /// The file a change is about, if it is there at all.
+    ///
+    /// By its own name, with any folder in front of it dropped. Models write
+    /// the folder in - the list of notes shows every note with one, so it is
+    /// the shape they have in front of them - and they write the wrong one:
+    /// asked for a note while reading a project, one wrote
+    /// `typography/bikes.md`, which is a real folder and not that one.
+    ///
+    /// The application has always dropped it before applying a change. This
+    /// did not, so the panel looked for a file under a name nothing is filed
+    /// under, found nothing, and said the change was not there to make - about
+    /// a file that was there, and a change that would have applied cleanly.
+    /// Two places deciding what a name means, and only one of them right.
     pub fn lines(&self, named: Option<&String>) -> Option<&[String]> {
-        let want = named.cloned().unwrap_or_else(|| self.here.clone());
+        let want = named
+            .map(|n| own_name(n))
+            .unwrap_or_else(|| self.here.clone());
         self.files
             .iter()
-            .find(|(name, _)| *name == want)
+            .find(|(name, _)| own_name(name) == want)
             .map(|(_, lines)| *lines)
     }
+}
+
+/// A file's own name, without whatever folder was written in front of it.
+pub fn own_name(named: &str) -> String {
+    named
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(named)
+        .trim()
+        .to_string()
 }
 
 /// Something the model has offered to do to the project.

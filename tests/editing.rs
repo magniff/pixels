@@ -5873,6 +5873,52 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
 }
 
 #[test]
+fn a_change_naming_a_folder_is_still_a_change_to_this_project() {
+    use notes::chat::{Change, Folder, What};
+    let lines: Vec<String> = "# Bikes\n\n- Alice's bike is green.\n- Bob's bike is red.\n\
+                              - Magniff's bike is white.\n"
+        .split('\n')
+        .map(str::to_string)
+        .collect();
+    let folder = Folder {
+        here: "bikes.md".into(),
+        files: vec![("bikes.md".to_string(), &lines[..])],
+    };
+
+    // Word for word out of a conversation: the model wrote the folder in, and
+    // wrote the wrong one - typography is a real project, just not this one.
+    let change = Change {
+        file: Some("typography/bikes.md".into()),
+        what: What::Edit {
+            from: 5,
+            to: 5,
+            text: "- Magniff's bike is silver.".into(),
+        },
+        state: None,
+    };
+    let before = change
+        .replacing(&folder)
+        .expect("the panel said there was nothing there to change");
+    assert_eq!(before, "- Magniff's bike is white.");
+
+    // The same as if it had left the folder off, which is what it was asked to
+    // do. What must not happen is the two disagreeing: the panel refusing a
+    // change the application would have applied without complaint.
+    let plain = Change {
+        file: Some("bikes.md".into()),
+        ..change.clone()
+    };
+    assert_eq!(plain.replacing(&folder), change.replacing(&folder));
+
+    // A file that really is not there is still not there.
+    let missing = Change {
+        file: Some("typography/other.md".into()),
+        ..change.clone()
+    };
+    assert!(missing.replacing(&folder).is_none());
+}
+
+#[test]
 fn an_edit_that_landed_somewhere_else_is_reported_back() {
     use notes::chat::{Change, What};
     use notes::text::Buffer;
