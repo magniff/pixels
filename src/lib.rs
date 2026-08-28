@@ -1991,7 +1991,11 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 let ask = app.chat_ask(&mut talk);
                 if !app.helper.ask(ask) {
                     talk.waiting = false;
-                    talk.failed = Some("still busy with the last one".into());
+                    talk.failed = Some(if app.helper.gone() {
+                        "the assistant is not running any more - reopen the app".into()
+                    } else {
+                        "still busy with the last one".into()
+                    });
                 }
                 app.chat = Some(talk);
             }

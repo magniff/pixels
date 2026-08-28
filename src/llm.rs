@@ -865,6 +865,7 @@ pub struct Assistant {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     name: String,
     busy: bool,
+    gone: bool,
     /// The last thing the worker said about the question in flight.
     progress: Progress,
     /// The answer so far, while there is one.
@@ -886,7 +887,20 @@ impl Assistant {
             loop {
                 match asks.recv_timeout(IDLE) {
                     Ok(ask) => {
-                        let reply = answer(&mut *backend, ask, &beat, &said, &flag);
+                        // One bad question must not take the assistant with
+                        // it. This thread is the only one there is: when it
+                        // died the channel went with it, every question after
+                        // it was refused, and what the panel said about that
+                        // was that it was still busy with the last one - which
+                        // it was not, and could never become again.
+                        let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            answer(&mut *backend, ask, &beat, &said, &flag)
+                        }))
+                        .unwrap_or_else(|_| {
+                            Err("the assistant fell over on that question. \
+                                 It is still here - ask again."
+                                .to_string())
+                        });
                         warm = true;
                         if replies.send(reply).is_err() {
                             break;
@@ -910,6 +924,7 @@ impl Assistant {
             stop,
             name,
             busy: false,
+            gone: false,
             progress: Progress::default(),
             partial: String::new(),
         }
@@ -931,7 +946,18 @@ impl Assistant {
         }
         self.progress = Progress::default();
         self.busy = self.tx.send(ask).is_ok();
+        self.gone = !self.busy;
         self.busy
+    }
+
+    /// Whether the thread that answers is no longer there.
+    ///
+    /// Only ever true after a question failed to reach it. The two ways a
+    /// question can be turned away are not the same thing - one clears on its
+    /// own and the other never does - and telling somebody the first when it
+    /// is the second leaves them waiting for an answer that is not coming.
+    pub fn gone(&self) -> bool {
+        self.gone
     }
 
     /// Where the question in flight has got to. Drained to the latest, because

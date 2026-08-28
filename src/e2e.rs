@@ -435,6 +435,19 @@ fn chatting(app: &mut App) -> Result<(), String> {
 }
 
 /// Type a question and send it, and be sure it went.
+/// What the panel made of a question that did not go.
+///
+/// Reporting the turn count alone read as "the model said nothing" when the
+/// truth was that it had never been asked - and the two want looking into in
+/// completely different places.
+fn refusal(app: &App) -> String {
+    app.app
+        .chat
+        .as_ref()
+        .and_then(|c| c.failed.clone())
+        .unwrap_or_else(|| "no reason given".into())
+}
+
 fn asking(app: &mut App, question: &str) -> Result<(), String> {
     chatting(app)?;
     let before = app.app.chat.as_ref().map(|c| c.turns.len()).unwrap_or(0);
@@ -444,7 +457,9 @@ fn asking(app: &mut App, question: &str) -> Result<(), String> {
     let after = app.app.chat.as_ref().map(|c| c.turns.len()).unwrap_or(0);
     if after <= before + 1 {
         return Err(format!(
-            "the question did not go: {before} turns before, {after} after. on screen: {:?}",
+            "the question did not go ({}): {before} turns before, {after} after. \
+             on screen: {:?}",
+            refusal(app),
             app.on_screen()
         ));
     }
@@ -527,7 +542,9 @@ fn a_file_the_model_writes(app: &mut App) -> Result<(), String> {
     let before = after.saturating_sub(2);
     if after <= before + 1 {
         return Err(format!(
-            "the question did not go: {before} turns before, {after} after. on screen: {:?}",
+            "the question did not go ({}): {before} turns before, {after} after. \
+             on screen: {:?}",
+            refusal(app),
             app.on_screen()
         ));
     }
