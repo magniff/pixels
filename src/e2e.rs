@@ -1826,6 +1826,182 @@ fn a_change_undone_in_the_editor_is_seen(app: &mut App) -> Result<(), String> {
     said(app, &["blue"]).map_err(|e| format!("{WRONG}after the undo, {e}"))
 }
 
+/// A project of three notes that depend on one another, laid down fresh.
+///
+/// Prices in one, orders in another, a summary in the third that is only
+/// right if the other two are what they are. Anything worth asking about it
+/// touches more than one file, and anything worth changing does too.
+fn farm(app: &mut App) -> Result<PathBuf, String> {
+    let farm = app.dir.join("farm");
+    std::fs::create_dir_all(&farm).map_err(|e| format!("{e}"))?;
+    for (name, text) in [
+        (
+            "prices.md",
+            "# Prices\n\nPer unit, this season.\n\n| Item | Unit price |\n| --- | --- |\n\
+             | Eggs | 0.50 |\n| Milk | 1.20 |\n| Bread | 2.00 |\n",
+        ),
+        (
+            "orders.md",
+            "# Orders\n\nThis week.\n\n- Alice: 12 eggs, 2 milk\n- Bob: 6 eggs, 1 bread\n",
+        ),
+        (
+            "summary.md",
+            "# Summary\n\nBest customer: Alice.\n\n- Egg price: 0.50\n- Revenue from eggs: 9.00\n\
+             - Total revenue: 13.40\n",
+        ),
+    ] {
+        std::fs::write(farm.join(name), text).map_err(|e| format!("{e}"))?;
+    }
+    looking_at(app, "farm", "prices")?;
+    fresh_chat(app)?;
+    Ok(farm)
+}
+
+/// Questions whose answers are spread across three notes.
+///
+/// The prices are in one, the orders in another; what a customer owes is in
+/// neither. Three questions, each needing both, the last needing the answers
+/// to the first two - and the third note says what the right answer is.
+fn an_analysis_across_three_notes(app: &mut App) -> Result<(), String> {
+    farm(app)?;
+    asking(app, "how much does Alice owe, at the prices in prices.md?")?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 8.4, 0.01) {
+        return Err(format!("{WRONG}8.40, it said: {answer:?}"));
+    }
+    asking(app, "and Bob?")?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 5.0, 0.01) {
+        return Err(format!("{WRONG}5.00, it said: {answer:?}"));
+    }
+    asking(
+        app,
+        "so what is the total revenue this week, and does summary.md agree?",
+    )?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 13.4, 0.01) {
+        return Err(format!("{WRONG}13.40, it said: {answer:?}"));
+    }
+    let low = answer.to_lowercase();
+    if low.contains("does not agree") || low.contains("doesn't agree") || low.contains("disagree") {
+        return Err(format!(
+            "{WRONG}it said the summary was wrong when it was right: {answer:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// One value changed, and every note that depends on it changed with it.
+///
+/// The egg price lives in prices.md and is written into summary.md, and two
+/// figures in summary.md are worked out from it. One request has to reach
+/// both files, in one reply, and leave the third alone.
+fn a_value_changed_in_every_note_it_reaches(app: &mut App) -> Result<(), String> {
+    let farm = farm(app)?;
+    let orders = std::fs::read_to_string(farm.join("orders.md")).map_err(|e| format!("{e}"))?;
+    asking(
+        app,
+        "change the egg price to 0.75 everywhere it matters in this project, and fix every \
+         figure that depends on it",
+    )?;
+    taken(app)?;
+    let prices = std::fs::read_to_string(farm.join("prices.md")).map_err(|e| format!("{e}"))?;
+    let summary = std::fs::read_to_string(farm.join("summary.md")).map_err(|e| format!("{e}"))?;
+    let mut missing = Vec::new();
+    if !prices.contains("0.75") || prices.contains("0.50") {
+        missing.push("the price in prices.md");
+    }
+    if !summary.contains("0.75") {
+        missing.push("the price in summary.md");
+    }
+    // 18 eggs at 0.75, and 13.50 + 2.40 + 2.00.
+    if !number_near(&summary, 13.5, 0.01) {
+        missing.push("the egg revenue (13.50)");
+    }
+    if !number_near(&summary, 17.9, 0.01) {
+        missing.push("the total (17.90)");
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "{WRONG}missing {missing:?}:\nprices: {prices:?}\nsummary: {summary:?}"
+        ));
+    }
+    let still = std::fs::read_to_string(farm.join("orders.md")).map_err(|e| format!("{e}"))?;
+    if still != orders {
+        return Err(format!(
+            "{WRONG}orders.md has no prices in it and was changed anyway: {still:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// A name changed in every note that has it, and not in the one that does not.
+fn a_name_changed_across_the_project(app: &mut App) -> Result<(), String> {
+    let farm = farm(app)?;
+    let prices = std::fs::read_to_string(farm.join("prices.md")).map_err(|e| format!("{e}"))?;
+    asking(app, "Alice is now called Alicia - update this project")?;
+    taken(app)?;
+    for name in ["orders.md", "summary.md"] {
+        let text = std::fs::read_to_string(farm.join(name)).map_err(|e| format!("{e}"))?;
+        if text.contains("Alice") && !text.contains("Alicia") {
+            return Err(format!("{WRONG}{name} still says Alice: {text:?}"));
+        }
+        if text.contains("Alice:") || text.contains("Alice.") {
+            return Err(format!("{WRONG}{name} was missed: {text:?}"));
+        }
+        if !text.contains("Alicia") {
+            return Err(format!("{WRONG}{name} lost the name altogether: {text:?}"));
+        }
+    }
+    let still = std::fs::read_to_string(farm.join("prices.md")).map_err(|e| format!("{e}"))?;
+    if still != prices {
+        return Err(format!(
+            "{WRONG}prices.md has nobody's name in it and was changed anyway: {still:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// A summary that has drifted from the notes it summarises, found and fixed.
+///
+/// The total in summary.md is made wrong first. Asked whether the summary is
+/// right, the model has to work the figures out from the other two notes,
+/// notice, and change the one line that is off - and nothing else anywhere.
+fn a_summary_that_drifted_is_put_right(app: &mut App) -> Result<(), String> {
+    let farm = farm(app)?;
+    let summary = farm.join("summary.md");
+    let drifted = std::fs::read_to_string(&summary)
+        .map_err(|e| format!("{e}"))?
+        .replace("13.40", "12.40");
+    std::fs::write(&summary, &drifted).map_err(|e| format!("{e}"))?;
+    let prices = std::fs::read_to_string(farm.join("prices.md")).map_err(|e| format!("{e}"))?;
+    let orders = std::fs::read_to_string(farm.join("orders.md")).map_err(|e| format!("{e}"))?;
+    app.steps(90);
+    asking(
+        app,
+        "check summary.md against prices.md and orders.md, and fix whatever is wrong in it",
+    )?;
+    taken(app)?;
+    let now = std::fs::read_to_string(&summary).map_err(|e| format!("{e}"))?;
+    if !now.contains("13.40") || now.contains("12.40") {
+        return Err(format!("{WRONG}the total was not put right: {now:?}"));
+    }
+    if !now.contains("9.00") || !now.contains("0.50") || !now.contains("Alice") {
+        return Err(format!(
+            "{WRONG}something that was right was changed: {now:?}"
+        ));
+    }
+    for (name, was) in [("prices.md", prices), ("orders.md", orders)] {
+        let still = std::fs::read_to_string(farm.join(name)).map_err(|e| format!("{e}"))?;
+        if still != was {
+            return Err(format!(
+                "{WRONG}{name} was right and was changed: {still:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -1931,6 +2107,22 @@ const SCENES: &[Scene] = &[
     (
         "a change undone in the editor is seen",
         a_change_undone_in_the_editor_is_seen,
+    ),
+    (
+        "an analysis across three notes",
+        an_analysis_across_three_notes,
+    ),
+    (
+        "a value changed in every note it reaches",
+        a_value_changed_in_every_note_it_reaches,
+    ),
+    (
+        "a name changed across the project",
+        a_name_changed_across_the_project,
+    ),
+    (
+        "a summary that drifted is put right",
+        a_summary_that_drifted_is_put_right,
     ),
     ("the conversation is kept", the_conversation_is_kept),
 ];
