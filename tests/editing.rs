@@ -6130,6 +6130,66 @@ fn a_list_is_corrected_by_the_lines_that_moved() {
 }
 
 #[test]
+fn nothing_the_model_could_copy_is_left_in_its_own_turn() {
+    use notes::chat::as_sent;
+    use notes::llm::Turn;
+    let turn = |mine: bool, text: &str| Turn {
+        mine,
+        text: text.to_string(),
+    };
+    // A conversation with one of everything in it.
+    let turns = vec![
+        turn(true, "how old is eva"),
+        turn(
+            false,
+            "<used tool=\"date\" arg=\"2024-12-23\">\n23 December 2024 was 613 days ago.\n</used>\n\
+             \nEva is 613 days old.",
+        ),
+        turn(true, "write that down"),
+        turn(
+            false,
+            "<write file=\"ages.md\" state=\"applied\">Eva: 613 days</write>",
+        ),
+        turn(true, "and read it back"),
+        turn(
+            false,
+            "<used tool=\"read\" arg=\"ages.md\">\n   1 | Eva: 613 days\n</used>\n\nIt says 613.",
+        ),
+        turn(true, "thanks"),
+    ];
+    let sent = as_sent(&turns);
+
+    // Their turns hold what they said and the one block that is still the only
+    // copy of a file. Nothing else - no tag, no bracket, no shape that being
+    // copied would turn into a lie. It forged the tool tag when it could see
+    // one, and forged the bracket that replaced it when it could see that.
+    for (i, text) in sent.iter().enumerate() {
+        if turns[i].mine {
+            continue;
+        }
+        assert!(!text.contains("<used"), "turn {i}: {text}");
+        assert!(!text.contains("[you "), "turn {i}: {text}");
+        assert!(!text.contains("[write to"), "turn {i}: {text}");
+        assert!(!text.contains("[edit to"), "turn {i}: {text}");
+    }
+    assert!(sent[1].contains("Eva is 613 days old."), "{}", sent[1]);
+    assert!(sent[5].contains("It says 613."), "{}", sent[5]);
+
+    // What was taken out is said in our turns, which it never writes.
+    assert!(sent[2].contains("date tool was asked about"), "{}", sent[2]);
+    assert!(sent[2].contains("613 days ago"), "{}", sent[2]);
+    assert!(sent[6].contains("You read `ages.md`"), "{}", sent[6]);
+
+    // And the question itself is still the last thing in its own turn, because
+    // what is nearest the end is what gets answered.
+    assert!(
+        sent[2].trim_end().ends_with("write that down"),
+        "{}",
+        sent[2]
+    );
+}
+
+#[test]
 fn a_lookup_goes_back_as_something_it_was_told() {
     use notes::chat::without_bodies;
     // A date it really did ask for. What must not go back is the shape.
@@ -6140,7 +6200,10 @@ fn a_lookup_goes_back_as_something_it_was_told() {
     // The answer survives: a date is a line and cannot go stale.
     assert!(sent.contains("613 days ago"), "{sent}");
     assert!(sent.contains("Eva is 613 days old."), "{sent}");
-    assert!(sent.contains("you asked date about 2024-12-23"), "{sent}");
+    assert!(
+        sent.contains("The date tool was asked about 2024-12-23"),
+        "{sent}"
+    );
 
     // The tag does not. An assistant turn holding `<used tool=...>` teaches
     // that writing one is a thing an assistant does - and one then wrote its
@@ -6160,7 +6223,7 @@ fn a_note_read_is_remembered_as_read_and_not_as_its_contents() {
         "<used tool=\"read\" arg=\"long.md\">\n`long.md` says, as of now:\n\n{long}</used>\n\nIt is long.",
     );
     let sent = without_bodies(&said);
-    assert!(sent.contains("[you read `long.md` here]"), "{sent}");
+    assert!(sent.contains("You read `long.md` at that point."), "{sent}");
     assert!(sent.contains("It is long."), "what it said is kept: {sent}");
     assert!(
         !sent.contains("line 20 of a note"),
@@ -6284,10 +6347,17 @@ fn the_newest_accepted_change_keeps_what_it_said() {
         "kept twice: {}",
         sent[1]
     );
+    // And what is left to say about it - that it was proposed, and how it went
+    // - is said in the next turn of ours, where the model does not write.
     assert!(
-        sent[1].contains("[write to `bike.md`: accepted]"),
-        "{}",
+        !sent[1].contains("Your write"),
+        "in their turn: {}",
         sent[1]
+    );
+    assert!(
+        sent[2].contains("Your write to `bike.md` was accepted"),
+        "{}",
+        sent[2]
     );
     assert!(sent[5].contains("the bike is green"), "{}", sent[5]);
 
@@ -6674,7 +6744,11 @@ fn a_change_it_proposed_is_not_sent_back_as_a_copy_of_the_file() {
 
     // A change still waiting, and one turned down, say so.
     let waiting = "<edit file=\"a.md\" lines=\"1\">\nnew text\n</edit>";
-    assert!(without_bodies(waiting).contains("waiting"), "{waiting}");
+    assert!(
+        without_bodies(waiting).contains("not answered either way"),
+        "{}",
+        without_bodies(waiting)
+    );
     let turned = "<delete file=\"a.md\" state=\"rejected\"></delete>";
     assert!(without_bodies(turned).contains("turned down"));
 

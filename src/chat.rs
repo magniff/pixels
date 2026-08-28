@@ -587,8 +587,9 @@ fn undecided(reply: &str) -> String {
 /// So none of it goes back as a tag. The answers still do - a sum and a date
 /// are a line each and cannot go stale - but written as something that was
 /// told to it, which is what it was.
-fn without_lookups(text: &str) -> String {
+fn without_lookups(text: &str) -> (String, Vec<String>) {
     let mut out = String::new();
+    let mut notes = Vec::new();
     let mut at = 0usize;
     const SHUT: &str = "</used>";
     while let Some(i) = text[at..].find("<used tool=") {
@@ -605,21 +606,27 @@ fn without_lookups(text: &str) -> String {
             .map(|(_, rest)| rest.trim_end_matches(SHUT).trim())
             .unwrap_or("");
         out.push_str(&text[at..from]);
-        if tool == "read" {
-            out.push_str(&format!("[you read `{arg}` here]"));
+        notes.push(if tool == "read" {
+            format!("You read `{arg}` at that point.")
         } else {
-            out.push_str(&format!(
-                "[you asked {tool} about {arg}, and were told: {body}]"
-            ));
-        }
+            format!("The {tool} tool was asked about {arg}, and answered: {body}")
+        });
         at = end;
     }
     out.push_str(&text[at..]);
-    out
+    (out, notes)
 }
 
 pub fn without_bodies(text: &str) -> String {
-    bodies_but(text, &[])
+    let (said, notes) = bodies_but(text, &[]);
+    // On its own this is one turn with nowhere to carry to, so what would have
+    // gone into the next question is put on the end of this one. `as_sent` is
+    // what the conversation actually goes through, and it has somewhere.
+    if notes.is_empty() {
+        said
+    } else {
+        format!("{said}\n\n{}", notes.join("\n")).trim().to_string()
+    }
 }
 
 /// The conversation as the model should be shown it.
@@ -653,26 +660,55 @@ pub fn as_sent(turns: &[Turn]) -> Vec<String> {
             }
         }
     }
-    turns
-        .iter()
-        .enumerate()
-        .map(|(t, turn)| {
-            if turn.mine {
-                return turn.text.clone();
+    // Whatever a turn of theirs cannot keep travels forward and is said in the
+    // next turn of ours. Which is where it belongs and, more to the point, is
+    // somewhere the model does not write.
+    //
+    // It used to be said in their own turn - a bracket where the block or the
+    // lookup had been. A bracket in an assistant's turn is a shape an
+    // assistant writes, and this one wrote it: asked four times over to put a
+    // name back, it answered "[you read `family.md` here]" and "[edit to
+    // `family.md`: accepted]" and did nothing at all, four times, because
+    // those were the words that went in that place. Nothing was read and
+    // nothing was edited. The same fault as the tool tag it had been forging
+    // the hour before, in the shape that replaced it.
+    let mut out: Vec<String> = Vec::with_capacity(turns.len());
+    let mut carry: Vec<String> = Vec::new();
+    for (t, turn) in turns.iter().enumerate() {
+        if turn.mine {
+            let mut text = String::new();
+            if !carry.is_empty() {
+                text.push_str(&carry.join("\n"));
+                text.push_str("\n\n");
+                carry.clear();
             }
-            let keep: Vec<usize> = newest
-                .iter()
-                .filter(|(_, at, _)| *at == t)
-                .map(|(_, _, b)| *b)
-                .collect();
-            bodies_but(&turn.text, &keep)
-        })
-        .collect()
+            text.push_str(&turn.text);
+            out.push(text);
+            continue;
+        }
+        let keep: Vec<usize> = newest
+            .iter()
+            .filter(|(_, at, _)| *at == t)
+            .map(|(_, _, b)| *b)
+            .collect();
+        let (said, notes) = bodies_but(&turn.text, &keep);
+        carry.extend(notes);
+        out.push(said);
+    }
+    // Nowhere left to put them, which happens only when the last word was
+    // theirs. Then they go on the end of it, and there is no next question for
+    // them to be copied into.
+    if let (Some(last), false) = (out.last_mut(), carry.is_empty()) {
+        last.push_str("\n\n");
+        last.push_str(&carry.join("\n"));
+    }
+    out
 }
 
 /// Every block replaced by a label, save the ones named by position.
-fn bodies_but(text: &str, keep: &[usize]) -> String {
+fn bodies_but(text: &str, keep: &[usize]) -> (String, Vec<String>) {
     let mut out = String::new();
+    let mut notes = Vec::new();
     let mut at = 0;
     for (nth, (kind, tag, open, close)) in blocks(text).into_iter().enumerate() {
         let head = &text[tag..open];
@@ -680,9 +716,9 @@ fn bodies_but(text: &str, keep: &[usize]) -> String {
             .or_else(|| attr(head, "file"))
             .unwrap_or_else(|| "the note".into());
         let done = match state_attr(head) {
-            Some(true) => "accepted",
-            Some(false) => "turned down",
-            None => "still waiting to be answered",
+            Some(true) => "accepted, and the file is as it left it",
+            Some(false) => "turned down, and the file is as it was",
+            None => "not answered either way yet",
         };
         out.push_str(&text[at..tag]);
         if keep.contains(&nth) {
@@ -690,20 +726,11 @@ fn bodies_but(text: &str, keep: &[usize]) -> String {
             at = close + kind.len() + 3;
             continue;
         }
-        // A label, not a sentence, and true wherever the file happens to be.
-        //
-        // It used to read "what that file says now is in the project above,
-        // which is the only version to go by" - which is false for a file the
-        // model has just made, because the project at the front was written
-        // before that file existed. Told that at the moment it is deciding
-        // whether to trust itself, it was being pointed somewhere the file is
-        // not. A smaller model did worse than that and read the sentence back
-        // as its answer: asked what had changed, it replied with the bracket.
-        //
-        // What the file says is the correction's job, and the correction says
-        // it in the strongest words in this application. All that is needed
-        // here is that a change was proposed and how it went.
-        out.push_str(&format!("[{kind} to `{named}`: {done}]"));
+        // Taken out of their turn and said in ours. What it said is gone
+        // because a newer block for that file has it; what is left to say is
+        // that it was proposed and how it went, and that is our news, not
+        // theirs.
+        notes.push(format!("Your {kind} to `{named}` was {done}."));
         at = close + kind.len() + 3;
     }
     out.push_str(&text[at..]);
@@ -713,7 +740,9 @@ fn bodies_but(text: &str, keep: &[usize]) -> String {
     // scan for blocks knows to leave a quoted answer alone. Unwrap the answer
     // first and that protection is gone: the quote is loose in the turn, and
     // it comes back as a change nobody proposed.
-    without_lookups(&out).trim().to_string()
+    let (said, looked) = without_lookups(&out);
+    notes.extend(looked);
+    (said.trim().to_string(), notes)
 }
 
 /// Split a reply into what it said and what it proposed.
