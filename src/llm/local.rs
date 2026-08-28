@@ -24,22 +24,7 @@ use llama_cpp_2::token::LlamaToken;
 use super::{Ask, Backend, Reply};
 
 /// Leave this much of the window for the answer, deliberation included.
-///
-/// Six thousand rather than two, because the deliberation is real now: a
-/// model working out what it is about to do to a file can spend a couple of
-/// thousand tokens doing it before it writes a word of the answer.
-const RESERVE: usize = 6144;
-
-/// Whether to let a model think before it answers, in its own channel.
-///
-/// An experiment, and the second half of one. Asked in words to think first,
-/// on the end of every question, Qwen3.6 passed the one scene neither model
-/// had passed all day - a list sorted after somebody else changed it - and
-/// took a third longer over everything, because the thinking came out as
-/// prose in the answer. This is the same thing done the way the models were
-/// trained to do it: the thinking goes in the channel they have for it, the
-/// panel says THINKING while it does, and none of it lands in the note.
-const THINK: bool = true;
+const RESERVE: usize = 2048;
 
 /// The most of the question to read in one go, in tokens.
 ///
@@ -567,8 +552,7 @@ fn render(
     // template cannot be told to ask for less. Rewriting a comma is not worth
     // a page of deliberation the user waits through and never sees.
     out = out.replace("Reasoning: medium", "Reasoning: low");
-    // The empty block that stops a model thinking, unless it is to think.
-    if thinks && !THINK && !out.contains("</think>") {
+    if thinks && !out.contains("</think>") {
         out.push_str("<think>\n\n</think>\n\n");
     }
     Ok(out)
@@ -589,14 +573,7 @@ fn gemma_turns(system: &str, ask: &Ask) -> String {
     let turn = |out: &mut String, role: &str, text: &str| {
         out.push_str(&format!("<|turn>{role}\n{}<turn|>\n", text.trim()));
     };
-    // Thinking is switched on by a token at the very start of the system
-    // turn, and off by handing the model an empty thought at the end.
-    let system = if THINK {
-        format!("<|think|>{system}")
-    } else {
-        system.to_string()
-    };
-    turn(&mut out, "system", &system);
+    turn(&mut out, "system", system);
     if ask.talking() {
         let context = surroundings(ask);
         for (i, t) in ask.turns.iter().enumerate() {
@@ -612,10 +589,7 @@ fn gemma_turns(system: &str, ask: &Ask) -> String {
     } else {
         turn(&mut out, "user", &instruction(ask));
     }
-    out.push_str("<|turn>model\n");
-    if !THINK {
-        out.push_str("<|channel>thought\n<channel|>");
-    }
+    out.push_str("<|turn>model\n<|channel>thought\n<channel|>");
     out
 }
 
@@ -1062,17 +1036,13 @@ impl Local {
             // caught by the next token.
             let tail = String::from_utf8_lossy(&out[out.len().saturating_sub(64)..]).to_string();
             if !report.deliberating
-                && (tail.contains("<|channel|>analysis")
-                    || tail.contains("<think>")
-                    || tail.contains("<|channel>thought"))
+                && (tail.contains("<|channel|>analysis") || tail.contains("<think>"))
             {
                 report.deliberating = true;
                 report.written = 0;
                 writing_since = std::time::Instant::now();
             } else if report.deliberating
-                && (tail.contains("<|channel|>final")
-                    || tail.contains("</think>")
-                    || tail.contains("<channel|>"))
+                && (tail.contains("<|channel|>final") || tail.contains("</think>"))
             {
                 report.deliberating = false;
                 report.written = 0;
@@ -1089,10 +1059,7 @@ impl Local {
         // A reasoning model that ran out of room mid-thought has said nothing
         // on the channel the answer belongs on, and its deliberation is not a
         // suggestion. Better to say so than to paste the thinking into a note.
-        let unfinished = (text.contains("<|channel|>") && !text.contains("<|channel|>final"))
-            || (text.contains("<think>") && !text.contains("</think>"))
-            || (text.contains("<|channel>thought") && !text.contains("<channel|>"));
-        if unfinished {
+        if text.contains("<|channel|>") && !text.contains("<|channel|>final") {
             return Err("the model thought for longer than there was room for".into());
         }
         let text = tidy(&text);
