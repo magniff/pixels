@@ -5873,6 +5873,41 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
 }
 
 #[test]
+fn the_examples_name_the_note_that_is_open() {
+    use notes::llm::{Ask, Turn};
+    let asking = |file: &str| Ask {
+        file: file.into(),
+        vault: "- `new-one/family.md`".into(),
+        turns: vec![Turn {
+            mine: true,
+            text: "change line seven".into(),
+        }],
+        ..Ask::default()
+    };
+    let system = asking("new-one/family.md").system("editing");
+    // The name in the example is the name it will write, so it is the one that
+    // works. It used to say `notes.md` - a fine name for an example until a
+    // model copied it into a project that had no notes.md, and the change went
+    // nowhere with every other part of the answer right.
+    assert!(
+        system.contains("<edit file=\"family.md\" lines=\"12-14\">"),
+        "{system}"
+    );
+    assert!(
+        !system.contains("file=\"notes.md\""),
+        "the example still names a file that is not there: {system}"
+    );
+    // Without its folder, which is what the rule underneath it asks for.
+    assert!(!system.contains("new-one/family.md\" lines"), "{system}");
+
+    // And an editor with nothing open still reads as an example.
+    let nothing = asking("");
+    assert!(nothing
+        .system("editing")
+        .contains("<edit file=\"notes.md\""));
+}
+
+#[test]
 fn a_change_naming_a_folder_is_still_a_change_to_this_project() {
     use notes::chat::{Change, Folder, What};
     let lines: Vec<String> = "# Bikes\n\n- Alice's bike is green.\n- Bob's bike is red.\n\
@@ -5910,12 +5945,26 @@ fn a_change_naming_a_folder_is_still_a_change_to_this_project() {
     };
     assert_eq!(plain.replacing(&folder), change.replacing(&folder));
 
-    // A file that really is not there is still not there.
+    // A name nothing is filed under is no better than no name, and no name
+    // means the note in front of you. Offered against that, with the lines it
+    // would replace on show, rather than refused with nothing said.
     let missing = Change {
         file: Some("typography/other.md".into()),
         ..change.clone()
     };
-    assert!(missing.replacing(&folder).is_none());
+    assert_eq!(missing.replacing(&folder), change.replacing(&folder));
+
+    // Lines that are not there are still not there, whatever the file.
+    let past = Change {
+        file: Some("bikes.md".into()),
+        what: What::Edit {
+            from: 90,
+            to: 90,
+            text: "- nowhere.".into(),
+        },
+        state: None,
+    };
+    assert!(past.replacing(&folder).is_none());
 }
 
 #[test]

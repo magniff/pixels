@@ -83,9 +83,23 @@ impl Ask {
         if !self.talking() {
             return editing.to_string();
         }
+        // The examples are written about the note actually open. They used to
+        // name `notes.md`, which was a fine name for an example right up until
+        // a model copied it: asked to change a line of the note in front of
+        // it, one wrote `<edit file="notes.md" lines="7">` for a project with
+        // no notes.md in it, and nothing happened. It had every other part of
+        // the answer right. A name in an example is a name a model will write,
+        // so the one in the example is the one that works.
+        let shown = self
+            .file
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|n| !n.is_empty())
+            .unwrap_or("notes.md");
+        let prompt = CHAT_PROMPT.replace("{note}", shown);
         let mut out = match self.tools.is_empty() {
-            true => CHAT_PROMPT.to_string(),
-            false => format!("{}\n\n{}", declare(&self.tools), CHAT_PROMPT),
+            true => prompt,
+            false => format!("{}\n\n{}", declare(&self.tools), prompt),
         };
         if self.web_off {
             out.push_str(
@@ -158,8 +172,8 @@ Be direct and brief. This is a side panel, not an essay. No preamble.
 To change the project - and only when asked to - write one block, at the top level, \
 outside any code fence:
 
-<edit file=\"notes.md\" lines=\"12-14\">the text those lines become</edit>
-<write file=\"notes.md\">everything the file says from now on</write>
+<edit file=\"{note}\" lines=\"12-14\">the text those lines become</edit>
+<write file=\"{note}\">everything the file says from now on</write>
 <delete file=\"old.md\"></delete>
 <merge into=\"kept.md\" from=\"one.md, two.md\">what the one file says</merge>
 

@@ -1225,7 +1225,11 @@ impl Notes {
                 self.status = format!("DELETED {named}").to_uppercase();
             }
             chat::What::Edit { from, to, text } => {
-                let Some(i) = found else {
+                // Falling back to the note in front of you, which is what an
+                // edit with no name means and what one with a name nothing is
+                // filed under amounts to. See `Change::replacing`, which shows
+                // the same lines in the panel before this runs.
+                let Some(i) = found.or(Some(self.current).filter(|i| *i < self.notes.len())) else {
                     self.status = "THAT FILE IS NOT THERE".into();
                     return;
                 };

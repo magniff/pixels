@@ -472,7 +472,16 @@ impl Change {
         let lines = folder.lines(self.file.as_ref());
         match &self.what {
             What::Edit { from, to, .. } => {
-                let lines = lines?;
+                // A name that matches nothing in the project is no better than
+                // no name, and no name means the note in front of you - which
+                // is what an edit almost always is about. Models name files
+                // that are not there, and the ones they reach for are the ones
+                // written in front of them: an example in the instructions, a
+                // folder off the list of notes. Refusing leaves the change
+                // undone and unexplained; this offers it against the note it
+                // was plainly about, with the lines it would replace on show
+                // before anybody agrees to it.
+                let lines = lines.or_else(|| folder.lines(None))?;
                 let first = from.checked_sub(1)?;
                 if first >= lines.len() || to < from {
                     return None;
