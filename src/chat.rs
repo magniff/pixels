@@ -571,10 +571,63 @@ fn without_readings(text: &str) -> String {
 }
 
 pub fn without_bodies(text: &str) -> String {
+    bodies_but(text, &[])
+}
+
+/// The conversation as the model should be shown it.
+///
+/// Every change block becomes a label, except the newest accepted one for each
+/// file, which keeps what it said. That body is not a duplicate of anything -
+/// it is the only copy of what the file holds, because a file the model has
+/// just made is not in the project written out at the top of the conversation,
+/// which was written before it existed.
+///
+/// Stripping it and then sending the same text back at the end as a file that
+/// had "changed on disk since anything you have been told" was two wrongs: it
+/// cost the text twice over the two turns it took to do it, and it announced a
+/// change nobody had made, in the strongest words this application has, about
+/// a file the model had written itself and been told was accepted.
+pub fn as_sent(turns: &[Turn]) -> Vec<String> {
+    let mut newest: Vec<(String, usize, usize)> = Vec::new();
+    for (t, turn) in turns.iter().enumerate() {
+        if turn.mine {
+            continue;
+        }
+        for (b, (kind, tag, open, _)) in blocks(&turn.text).into_iter().enumerate() {
+            if kind == "delete" {
+                continue;
+            }
+            let head = &turn.text[tag..open];
+            let named = attr(head, "into").or_else(|| attr(head, "file"));
+            if let (Some(named), Some(true)) = (named, state_attr(head)) {
+                newest.retain(|(n, _, _)| *n != named);
+                newest.push((named, t, b));
+            }
+        }
+    }
+    turns
+        .iter()
+        .enumerate()
+        .map(|(t, turn)| {
+            if turn.mine {
+                return turn.text.clone();
+            }
+            let keep: Vec<usize> = newest
+                .iter()
+                .filter(|(_, at, _)| *at == t)
+                .map(|(_, _, b)| *b)
+                .collect();
+            bodies_but(&turn.text, &keep)
+        })
+        .collect()
+}
+
+/// Every block replaced by a label, save the ones named by position.
+fn bodies_but(text: &str, keep: &[usize]) -> String {
     let text = &without_readings(text);
     let mut out = String::new();
     let mut at = 0;
-    for (kind, tag, open, close) in blocks(text) {
+    for (nth, (kind, tag, open, close)) in blocks(text).into_iter().enumerate() {
         let head = &text[tag..open];
         let named = attr(head, "into")
             .or_else(|| attr(head, "file"))
@@ -585,6 +638,11 @@ pub fn without_bodies(text: &str) -> String {
             None => "still waiting to be answered",
         };
         out.push_str(&text[at..tag]);
+        if keep.contains(&nth) {
+            out.push_str(&text[tag..close + kind.len() + 3]);
+            at = close + kind.len() + 3;
+            continue;
+        }
         // A label, not a sentence, and true wherever the file happens to be.
         //
         // It used to read "what that file says now is in the project above,
@@ -879,6 +937,23 @@ impl Chat {
             .find(|t| t.mine)
             .map(|t| one_line(&t.text, 46))
             .unwrap_or_else(|| "NEW CHAT".to_string())
+    }
+
+    /// Take note that a file now says this, because we just made it say it.
+    ///
+    /// A change the user accepted is not news to be broken to the model: it
+    /// proposed it, it was told the answer, and the block it wrote is still in
+    /// the conversation with what it said in it. Without this the next question
+    /// carried a correction saying the file had changed on disk since anything
+    /// the model had been told - which was untrue, and was the whole file.
+    ///
+    /// What comes after this is measured against it, so an edit made in another
+    /// window still arrives, and arrives as the lines that moved.
+    pub fn wrote(&mut self, file: &str, text: Option<&str>) {
+        self.known.retain(|(n, _)| n != file);
+        if let Some(text) = text {
+            self.known.push((file.to_string(), text.to_string()));
+        }
     }
 
     /// Run a `/` command, and say whether it was one.

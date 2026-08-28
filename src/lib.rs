@@ -1044,6 +1044,36 @@ impl Notes {
     /// Through the buffer's own editing rather than by rewriting the lines
     /// underneath it, so `u` takes it back like anything else and the caret
     /// ends up somewhere sensible.
+    /// Tell the conversation what the files say now that it has been applied.
+    ///
+    /// Only the files this change touched, and only what they say here: the
+    /// point is that a change the user accepted is not a change to be reported
+    /// back as news. Everything else is still measured the usual way, so an
+    /// edit made somewhere else still arrives at the end of the next question.
+    fn took_up(&mut self, change: &chat::Change, talk: &mut chat::Chat) {
+        let named = change
+            .file
+            .clone()
+            .unwrap_or_else(|| self.note().filename());
+        let named = bare(&named);
+        let says = |app: &Self, want: &str| {
+            app.notes
+                .iter()
+                .find(|n| n.filename() == want)
+                .map(|n| n.buffer.to_text())
+        };
+        if let chat::What::Merge { from, .. } = &change.what {
+            for one in from {
+                let one = bare(one);
+                if one != named {
+                    talk.wrote(&one, None);
+                }
+            }
+        }
+        let now = says(self, &named);
+        talk.wrote(&named, now.as_deref());
+    }
+
     pub fn apply_change(&mut self, change: &chat::Change) {
         let here = self.note().project.clone();
         let named = change
@@ -1386,17 +1416,10 @@ impl Notes {
             // What it said, without the bodies of the changes it proposed: a
             // block is a copy of a file, and the file itself is above, once
             // and current. See `chat::without_bodies`.
-            turns: talk
-                .turns
-                .iter()
-                .map(|t| llm::Turn {
-                    mine: t.mine,
-                    text: if t.mine {
-                        t.text.clone()
-                    } else {
-                        chat::without_bodies(&t.text)
-                    },
-                })
+            turns: chat::as_sent(&talk.turns)
+                .into_iter()
+                .zip(talk.turns.iter())
+                .map(|(text, t)| llm::Turn { mine: t.mine, text })
                 .collect(),
             vault,
             file: self.note().slug(),
@@ -2021,6 +2044,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
             }
             chat::Outcome::Apply(change) => {
                 app.apply_change(&change);
+                app.took_up(&change, &mut talk);
                 // The chat has already written the decision into its own
                 // transcript; this is what puts that on disk.
                 let _ = talk.save(&app.notes_dir);

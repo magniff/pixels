@@ -5952,6 +5952,116 @@ fn a_block_nested_in_an_unclosed_one_is_still_found() {
 }
 
 #[test]
+fn a_change_we_made_is_not_reported_as_one_we_found() {
+    use notes::chat::Chat;
+    let file = |n: &str, t: &str| (n.to_string(), t.to_string());
+    let big = "a line that is here to take up room\n".repeat(60);
+    let start = vec![file("notes.md", &format!("# Notes\n\n{big}"))];
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    let index = "- `notes.md` \"Notes\"";
+    chat.context(index, &start);
+
+    // The model proposed a file, it was accepted, and the application says so.
+    let after = {
+        let mut v = start.clone();
+        v.push(file("bike.md", "the bike is red\n"));
+        v
+    };
+    chat.wrote("bike.md", Some("the bike is red\n"));
+    let (_, _, moved) = chat.context(
+        "- `bike.md` \"the bike is red\"\n- `notes.md` \"Notes\"",
+        &after,
+    );
+    let said = moved.unwrap_or_default();
+    assert!(
+        !said.contains("STOP"),
+        "a change it proposed was broken to it as news: {said}"
+    );
+    assert!(
+        !said.contains("the bike is red\n   "),
+        "and the whole file came back with it: {said}"
+    );
+
+    // Somebody else editing that same file still arrives, and arrives as the
+    // line that moved rather than as the file.
+    let outside = {
+        let mut v = start.clone();
+        v.push(file("bike.md", "the bike is green\n"));
+        v
+    };
+    let (_, _, moved) = chat.context(
+        "- `bike.md` \"the bike is green\"\n- `notes.md` \"Notes\"",
+        &outside,
+    );
+    let said = moved.expect("an edit from outside is still reported");
+    assert!(said.contains("STOP"), "{said}");
+    assert!(said.contains("the bike is green"), "{said}");
+    assert!(
+        !said.contains("a line that is here"),
+        "the project came too: {said}"
+    );
+}
+
+#[test]
+fn the_newest_accepted_change_keeps_what_it_said() {
+    use notes::chat::as_sent;
+    use notes::llm::Turn;
+    let turn = |mine: bool, text: &str| Turn {
+        mine,
+        text: text.to_string(),
+    };
+    let turns = vec![
+        turn(true, "make a note about the bike"),
+        turn(
+            false,
+            "Made it.\n<write file=\"bike.md\" state=\"applied\">the bike is red</write>",
+        ),
+        turn(true, "what colour is it"),
+        turn(false, "Red."),
+    ];
+    let sent = as_sent(&turns);
+
+    // The file the model made is not in the project written out at the top of
+    // the conversation - that was written before it existed - so the block it
+    // wrote is the only copy of what the file says. It stays.
+    assert!(sent[1].contains("the bike is red"), "{}", sent[1]);
+    assert!(sent[1].contains("Made it."), "{}", sent[1]);
+
+    // Changed again, and now only the newest one carries the text.
+    let mut later = turns.clone();
+    later.push(turn(true, "make it green"));
+    later.push(turn(
+        false,
+        "<write file=\"bike.md\" state=\"applied\">the bike is green</write>",
+    ));
+    let sent = as_sent(&later);
+    assert!(
+        !sent[1].contains("the bike is red"),
+        "kept twice: {}",
+        sent[1]
+    );
+    assert!(
+        sent[1].contains("[write to `bike.md`: accepted]"),
+        "{}",
+        sent[1]
+    );
+    assert!(sent[5].contains("the bike is green"), "{}", sent[5]);
+
+    // A change turned down is a label, whatever else happened. It never became
+    // what the file says, so keeping its text would be keeping a file that has
+    // never existed.
+    let refused = vec![turn(
+        false,
+        "<write file=\"bike.md\" state=\"rejected\">the bike is blue</write>",
+    )];
+    assert!(
+        !as_sent(&refused)[0].contains("blue"),
+        "{:?}",
+        as_sent(&refused)
+    );
+}
+
+#[test]
 fn what_a_tool_answered_is_quoted_and_not_proposed() {
     use notes::chat::{proposals, without_bodies};
     // Straight out of a real conversation. The model tried to call `write` as
