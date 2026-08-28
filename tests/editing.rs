@@ -4620,10 +4620,12 @@ fn a_tool_call_is_read_out_of_a_reply() {
     );
 
     assert_eq!(notes::llm::called("just an answer, no call"), None);
+    // No argument is still a call - to nothing, which the tool will say. It
+    // used to be no call at all, and a reply that was only that came out
+    // as "it did not answer" with the model never told what was missing.
     assert_eq!(
         notes::llm::called("<function=weather></function>"),
-        None,
-        "no argument is no call"
+        Some(("weather".to_string(), String::new()))
     );
 }
 
@@ -4763,7 +4765,7 @@ fn a_sum_that_does_not_work_says_why() {
     assert!(sum("(2 + 3").contains("not closed"));
     assert!(sum("sqrt(-1)").contains("no square root"));
     assert!(sum("frobnicate(2)").contains("not something this knows"));
-    assert!(sum("").contains("nothing here"));
+    assert!(sum("").contains("no sum was given"), "{}", sum(""));
     assert!(sum("2 & 3").contains("not something this can work out"));
     assert!(
         sum("2 3").contains("left over"),
@@ -5801,6 +5803,66 @@ fn the_panel_says_what_is_actually_happening() {
         ..p()
     };
     assert!(doing(&writing).starts_with("WRITING... 12 TOKENS"));
+}
+
+#[test]
+fn a_call_with_the_argument_left_out_is_still_a_call() {
+    use notes::llm::calls;
+    // Word for word: asked for a number of days in weeks, it wrote the call
+    // and forgot the sum. It used to come out as "it did not answer".
+    let said = "<tool_call>\n<function=calc>\n</function>\n</tool_call>";
+    assert_eq!(calls(said), vec![("calc".to_string(), String::new())]);
+    // Run with nothing, the tool says what it wanted rather than nothing.
+    let told = notes::tools::run("calc", "", "");
+    assert!(told.contains("no sum was given"), "{told}");
+    // And the shape the instructions show is not read as a call to nothing.
+    assert!(calls("<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n</function>").len() == 1);
+    assert!(calls("nothing here").is_empty());
+}
+
+#[test]
+fn an_edit_one_past_the_end_adds_a_line() {
+    use notes::chat::{Change, Folder, What};
+    let lines: Vec<String> = vec!["# Shop".into(), String::new(), "- Milk - 2.50".into()];
+    let folder = Folder {
+        project: String::new(),
+        here: "shop.md".into(),
+        files: vec![("shop.md".to_string(), &lines[..])],
+    };
+    let edit = |from: usize| Change {
+        file: Some("shop.md".into()),
+        what: What::Edit {
+            from,
+            to: from,
+            text: "- Bread - 1.80".into(),
+        },
+        state: None,
+    };
+    // Line four of a three-line file: the one that is not there yet, which
+    // is where something added goes. Offered, replacing nothing.
+    assert_eq!(edit(4).replacing(&folder).as_deref(), Some(""));
+    // Line five is not the next line; it is nowhere.
+    assert!(edit(5).replacing(&folder).is_none());
+
+    // And applied, it lands after the last line.
+    let dir = std::env::temp_dir().join(format!("notes-append-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a vault");
+    std::fs::write(dir.join("shop.md"), "# Shop\n\n- Milk - 2.50").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "shop.md")
+        .expect("there");
+    app.apply_change(&edit(4));
+    let text = app.notes[app.current].buffer.to_text();
+    assert_eq!(
+        text.trim_end(),
+        "# Shop\n\n- Milk - 2.50\n- Bread - 1.80",
+        "{text:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

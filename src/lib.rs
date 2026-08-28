@@ -1258,17 +1258,20 @@ impl Notes {
                     return;
                 };
                 let buf = &mut self.notes[i].buffer;
-                let Some(first) = from.checked_sub(1).filter(|f| *f < buf.line_count()) else {
+                // One past the end is an append: see `Change::replacing`.
+                let Some(first) = from.checked_sub(1).filter(|f| *f <= buf.line_count()) else {
                     self.status = "THOSE LINES ARE NOT THERE".into();
                     return;
                 };
-                let last = to.min(&buf.line_count()).saturating_sub(1);
-                if last < first {
+                if to < from {
                     self.status = "THOSE LINES ARE NOT THERE".into();
                     return;
                 }
                 buf.checkpoint();
-                buf.delete_lines(first, last);
+                if first < buf.line_count() {
+                    let last = to.min(&buf.line_count()).saturating_sub(1);
+                    buf.delete_lines(first, last);
+                }
                 let fresh: Vec<String> = if text.is_empty() {
                     Vec::new()
                 } else {

@@ -566,7 +566,12 @@ impl Change {
                 // before anybody agrees to it.
                 let lines = lines.or_else(|| folder.lines(None))?;
                 let first = from.checked_sub(1)?;
-                if first >= lines.len() || to < from {
+                // One past the end is the line that is not there yet, and an
+                // edit to it means "after the last one". The instructions say
+                // to add by editing the line it goes after; a model asked to
+                // add bread to a three-line list wrote lines="4-4" instead,
+                // which is what anybody would write, and was refused for it.
+                if first > lines.len() || to < from {
                     return None;
                 }
                 Some(lines[first..(*to).min(lines.len())].join("\n"))

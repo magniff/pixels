@@ -605,21 +605,30 @@ pub(crate) fn jotted(head: &str, body: &str) {
 /// One call, from the text just after its `<function=`.
 fn one_call(after: &str) -> Option<(String, String)> {
     let name = after.split('>').next()?.trim().to_string();
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return None;
+    }
     // Only up to the end of this call: a reply making three of them must not
     // read the second one's argument as the first one's.
     let after = after.split("</function>").next().unwrap_or(after);
-    let param = after.split("<parameter=").nth(1)?;
     // Everything past the parameter's own `>`, up to its closing tag. Splitting
     // on `>` first would eat the `>` of `</parameter>` and leave the tag in the
     // value - which fed the tools an argument with a tag on the end, got an
     // empty result back, and had the model inventing to fill the gap.
-    let value = param
-        .split_once('>')?
-        .1
-        .split("</parameter>")
-        .next()?
-        .trim();
-    (!name.is_empty() && !value.is_empty()).then(|| (name, value.to_string()))
+    //
+    // A call with the argument left out is still a call. It used to be
+    // nothing: not a call, so stripped off as machinery, so a reply that was
+    // only `<function=calc></function>` came out as "it did not answer". Run
+    // with nothing, the tool says what it wanted, and the model gets to write
+    // the call again with it in - which is what it does.
+    let value = after
+        .split("<parameter=")
+        .nth(1)
+        .and_then(|p| p.split_once('>'))
+        .and_then(|(_, v)| v.split("</parameter>").next())
+        .map(str::trim)
+        .unwrap_or("");
+    Some((name, value.to_string()))
 }
 
 /// Something that can rewrite a piece of text on request.

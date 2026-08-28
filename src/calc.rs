@@ -12,6 +12,9 @@
 
 /// Work out what an expression comes to.
 pub fn evaluate(expression: &str) -> Result<String, String> {
+    if expression.trim().is_empty() {
+        return Err("no sum was given - put the expression in the call, like 384 * 517".into());
+    }
     let tokens = scan(expression)?;
     let mut at = 0;
     let value = expr(&tokens, &mut at)?;
