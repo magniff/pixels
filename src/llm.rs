@@ -320,7 +320,7 @@ pub fn fitted(turns: &[Turn], limit: usize, measure: impl Fn(&[Turn]) -> usize) 
 /// wrong got it right - it worked out what it was about to do before doing
 /// it. This puts that ask on every question, to find out whether it holds
 /// across the scenes or was one good day.
-pub const THINK_FIRST: &str = "Think it through before you answer.";
+pub const THINK_FIRST: &str = "Carefully think through your answer before answering.";
 
 /// What came back, or why nothing did.
 pub type Reply = Result<String, String>;
