@@ -334,7 +334,7 @@ pub fn fitted(turns: &[Turn], limit: usize, measure: impl Fn(&[Turn]) -> usize) 
 /// Its own thinking channel was tried as well and lost on both: Qwen
 /// overran the room it was given and came back twenty of twenty-seven;
 /// Gemma held its score and took two to four times as long.
-pub const THINK_FIRST: &str = "Carefully think through your answer before answering.";
+pub const THINK_FIRST: &str = "Think it through carefully before you reply.";
 
 impl Dialect {
     /// Whether this family answers better for being asked to think first.
