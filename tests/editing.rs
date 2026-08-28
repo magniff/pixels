@@ -5401,8 +5401,12 @@ fn copying_a_turn_gives_what_is_on_the_screen() {
     // A reply carries the record of what it looked up, and the panel draws
     // that as a sentence rather than as the block it is written in. Pasting
     // the block into a note would hand over wiring nobody asked for.
-    let said = "<used tool=\"date\" arg=\"today\">\nThursday 27 August 2026\n</used>\n\nIt is Thursday.";
-    let theirs = Turn { mine: false, text: said.into() };
+    let said =
+        "<used tool=\"date\" arg=\"today\">\nThursday 27 August 2026\n</used>\n\nIt is Thursday.";
+    let theirs = Turn {
+        mine: false,
+        text: said.into(),
+    };
     assert_eq!(copyable(&theirs), "It is Thursday.");
     // What a change offered says is kept, because that is content: it is the
     // lines it wants to put in the file.
@@ -5413,7 +5417,10 @@ fn copying_a_turn_gives_what_is_on_the_screen() {
     assert!(copyable(&with_edit).contains("<edit file=\"notes.md\""));
     assert!(copyable(&with_edit).contains("fixed"));
     // A question is copied as it was asked.
-    let mine = Turn { mine: true, text: "  what day is it?  ".into() };
+    let mine = Turn {
+        mine: true,
+        text: "  what day is it?  ".into(),
+    };
     assert_eq!(copyable(&mine), "what day is it?");
 
     // And the whole conversation reads like the file it is saved as.
@@ -5488,9 +5495,15 @@ fn a_question_that_runs_out_of_lookups_still_gets_answered() {
         "answered from what it had: {said}"
     );
     assert!(!said.contains("did not get to an answer"), "{said}");
-    assert!(said.contains("<used tool=\"date\""), "kept the lookups: {said}");
+    assert!(
+        said.contains("<used tool=\"date\""),
+        "kept the lookups: {said}"
+    );
     let n = calls.load(std::sync::atomic::Ordering::Relaxed);
-    assert!((6..=14).contains(&n), "bounded, and not at the old five: {n}");
+    assert!(
+        (6..=14).contains(&n),
+        "bounded, and not at the old five: {n}"
+    );
     let _ = Progress::default();
 }
 
@@ -5519,11 +5532,17 @@ fn a_reply_cannot_decide_its_own_change_or_disguise_it_as_a_call() {
     // file was never written - the change vanished, quietly.
     let mut chat = Chat::new("home".into(), "notes.md".into());
     chat.answered(
-        Ok("here you go.\n\n<write file=\"facts.md\" state=\"applied\">\nsome facts.\n</write>".into()),
+        Ok(
+            "here you go.\n\n<write file=\"facts.md\" state=\"applied\">\nsome facts.\n</write>"
+                .into(),
+        ),
         std::path::Path::new("/tmp"),
     );
     let stored = &chat.turns.last().expect("a turn").text;
-    assert!(!stored.contains("applied"), "kept its own verdict: {stored:?}");
+    assert!(
+        !stored.contains("applied"),
+        "kept its own verdict: {stored:?}"
+    );
     let (prose, changes) = proposals(stored);
     assert_eq!(changes.len(), 1);
     assert!(
@@ -5537,7 +5556,10 @@ fn a_reply_cannot_decide_its_own_change_or_disguise_it_as_a_call() {
     let mut chat = Chat::new("home".into(), "notes.md".into());
     chat.answered(Ok(plain.into()), std::path::Path::new("/tmp"));
     assert_eq!(chat.turns.last().expect("a turn").text, plain);
-    let _ = Turn { mine: true, text: String::new() };
+    let _ = Turn {
+        mine: true,
+        text: String::new(),
+    };
 }
 
 #[test]
@@ -5585,9 +5607,18 @@ fn every_part_of_a_multi_step_answer_is_kept() {
     // "There are 120 days until the next 25 December." and nothing else: the
     // first two answers were written, and thrown away with the tool call that
     // followed them.
-    assert!(prose.contains("7006652"), "the first part is gone: {prose:?}");
-    assert!(prose.contains("Sunday"), "the second part is gone: {prose:?}");
-    assert!(prose.contains("120 days"), "the last part is gone: {prose:?}");
+    assert!(
+        prose.contains("7006652"),
+        "the first part is gone: {prose:?}"
+    );
+    assert!(
+        prose.contains("Sunday"),
+        "the second part is gone: {prose:?}"
+    );
+    assert!(
+        prose.contains("120 days"),
+        "the last part is gone: {prose:?}"
+    );
     // In the order they were said.
     let (a1, a2) = (
         prose.find("7006652").unwrap(),
@@ -5616,7 +5647,8 @@ fn a_reply_asking_for_three_things_at_once_gets_all_three() {
         "both of them, in order"
     );
     // One is still one, and the first of many is still the first.
-    let single = "<tool_call><function=date><parameter=when>today</parameter></function></tool_call>";
+    let single =
+        "<tool_call><function=date><parameter=when>today</parameter></function></tool_call>";
     assert_eq!(calls(single).len(), 1);
     assert_eq!(
         notes::llm::called(said),
@@ -5670,8 +5702,17 @@ fn a_reply_that_was_only_machinery_says_so_rather_than_nothing() {
         !prose.trim().is_empty() || !changes.is_empty(),
         "a blank turn: {said:?}"
     );
-    for bracket in ["<tool_call", "<function=", "</function", "</tool_call", "<parameter"] {
-        assert!(!prose.contains(bracket), "{bracket} reached the panel: {prose:?}");
+    for bracket in [
+        "<tool_call",
+        "<function=",
+        "</function",
+        "</tool_call",
+        "<parameter",
+    ] {
+        assert!(
+            !prose.contains(bracket),
+            "{bracket} reached the panel: {prose:?}"
+        );
     }
 }
 
@@ -5697,7 +5738,9 @@ fn a_date_with_its_month_written_out_is_understood() {
         );
     }
     // May is the awkward one: three letters long to begin with.
-    assert!(notes::clock::about("may 1 2000").unwrap().contains("1 May 2000"));
+    assert!(notes::clock::about("may 1 2000")
+        .unwrap()
+        .contains("1 May 2000"));
     // Without a year it is a day that comes round, like 12-25.
     let named = notes::clock::about("25 december").unwrap();
     assert_eq!(named, notes::clock::about("12-25").unwrap());
@@ -5749,7 +5792,10 @@ fn an_edit_of_no_particular_lines_is_a_write() {
         "read as laying the file down"
     );
     assert!(prose.contains("Here you go"), "{prose:?}");
-    assert!(!prose.contains("<edit"), "the block is lifted out: {prose:?}");
+    assert!(
+        !prose.contains("<edit"),
+        "the block is lifted out: {prose:?}"
+    );
 
     // An edit that does name its lines is still an edit.
     let lined = "<edit file=\"ages.md\" lines=\"2-3\">\nnew text\n</edit>";
@@ -5811,7 +5857,10 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
     // anything about it".
     let fused = "<tool_call>\n<function=edit file=\"family.md\" lines=\"1-4\">\n- **Danila**: 11 February 2020\n</edit>\n</tool_call>";
     let kept = without_machinery(fused);
-    assert!(kept.contains("<edit file=\"family.md\""), "lost the block: {kept:?}");
+    assert!(
+        kept.contains("<edit file=\"family.md\""),
+        "lost the block: {kept:?}"
+    );
     assert!(kept.contains("Danila"), "lost the body: {kept:?}");
     assert!(!kept.contains("tool_call"), "kept the wrapping: {kept:?}");
     // And the block is then read as the change it is.
@@ -5854,7 +5903,10 @@ fn the_project_is_written_out_once_and_corrected_after() {
     let moved = moved.expect("the change is reported");
     assert!(moved.contains("notes.md"), "{moved}");
     assert!(moved.contains("the tap was fixed"), "{moved}");
-    assert!(!moved.contains("the tap drips"), "the old line is not repeated");
+    assert!(
+        !moved.contains("the tap drips"),
+        "the old line is not repeated"
+    );
     assert!(
         moved.len() < first.len() / 4,
         "a one line change should be small beside the project: {} vs {}",
@@ -5863,10 +5915,13 @@ fn the_project_is_written_out_once_and_corrected_after() {
     );
 
     // A new file, and a file taken away.
-    let (_, _, moved) = chat.context("- `notes.md`", &[
-        file("notes.md", &format!("# Notes\n\n{big}the tap drips\n")),
-        file("later.md", "# Later\n\nSomething else.\n"),
-    ]);
+    let (_, _, moved) = chat.context(
+        "- `notes.md`",
+        &[
+            file("notes.md", &format!("# Notes\n\n{big}the tap drips\n")),
+            file("later.md", "# Later\n\nSomething else.\n"),
+        ],
+    );
     let moved = moved.expect("both are reported");
     assert!(moved.contains("`later.md` now contains"), "{moved}");
     assert!(moved.contains("`plans.md` is gone"), "{moved}");
@@ -5876,16 +5931,23 @@ fn the_project_is_written_out_once_and_corrected_after() {
     // that is the part that gets noticed. A file rewritten at the front sits
     // behind every turn of the conversation, and a conversation that has been
     // saying one thing for six turns drowns it.
-    let (_, fresh, moved) =
-        chat.context("- `notes.md`", &[file("notes.md", "# Notes\n\nAll of it, different.\n")]);
+    let (_, fresh, moved) = chat.context(
+        "- `notes.md`",
+        &[file("notes.md", "# Notes\n\nAll of it, different.\n")],
+    );
     assert!(fresh.contains("All of it, different"), "{fresh}");
-    assert!(!fresh.contains("Buy a bicycle"), "the old project is gone: {fresh}");
+    assert!(
+        !fresh.contains("Buy a bicycle"),
+        "the old project is gone: {fresh}"
+    );
     let moved = moved.expect("still told what moved");
     assert!(moved.contains("notes.md"), "{moved}");
     // ...and the new text is now what it compares against, so once it settles
     // there is nothing left to say.
-    let (_, _, moved) =
-        chat.context("- `notes.md`", &[file("notes.md", "# Notes\n\nAll of it, different.\n")]);
+    let (_, _, moved) = chat.context(
+        "- `notes.md`",
+        &[file("notes.md", "# Notes\n\nAll of it, different.\n")],
+    );
     assert!(moved.is_none(), "nothing has moved since the rewrite");
 }
 
@@ -5897,7 +5959,10 @@ fn a_conversation_reopened_is_shown_the_project_afresh() {
     // notes were edited while it was closed - writes the whole thing out
     // again, which is right and is the only safe answer: it cannot know what
     // the model was told last time.
-    let files = vec![("notes.md".to_string(), "# Notes\n\nthe tap drips\n".to_string())];
+    let files = vec![(
+        "notes.md".to_string(),
+        "# Notes\n\nthe tap drips\n".to_string(),
+    )];
     let mut chat = Chat::new("home".into(), "notes.md".into());
     let (_, _, moved) = chat.context("- `notes.md`", &files);
     assert!(moved.is_none());
@@ -5937,24 +6002,42 @@ fn a_note_changed_by_something_else_is_taken_up() {
     // A note appearing is picked up, and one taken away is let go of.
     std::fs::write(dir.join("kettle.md"), "# Kettle\n").expect("a new note");
     app.take_up_changes();
-    assert!(app.notes.iter().any(|n| n.filename() == "kettle.md"), "the new one");
+    assert!(
+        app.notes.iter().any(|n| n.filename() == "kettle.md"),
+        "the new one"
+    );
     std::fs::remove_file(dir.join("kettle.md")).expect("gone");
     app.take_up_changes();
-    assert!(!app.notes.iter().any(|n| n.filename() == "kettle.md"), "the gone one");
+    assert!(
+        !app.notes.iter().any(|n| n.filename() == "kettle.md"),
+        "the gone one"
+    );
 
     // Somebody who saves a file meant to, and that holds even over a buffer
     // here that has not been saved yet: it is the same person, and saving the
     // file is the thing they did on purpose. Waiting for the pause before a
     // save is the reason the two can disagree at all.
-    let i = app.notes.iter().position(|n| n.filename() == "bike.md").expect("there");
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "bike.md")
+        .expect("there");
     app.notes[i].buffer = notes::text::Buffer::from_text("# Bike\n\nmine, unsaved\n");
     app.notes[i].buffer.dirty = true;
     std::thread::sleep(std::time::Duration::from_millis(1100));
     std::fs::write(dir.join("bike.md"), "# Bike\n\ntheirs\n").expect("rewritten again");
     assert!(app.take_up_changes() > 0, "the save was passed over");
-    assert!(text(&app).contains("theirs"), "the file did not win: {:?}", text(&app));
+    assert!(
+        text(&app).contains("theirs"),
+        "the file did not win: {:?}",
+        text(&app)
+    );
     // And nothing is lost by it - only moved one keystroke away.
-    let i = app.notes.iter().position(|n| n.filename() == "bike.md").expect("there");
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "bike.md")
+        .expect("there");
     app.notes[i].buffer.undo();
     assert!(
         app.notes[i].buffer.to_text().contains("mine, unsaved"),
@@ -5985,7 +6068,10 @@ fn a_note_only_just_made_is_not_mistaken_for_one_deleted() {
         },
         state: None,
     });
-    assert!(app.notes.iter().any(|n| n.filename() == "kettle.md"), "made");
+    assert!(
+        app.notes.iter().any(|n| n.filename() == "kettle.md"),
+        "made"
+    );
     assert!(!dir.join("kettle.md").exists(), "and not on disk yet");
 
     app.take_up_changes();
@@ -6013,7 +6099,11 @@ fn a_file_named_with_its_folder_still_lands_in_the_folder() {
     std::fs::create_dir_all(dir.join("new-one")).expect("a project");
     std::fs::write(dir.join("new-one/seed.md"), "# Seed\n").expect("a note");
     let mut app = notes::Notes::open(dir.clone());
-    let i = app.notes.iter().position(|n| n.filename() == "seed.md").expect("there");
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "seed.md")
+        .expect("there");
     app.current = i;
 
     app.apply_change(&notes::chat::Change {
@@ -6027,10 +6117,16 @@ fn a_file_named_with_its_folder_still_lands_in_the_folder() {
     assert!(
         dir.join("new-one/bike.md").exists(),
         "not where it belongs. vault holds: {:?}",
-        std::fs::read_dir(dir.join("new-one")).unwrap().flatten()
-            .map(|e| e.file_name()).collect::<Vec<_>>()
+        std::fs::read_dir(dir.join("new-one"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect::<Vec<_>>()
     );
-    assert!(!dir.join("new-one/new-one").exists(), "a folder inside itself");
+    assert!(
+        !dir.join("new-one/new-one").exists(),
+        "a folder inside itself"
+    );
     // And nothing is left claiming to be unsaved.
     assert!(
         !app.notes.iter().any(|n| n.buffer.dirty),
@@ -6053,10 +6149,16 @@ fn a_change_it_proposed_is_not_sent_back_as_a_copy_of_the_file() {
     let sent = without_bodies(said);
     assert!(sent.contains("Here you go."), "{sent}");
     assert!(sent.contains("Anything else?"), "{sent}");
-    assert!(sent.contains("bike.md"), "it should still know what it did: {sent}");
+    assert!(
+        sent.contains("bike.md"),
+        "it should still know what it did: {sent}"
+    );
     assert!(sent.contains("accepted"), "and what became of it: {sent}");
     // The part that matters: no copy of the file.
-    assert!(!sent.contains("The bike is red"), "the stale copy went too: {sent}");
+    assert!(
+        !sent.contains("The bike is red"),
+        "the stale copy went too: {sent}"
+    );
     assert!(!sent.contains("<write"), "and the block with it: {sent}");
 
     // A change still waiting, and one turned down, say so.
@@ -6128,11 +6230,18 @@ fn asking_to_read_a_note_is_heard_in_either_shape() {
     // understood it, so it went unanswered and the model fell back on what it
     // already believed. Answered in the shape it asked, it gets it right.
     let block = "I should check.\n<read file=\"bike.md\"></read>";
-    assert_eq!(calls(block), vec![("read".to_string(), "bike.md".to_string())]);
+    assert_eq!(
+        calls(block),
+        vec![("read".to_string(), "bike.md".to_string())]
+    );
 
     // The proper call still works, and so does one of each.
-    let proper = "<tool_call><function=read><parameter=file>bike.md</parameter></function></tool_call>";
-    assert_eq!(calls(proper), vec![("read".to_string(), "bike.md".to_string())]);
+    let proper =
+        "<tool_call><function=read><parameter=file>bike.md</parameter></function></tool_call>";
+    assert_eq!(
+        calls(proper),
+        vec![("read".to_string(), "bike.md".to_string())]
+    );
     let both = format!("{proper}\n<read file=\"other.md\"></read>");
     assert_eq!(calls(&both).len(), 2, "{both}");
 

@@ -327,7 +327,10 @@ fn a_note_typed_by_hand(app: &mut App) -> Result<(), String> {
             }
             Ok(())
         }
-        None => Err(format!("nothing on disk holds it. vault: {:?}", app.vault())),
+        None => Err(format!(
+            "nothing on disk holds it. vault: {:?}",
+            app.vault()
+        )),
     }
 }
 
@@ -364,11 +367,7 @@ fn fresh_chat(app: &mut App) -> Result<(), String> {
         app.click("chat0")?;
         app.steps(6);
     }
-    let fresh = app
-        .app
-        .chat
-        .as_ref()
-        .is_some_and(|c| c.turns.is_empty());
+    let fresh = app.app.chat.as_ref().is_some_and(|c| c.turns.is_empty());
     if !fresh {
         return Err(format!(
             "could not start a new conversation. on screen: {:?}",
@@ -484,7 +483,10 @@ fn accept_all(app: &mut App) -> usize {
 fn a_question_the_model_must_look_up(app: &mut App) -> Result<(), String> {
     fresh_chat(app)?;
     let began = Instant::now();
-    asking(app, "what is the date today? answer with the year in figures.")?;
+    asking(
+        app,
+        "what is the date today? answer with the year in figures.",
+    )?;
     let took = began.elapsed();
     let answer = last_answer(app);
     let used = app
@@ -495,7 +497,9 @@ fn a_question_the_model_must_look_up(app: &mut App) -> Result<(), String> {
         .map(|t| crate::chat::lookups(&t.text).1.len())
         .unwrap_or(0);
     if used == 0 {
-        return Err(format!("{WRONG}answered without looking anything up: {answer:?}"));
+        return Err(format!(
+            "{WRONG}answered without looking anything up: {answer:?}"
+        ));
     }
     // The year the machine says, not one written down here: this file will
     // still be run next year.
@@ -625,7 +629,9 @@ fn a_passage_the_model_rewrites(app: &mut App) -> Result<(), String> {
             .collect::<String>()
     };
     if letters(&now) != letters(&first) {
-        return Err(format!("{WRONG}it said something else: {first:?} became {now:?}"));
+        return Err(format!(
+            "{WRONG}it said something else: {first:?} became {now:?}"
+        ));
     }
     Ok(())
 }
@@ -681,12 +687,20 @@ fn several_tools_from_one_question(app: &mut App) -> Result<(), String> {
     // picking whichever came first in a list of weekday names rather than
     // first in the sentence had this expecting a Thursday of a Friday.
     let christmas = crate::clock::about("12-25").unwrap_or_default();
-    let day = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        .into_iter()
-        .filter_map(|d| christmas.find(d).map(|at| (at, d)))
-        .min_by_key(|(at, _)| *at)
-        .map(|(_, d)| d)
-        .unwrap_or("");
+    let day = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+    .into_iter()
+    .filter_map(|d| christmas.find(d).map(|at| (at, d)))
+    .min_by_key(|(at, _)| *at)
+    .map(|(_, d)| d)
+    .unwrap_or("");
     let found = app
         .vault()
         .into_iter()
@@ -788,7 +802,10 @@ fn a_family_of_birthdays(app: &mut App) -> Result<(), String> {
         .find(|f| f.ends_with("ages.md"))
         .ok_or_else(|| format!("no ages.md after it was accepted. vault: {:?}", app.vault()))?;
     let text = app.read(&found).unwrap_or_default().replace(',', "");
-    let missing: Vec<&String> = [&mine, &hers].into_iter().filter(|d| !text.contains(*d)).collect();
+    let missing: Vec<&String> = [&mine, &hers]
+        .into_iter()
+        .filter(|d| !text.contains(*d))
+        .collect();
     if missing.is_empty() {
         Ok(())
     } else {
@@ -932,7 +949,10 @@ fn a_note_in_a_project_changed_outside(app: &mut App) -> Result<(), String> {
         ));
     }
     fresh_chat(app)?;
-    asking(app, "make a note stating that the cycle is red, call the note cycle.md")?;
+    asking(
+        app,
+        "make a note stating that the cycle is red, call the note cycle.md",
+    )?;
     if accept_all(app) == 0 {
         return Err(format!(
             "{WRONG}nothing proposed: {:?}",
@@ -1021,15 +1041,27 @@ type Scene = (&'static str, fn(&mut App) -> Result<(), String>);
 /// they made a minute ago.
 const SCENES: &[Scene] = &[
     ("a note typed by hand", a_note_typed_by_hand),
-    ("a question the model must look up", a_question_the_model_must_look_up),
+    (
+        "a question the model must look up",
+        a_question_the_model_must_look_up,
+    ),
     ("a file the model writes", a_file_the_model_writes),
-    ("several tools from one question", several_tools_from_one_question),
+    (
+        "several tools from one question",
+        several_tools_from_one_question,
+    ),
     ("a change turned down", a_change_turned_down),
     ("a family of birthdays", a_family_of_birthdays),
     ("a share of a lifetime", a_share_of_a_lifetime),
     ("a passage the model rewrites", a_passage_the_model_rewrites),
-    ("a note changed behind its back", a_note_changed_behind_its_back),
-    ("a note in a project changed outside", a_note_in_a_project_changed_outside),
+    (
+        "a note changed behind its back",
+        a_note_changed_behind_its_back,
+    ),
+    (
+        "a note in a project changed outside",
+        a_note_in_a_project_changed_outside,
+    ),
     ("reading a note when asked", reading_a_note_when_asked),
     ("the conversation is kept", the_conversation_is_kept),
 ];
@@ -1070,7 +1102,10 @@ pub fn run() -> std::io::Result<i32> {
             }
             Err(why) => {
                 failed += 1;
-                println!("FAILED ({:.1}s)\n      {why}", began.elapsed().as_secs_f32());
+                println!(
+                    "FAILED ({:.1}s)\n      {why}",
+                    began.elapsed().as_secs_f32()
+                );
             }
         }
     }

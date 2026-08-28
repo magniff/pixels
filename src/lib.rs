@@ -20,9 +20,9 @@ pub mod calc;
 pub mod chat;
 pub mod clock;
 pub mod dialog;
-pub mod e2e;
 pub mod diff;
 pub mod digest;
+pub mod e2e;
 pub mod fetch;
 pub mod finder;
 pub mod indent;
@@ -600,7 +600,9 @@ impl Notes {
     /// watched the file change and gone to look at it.
     fn settle(&mut self) {
         for note in &mut self.notes {
-            let Some(path) = note.path.clone() else { continue };
+            let Some(path) = note.path.clone() else {
+                continue;
+            };
             if !note.buffer.dirty || stamp(&path) != note.seen {
                 continue;
             }
@@ -621,7 +623,9 @@ impl Notes {
     pub fn take_up_changes(&mut self) -> usize {
         let mut moved = 0;
         for note in &mut self.notes {
-            let Some(path) = note.path.clone() else { continue };
+            let Some(path) = note.path.clone() else {
+                continue;
+            };
             let now = stamp(&path);
             if now == note.seen {
                 continue;

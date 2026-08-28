@@ -588,11 +588,7 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
                 // Only when a file is named. A bare `<edit>` means the note in
                 // front of you, and reading that as "replace all of it" is too
                 // much to infer from something left out.
-                .or_else(|| {
-                    named
-                        .is_some()
-                        .then(|| What::Write { text: body.clone() })
-                }),
+                .or_else(|| named.is_some().then(|| What::Write { text: body.clone() })),
             // The rest are about a file by name and none of them means
             // anything without one. `create` as well as `write`, because it is
             // the word a model reaches for and refusing it would be pedantry
@@ -860,7 +856,9 @@ impl Chat {
                 // have.
                 self.turns.push(Turn {
                     mine: false,
-                    text: undecided(crate::llm::unfused(text.trim()).trim()).trim().to_string(),
+                    text: undecided(crate::llm::unfused(text.trim()).trim())
+                        .trim()
+                        .to_string(),
                 });
                 self.follow = true;
                 let _ = self.save(dir);
@@ -1542,7 +1540,8 @@ impl Chat {
         let mut copied = if self.turns.is_empty() {
             false
         } else {
-            ui.button_at(whole, "COPY ALL", pixui::Tone::Neutral).clicked
+            ui.button_at(whole, "COPY ALL", pixui::Tone::Neutral)
+                .clicked
         };
         if copied {
             pixui::clipboard::copy(&self.transcript());
@@ -1571,7 +1570,12 @@ impl Chat {
                 // is the thing that gets it.
                 let take = Rect::new(head.right() - line_h, head.y, line_h, line_h);
                 if ui
-                    .icon_button_at(take, &format!("copy-turn-{i}"), pixui::icon::COPY, pixui::Tone::Neutral)
+                    .icon_button_at(
+                        take,
+                        &format!("copy-turn-{i}"),
+                        pixui::icon::COPY,
+                        pixui::Tone::Neutral,
+                    )
                     .clicked
                 {
                     pixui::clipboard::copy(&copyable(turn));
@@ -1580,12 +1584,8 @@ impl Chat {
                 // A rule from the end of the name to the button, which is what
                 // separates two turns without a box around each of them.
                 let from = head.x + 6 + font::advance_width(who);
-                ui.canvas.hline(
-                    from,
-                    head.y + line_h / 2,
-                    take.x - 4 - from,
-                    th.well_border,
-                );
+                ui.canvas
+                    .hline(from, head.y + line_h / 2, take.x - 4 - from, th.well_border);
                 // What it said, and separately what it offered to do. The
                 // blocks are lifted out so the reply reads as a sentence
                 // rather than as a sentence with machinery in the middle.

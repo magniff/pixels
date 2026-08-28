@@ -320,10 +320,22 @@ pub fn without_machinery(said: &str) -> String {
 /// More than one spelling, because more than one family is spoken to here and
 /// each was trained on its own. The list is what has actually been seen coming
 /// out of a model in this application, not everything that exists.
-const OPENERS: &[&str] = &["<tool_call", "<function=", "<|tool_call_start|>", "[TOOL_CALL]", "<read"];
+const OPENERS: &[&str] = &[
+    "<tool_call",
+    "<function=",
+    "<|tool_call_start|>",
+    "[TOOL_CALL]",
+    "<read",
+];
 
 /// And what ends one.
-const CLOSERS: &[&str] = &["</tool_call>", "</function>", "<|tool_call_end|>", "[/TOOL_CALL]", "</read>"];
+const CLOSERS: &[&str] = &[
+    "</tool_call>",
+    "</function>",
+    "<|tool_call_end|>",
+    "[/TOOL_CALL]",
+    "</read>",
+];
 
 /// Leftovers: a closing tag whose opening never came, and the parameter
 /// wrapping that sits inside a call and sometimes outlives it.
@@ -689,7 +701,9 @@ fn answer(
                 mine: false,
                 text: said,
             });
-            return finish(backend, &ask, turns, used, so_far, beat, words, stop, looping);
+            return finish(
+                backend, &ask, turns, used, so_far, beat, words, stop, looping,
+            );
         }
         // What it wrote before reaching for the tool is part of the answer.
         keep(&mut so_far, &said);

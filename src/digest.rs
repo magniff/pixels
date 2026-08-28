@@ -307,11 +307,7 @@ pub fn since(shown: &[(String, String)], now: &[(String, String)]) -> Option<Str
 /// clever, and the caller has a budget for when that stops being worth it.
 fn replaced(before: &str, after: &str) -> String {
     let (old, new): (Vec<&str>, Vec<&str>) = (before.lines().collect(), after.lines().collect());
-    let head = old
-        .iter()
-        .zip(&new)
-        .take_while(|(a, b)| a == b)
-        .count();
+    let head = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
     let tail = old[head..]
         .iter()
         .rev()
