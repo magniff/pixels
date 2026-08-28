@@ -5873,6 +5873,37 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
 }
 
 #[test]
+fn a_list_that_moves_on_its_own_is_said_at_the_end_and_not_at_the_front() {
+    use notes::chat::Chat;
+    let file = |n: &str, t: &str| (n.to_string(), t.to_string());
+    let big = "a line that is here to take up room\n".repeat(60);
+    let files = vec![file("notes.md", &format!("# Notes\n\n{big}"))];
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+
+    let (shown, front, moved) = chat.context("- `notes.md` \"Notes\"", &files);
+    assert!(moved.is_none(), "nothing has moved yet");
+
+    // A note in another project got its first line changed, so the list of the
+    // vault reads differently while nothing in this project moved at all.
+    let listed = "- `notes.md` \"Notes\"\n- `other.md` \"Other\"";
+    let (again, still, moved) = chat.context(listed, &files);
+    assert_eq!(again, shown, "the list at the front is not rewritten");
+    assert_eq!(still, front, "and neither is the project");
+    let said = moved.expect("the list that moved is said at the end");
+    assert!(said.contains("other.md"), "{said}");
+
+    // Never both. Rewriting the front empties the cache, and a front that has
+    // been rewritten must not then be called out of date - that was costing
+    // the whole prompt again and saying the new list twice.
+    assert!(!again.contains("other.md"), "{again}");
+
+    // Still stale next time, so still said - the front is what it was.
+    let (third, _, moved) = chat.context(listed, &files);
+    assert_eq!(third, shown);
+    assert!(moved.is_some_and(|m| m.contains("other.md")));
+}
+
+#[test]
 fn the_project_is_written_out_once_and_corrected_after() {
     use notes::chat::Chat;
     let file = |n: &str, t: &str| (n.to_string(), t.to_string());

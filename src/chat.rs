@@ -912,19 +912,23 @@ impl Chat {
         let moved = crate::digest::since(&self.known, now);
         let listed = (self.shown_index != index)
             .then(|| format!("The list of notes at the top is out of date. It is now:\n\n{index}"));
-        let Some(moved) = moved else {
-            if listed.is_some() {
-                self.shown_index = index.to_string();
+        // Both are corrections, and both are paid for the same way, so both go
+        // through the same choice. What must not happen is the front being
+        // rewritten and the correction being sent as well: the rewrite empties
+        // the cache and the correction then says the front is wrong when it is
+        // not. A list that has moved on its own is worth a few hundred
+        // characters at the end; it is never worth the whole project again.
+        let both = match (moved, listed) {
+            (None, None) => {
+                return (
+                    self.shown_index.clone(),
+                    crate::digest::project(&self.front),
+                    None,
+                );
             }
-            return (
-                self.shown_index.clone(),
-                crate::digest::project(&self.front),
-                listed,
-            );
-        };
-        let both = match listed {
-            Some(listed) => format!("{moved}\n\n{listed}"),
-            None => moved,
+            (Some(moved), Some(listed)) => format!("{moved}\n\n{listed}"),
+            (Some(moved), None) => moved,
+            (None, Some(listed)) => listed,
         };
         if both.len() >= crate::digest::project(now).len() + index.len() {
             return afresh(self, Some(both));
