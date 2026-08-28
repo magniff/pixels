@@ -737,7 +737,7 @@ fn without_lookups(text: &str) -> (String, Vec<String>) {
 }
 
 pub fn without_bodies(text: &str) -> String {
-    let (said, notes) = bodies_but(text, &[]);
+    let (said, notes) = bodies_but(text, &[], &[]);
     // On its own this is one turn with nowhere to carry to, so what would have
     // gone into the next question is put on the end of this one. `as_sent` is
     // what the conversation actually goes through, and it has somewhere.
@@ -761,19 +761,45 @@ pub fn without_bodies(text: &str) -> String {
 /// cost the text twice over the two turns it took to do it, and it announced a
 /// change nobody had made, in the strongest words this application has, about
 /// a file the model had written itself and been told was accepted.
-pub fn as_sent(turns: &[Turn]) -> Vec<String> {
+pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
     let mut newest: Vec<(String, usize, usize)> = Vec::new();
+    // Blocks that were accepted and whose text the file no longer holds.
+    //
+    // A conversation opened again is shown the project afresh, so the front
+    // said the door was blue - and the model's own accepted edit, still in
+    // the history with its body, said green. Asked, it said green. It trusts
+    // its own words over the page; that is the whole reason a superseded
+    // block loses its body, and a block the file has moved on from is
+    // superseded by the file. It keeps its body only while the file still
+    // says what it says; after that it is a note that the file has changed
+    // since, which is the one thing it needs telling.
+    let mut stale: Vec<(usize, usize)> = Vec::new();
     for (t, turn) in turns.iter().enumerate() {
         if turn.mine {
             continue;
         }
-        for (b, (kind, tag, open, _)) in blocks(&turn.text).into_iter().enumerate() {
+        for (b, (kind, tag, open, close)) in blocks(&turn.text).into_iter().enumerate() {
             if kind == "delete" {
                 continue;
             }
             let head = &turn.text[tag..open];
             let named = attr(head, "into").or_else(|| attr(head, "file"));
             if let (Some(named), Some(true)) = (named, state_attr(head)) {
+                let body = turn.text[open..close].trim_matches('\n');
+                let holds = now
+                    .iter()
+                    .find(|(n, _)| own_name(n) == own_name(&named))
+                    .map(|(_, text)| match kind {
+                        "write" | "create" | "merge" => {
+                            text.trim_end_matches('\n') == body.trim_end_matches('\n')
+                                || (body.trim().is_empty() && kind == "merge")
+                        }
+                        _ => body.trim().is_empty() || text.contains(body.trim()),
+                    });
+                if holds == Some(false) {
+                    stale.push((t, b));
+                    continue;
+                }
                 newest.retain(|(n, _, _)| *n != named);
                 newest.push((named, t, b));
             }
@@ -810,7 +836,12 @@ pub fn as_sent(turns: &[Turn]) -> Vec<String> {
             .filter(|(_, at, _)| *at == t)
             .map(|(_, _, b)| *b)
             .collect();
-        let (said, notes) = bodies_but(&turn.text, &keep);
+        let moved_on: Vec<usize> = stale
+            .iter()
+            .filter(|(at, _)| *at == t)
+            .map(|(_, b)| *b)
+            .collect();
+        let (said, notes) = bodies_but(&turn.text, &keep, &moved_on);
         carry.extend(notes);
         out.push(said);
     }
@@ -825,7 +856,7 @@ pub fn as_sent(turns: &[Turn]) -> Vec<String> {
 }
 
 /// Every block replaced by a label, save the ones named by position.
-fn bodies_but(text: &str, keep: &[usize]) -> (String, Vec<String>) {
+fn bodies_but(text: &str, keep: &[usize], moved_on: &[usize]) -> (String, Vec<String>) {
     let mut out = String::new();
     let mut notes = Vec::new();
     let mut at = 0;
@@ -841,6 +872,9 @@ fn bodies_but(text: &str, keep: &[usize]) -> (String, Vec<String>) {
             // was "as it left it" were three contradictions in front of a
             // model about to rewrite that file - which it then did from a
             // picture that matched none of them.
+            Some(true) if moved_on.contains(&nth) => {
+                "accepted, but the file has been changed by hand since and no longer says that"
+            }
             Some(true) => "accepted",
             Some(false) => "turned down, and the file is as it was",
             None => "not answered either way yet",

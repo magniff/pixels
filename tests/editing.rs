@@ -6796,7 +6796,7 @@ fn nothing_the_model_could_copy_is_left_in_its_own_turn() {
         ),
         turn(true, "thanks"),
     ];
-    let sent = as_sent(&turns);
+    let sent = as_sent(&turns, &[]);
 
     // Their turns hold what they said and the one block that is still the only
     // copy of a file. Nothing else - no tag, no bracket, no shape that being
@@ -7000,6 +7000,46 @@ fn a_change_we_made_is_not_reported_as_one_we_found() {
 }
 
 #[test]
+fn an_accepted_block_the_file_has_moved_on_from_loses_its_body() {
+    use notes::chat::as_sent;
+    use notes::llm::Turn;
+    let turn = |mine: bool, text: &str| Turn {
+        mine,
+        text: text.to_string(),
+    };
+    let turns = vec![
+        turn(true, "make the door green"),
+        turn(
+            false,
+            "<edit file=\"door.md\" lines=\"3\" state=\"applied\">The door is GREEN.</edit>",
+        ),
+        turn(true, "what colour is it"),
+    ];
+    // While the file says what the edit said, the edit keeps its body.
+    let green = vec![(
+        "door.md".to_string(),
+        "# Door\n\nThe door is GREEN.\n".to_string(),
+    )];
+    let sent = as_sent(&turns, &green);
+    assert!(sent[1].contains("The door is GREEN."), "{}", sent[1]);
+
+    // Undone by hand: the file says blue, and the edit is a note saying the
+    // file has moved on - not a body the model will trust over the page,
+    // which it did: shown the project afresh saying blue, it said green.
+    let blue = vec![(
+        "door.md".to_string(),
+        "# Door\n\nThe door is BLUE.\n".to_string(),
+    )];
+    let sent = as_sent(&turns, &blue);
+    assert!(!sent[1].contains("GREEN"), "{}", sent[1]);
+    assert!(sent[2].contains("changed by hand since"), "{}", sent[2]);
+
+    // With nothing known about the files, nothing is second-guessed.
+    let sent = as_sent(&turns, &[]);
+    assert!(sent[1].contains("The door is GREEN."), "{}", sent[1]);
+}
+
+#[test]
 fn the_newest_accepted_change_keeps_what_it_said() {
     use notes::chat::as_sent;
     use notes::llm::Turn;
@@ -7016,7 +7056,7 @@ fn the_newest_accepted_change_keeps_what_it_said() {
         turn(true, "what colour is it"),
         turn(false, "Red."),
     ];
-    let sent = as_sent(&turns);
+    let sent = as_sent(&turns, &[]);
 
     // The file the model made is not in the project written out at the top of
     // the conversation - that was written before it existed - so the block it
@@ -7031,7 +7071,7 @@ fn the_newest_accepted_change_keeps_what_it_said() {
         false,
         "<write file=\"bike.md\" state=\"applied\">the bike is green</write>",
     ));
-    let sent = as_sent(&later);
+    let sent = as_sent(&later, &[]);
     assert!(
         !sent[1].contains("the bike is red"),
         "kept twice: {}",
@@ -7059,9 +7099,9 @@ fn the_newest_accepted_change_keeps_what_it_said() {
         "<write file=\"bike.md\" state=\"rejected\">the bike is blue</write>",
     )];
     assert!(
-        !as_sent(&refused)[0].contains("blue"),
+        !as_sent(&refused, &[])[0].contains("blue"),
         "{:?}",
-        as_sent(&refused)
+        as_sent(&refused, &[])
     );
 }
 

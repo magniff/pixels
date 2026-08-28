@@ -1518,7 +1518,7 @@ impl Notes {
             // What it said, without the bodies of the changes it proposed: a
             // block is a copy of a file, and the file itself is above, once
             // and current. See `chat::without_bodies`.
-            turns: chat::as_sent(&talk.turns)
+            turns: chat::as_sent(&talk.turns, &files)
                 .into_iter()
                 .zip(talk.turns.iter())
                 .map(|(text, t)| llm::Turn { mine: t.mine, text })
