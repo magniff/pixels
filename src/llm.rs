@@ -183,6 +183,8 @@ Rules for them:
 
 - The file is named without its folder. Leave the name off an edit to mean the file \
 they are looking at.
+- Only the project they are looking at can be changed. Any note in the vault can be \
+read with the read tool; to change one in another project, say they should open it.
 - Lines are inclusive and count from one, as in the margin. Write the replacement \
 without the numbers.
 - Change as few lines as the request needs. To add something, edit the line it goes \

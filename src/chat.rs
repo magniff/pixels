@@ -389,9 +389,33 @@ pub fn lookups(reply: &str) -> (String, Vec<Lookup>) {
 /// Borrowed for the frame rather than copied: a project is every note in a
 /// folder, and copying all of them to draw one diff would be a strange price.
 pub struct Folder<'a> {
+    /// The project these files are, by its folder name - empty for the notes
+    /// that sit loose at the top of the vault.
+    pub project: String,
     /// The note in front of you, which is what an unqualified change means.
     pub here: String,
     pub files: Vec<(String, &'a [String])>,
+}
+
+/// The project a name points at, when it is not this one.
+///
+/// A change may name a file with its folder in front - the list of notes shows
+/// every note that way, so it is the shape a model has in front of it. When
+/// the folder is the project being looked at, or there is no folder, the name
+/// means a file here. When it is some other project, the change is for a file
+/// this conversation cannot reach: only the project on screen can be changed,
+/// and the way to change another is to open it. Reading is a different matter
+/// and the read tool reaches the whole vault.
+///
+/// This used to fall through. The folder was dropped, the bare name matched
+/// nothing here, and - because a bare name that matches nothing means the note
+/// in front of you - an edit meant for `aquarium/stock.md` was offered against
+/// whatever was open, line for line.
+pub fn elsewhere(named: &str, project: &str) -> Option<String> {
+    let named = named.trim().trim_start_matches(['/', '\\']);
+    let (folder, _) = named.rsplit_once(['/', '\\'])?;
+    let folder = folder.trim().trim_end_matches(['/', '\\']);
+    (!folder.is_empty() && folder != project).then(|| folder.to_string())
 }
 
 impl Folder<'_> {
@@ -479,6 +503,21 @@ pub enum What {
 }
 
 impl Change {
+    /// The other project this change reaches for, if it does.
+    ///
+    /// Every name it carries is looked at, because a merge names several and
+    /// one of them pointing out of the project is enough to make it a change
+    /// this conversation cannot make.
+    pub fn misplaced(&self, folder: &Folder) -> Option<String> {
+        let mut names: Vec<&String> = self.file.iter().collect();
+        if let What::Merge { from, .. } = &self.what {
+            names.extend(from.iter());
+        }
+        names
+            .into_iter()
+            .find_map(|name| elsewhere(name, &folder.project))
+    }
+
     /// Lines gone and lines arrived, the way a diff counts them.
     pub fn tally(&self, folder: &Folder) -> (usize, usize) {
         let count = |t: &str| if t.is_empty() { 0 } else { t.lines().count() };
@@ -510,6 +549,9 @@ impl Change {
     /// None when there is nothing there to replace - lines past the end, or a
     /// file that is not there - so the panel can say so instead of guessing.
     pub fn replacing(&self, folder: &Folder) -> Option<String> {
+        if self.misplaced(folder).is_some() {
+            return None;
+        }
         let lines = folder.lines(self.file.as_ref());
         match &self.what {
             What::Edit { from, to, .. } => {
@@ -2151,14 +2193,20 @@ impl Chat {
 
         let Some(before) = change.replacing(folder) else {
             // Nothing to act on: lines past the end, a file that is not there,
-            // or one being made that already is. Said rather than offered,
-            // because there is no honest diff to draw for any of them.
-            ui.draw_text_in(
-                head,
-                &format!("{span} - WHICH IS NOT THERE TO CHANGE"),
-                th.danger.face,
-                Align::Left,
-            );
+            // one being made that already is, or one in another project. Said
+            // rather than offered, because there is no honest diff to draw
+            // for any of them - and said which, because the last one has a
+            // remedy and the others do not.
+            let why = match change.misplaced(folder) {
+                Some(project) => {
+                    format!(
+                        "{span} - IN {} - OPEN IT TO CHANGE IT",
+                        project.to_uppercase()
+                    )
+                }
+                None => format!("{span} - WHICH IS NOT THERE TO CHANGE"),
+            };
+            ui.draw_text_in(head, &why, th.danger.face, Align::Left);
             return None;
         };
         let tint = match change.what {

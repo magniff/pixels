@@ -3389,6 +3389,7 @@ fn a_line_that_is_not_a_command_is_a_question() {
 /// One file, as the panel would see the project it is in.
 fn folder_of<'a>(name: &str, lines: &'a [String]) -> chat::Folder<'a> {
     chat::Folder {
+        project: String::new(),
         here: name.to_string(),
         files: vec![(name.to_string(), lines)],
     }
@@ -3650,6 +3651,7 @@ fn a_change_waiting_for_an_answer_holds_the_field() {
         .map(str::to_string)
         .collect();
     let folder = chat::Folder {
+        project: String::new(),
         here: "n.md".into(),
         files: vec![("n.md".to_string(), &note[..])],
     };
@@ -3679,6 +3681,7 @@ fn a_change_that_can_no_longer_be_made_holds_nothing() {
     // out of: it cannot be accepted, cannot be rejected, and blocks the field.
     let note: Vec<String> = vec!["only one line".to_string()];
     let folder = chat::Folder {
+        project: String::new(),
         here: "n.md".into(),
         files: vec![("n.md".to_string(), &note[..])],
     };
@@ -3700,6 +3703,7 @@ fn a_change_that_can_no_longer_be_made_holds_nothing() {
 fn nothing_offered_means_nothing_to_answer() {
     let note: Vec<String> = vec!["a line".to_string()];
     let folder = chat::Folder {
+        project: String::new(),
         here: "n.md".into(),
         files: vec![("n.md".to_string(), &note[..])],
     };
@@ -3841,6 +3845,7 @@ fn writing_over_a_file_counts_what_it_replaces() {
     };
     let old: Vec<String> = vec!["old".into(), "old".into()];
     let empty = chat::Folder {
+        project: String::new(),
         here: "here.md".into(),
         files: vec![],
     };
@@ -3860,6 +3865,7 @@ fn a_change_finds_the_file_it_names_in_the_project() {
     let a: Vec<String> = vec!["in a".into()];
     let b: Vec<String> = vec!["in b".into()];
     let folder = chat::Folder {
+        project: String::new(),
         here: "a.md".into(),
         files: vec![("a.md".to_string(), &a[..]), ("b.md".to_string(), &b[..])],
     };
@@ -4022,6 +4028,7 @@ fn an_empty_merge_joins_the_parts_as_they_are() {
     let one: Vec<String> = vec!["# One".into(), "first".into()];
     let two: Vec<String> = vec!["# Two".into(), "second".into()];
     let folder = chat::Folder {
+        project: String::new(),
         here: "one.md".into(),
         files: vec![
             ("one.md".to_string(), &one[..]),
@@ -6142,22 +6149,20 @@ fn the_examples_name_the_note_that_is_open() {
 }
 
 #[test]
-fn a_change_naming_a_folder_is_still_a_change_to_this_project() {
-    use notes::chat::{Change, Folder, What};
+fn a_change_naming_this_project_is_a_change_here_and_one_naming_another_is_not() {
+    use notes::chat::{elsewhere, Change, Folder, What};
     let lines: Vec<String> = "# Bikes\n\n- Alice's bike is green.\n- Bob's bike is red.\n\
                               - Magniff's bike is white.\n"
         .split('\n')
         .map(str::to_string)
         .collect();
     let folder = Folder {
+        project: "new-one".into(),
         here: "bikes.md".into(),
         files: vec![("bikes.md".to_string(), &lines[..])],
     };
-
-    // Word for word out of a conversation: the model wrote the folder in, and
-    // wrote the wrong one - typography is a real project, just not this one.
-    let change = Change {
-        file: Some("typography/bikes.md".into()),
+    let edit = |file: &str| Change {
+        file: Some(file.into()),
         what: What::Edit {
             from: 5,
             to: 5,
@@ -6165,28 +6170,60 @@ fn a_change_naming_a_folder_is_still_a_change_to_this_project() {
         },
         state: None,
     };
-    let before = change
-        .replacing(&folder)
-        .expect("the panel said there was nothing there to change");
-    assert_eq!(before, "- Magniff's bike is white.");
 
-    // The same as if it had left the folder off, which is what it was asked to
-    // do. What must not happen is the two disagreeing: the panel refusing a
-    // change the application would have applied without complaint.
-    let plain = Change {
+    // The folder written in, and it is this one: the same change as with the
+    // folder left off, which is what the rule asks for. The panel used to
+    // refuse this while the application would have applied it.
+    let here = edit("new-one/bikes.md");
+    assert_eq!(
+        here.replacing(&folder).as_deref(),
+        Some("- Magniff's bike is white.")
+    );
+    assert_eq!(here.replacing(&folder), edit("bikes.md").replacing(&folder));
+    assert!(here.misplaced(&folder).is_none());
+
+    // A name nothing is filed under, with no folder, means the note in front
+    // of you - that is what a missing name has always meant.
+    assert_eq!(edit("other.md").replacing(&folder), here.replacing(&folder));
+
+    // A folder that is some other project is a change this conversation
+    // cannot make, and says which project. It used to fall through to the
+    // note in front of you: an edit meant for typography/bikes.md offered
+    // against new-one/bikes.md, line for line.
+    let away = edit("typography/bikes.md");
+    assert_eq!(away.misplaced(&folder).as_deref(), Some("typography"));
+    assert!(
+        away.replacing(&folder).is_none(),
+        "offered against this project"
+    );
+
+    // A merge that reaches out of the project by any of its names is too.
+    let merge = Change {
         file: Some("bikes.md".into()),
-        ..change.clone()
+        what: What::Merge {
+            from: vec!["bikes.md".into(), "aquarium/stock.md".into()],
+            text: String::new(),
+        },
+        state: None,
     };
-    assert_eq!(plain.replacing(&folder), change.replacing(&folder));
+    assert_eq!(merge.misplaced(&folder).as_deref(), Some("aquarium"));
 
-    // A name nothing is filed under is no better than no name, and no name
-    // means the note in front of you. Offered against that, with the lines it
-    // would replace on show, rather than refused with nothing said.
-    let missing = Change {
-        file: Some("typography/other.md".into()),
-        ..change.clone()
-    };
-    assert_eq!(missing.replacing(&folder), change.replacing(&folder));
+    // The rule itself, on its own.
+    assert_eq!(
+        elsewhere("aquarium/stock.md", "new-one").as_deref(),
+        Some("aquarium")
+    );
+    assert_eq!(elsewhere("new-one/stock.md", "new-one"), None);
+    assert_eq!(elsewhere("stock.md", "new-one"), None);
+    assert_eq!(elsewhere("stock.md", ""), None);
+    assert_eq!(
+        elsewhere("aquarium/stock.md", "").as_deref(),
+        Some("aquarium")
+    );
+    assert_eq!(
+        elsewhere("/aquarium/stock.md", "").as_deref(),
+        Some("aquarium")
+    );
 
     // Lines that are not there are still not there, whatever the file.
     let past = Change {
@@ -6199,6 +6236,61 @@ fn a_change_naming_a_folder_is_still_a_change_to_this_project() {
         state: None,
     };
     assert!(past.replacing(&folder).is_none());
+}
+
+#[test]
+fn applying_a_change_aimed_at_another_project_changes_nothing() {
+    use notes::chat::{Change, What};
+    let dir = std::env::temp_dir().join(format!("notes-elsewhere-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (project, text) in [
+        ("new-one", "# Family\n\nDanila.\n"),
+        ("aquarium", "# Stock\n\n12 tetras\n"),
+    ] {
+        std::fs::create_dir_all(dir.join(project)).expect("a project");
+        let name = if project == "new-one" {
+            "family.md"
+        } else {
+            "stock.md"
+        };
+        std::fs::write(dir.join(project).join(name), text).expect("a note");
+    }
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "family.md")
+        .expect("there");
+    let before: Vec<String> = app.notes.iter().map(|n| n.buffer.to_text()).collect();
+    let count = app.notes.len();
+
+    // An edit, a write and a delete, each naming the other project.
+    for what in [
+        What::Edit {
+            from: 3,
+            to: 3,
+            text: "13 tetras".into(),
+        },
+        What::Write {
+            text: "# Stock\n\n13 tetras\n".into(),
+        },
+        What::Delete,
+    ] {
+        app.apply_change(&Change {
+            file: Some("aquarium/stock.md".into()),
+            what,
+            state: Some(true),
+        });
+        assert!(app.status.contains("AQUARIUM"), "{}", app.status);
+    }
+    let after: Vec<String> = app.notes.iter().map(|n| n.buffer.to_text()).collect();
+    assert_eq!(before, after, "something in the vault moved");
+    assert_eq!(app.notes.len(), count, "a file was made somewhere");
+    assert!(
+        !dir.join("new-one/stock.md").exists(),
+        "made in this project instead"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

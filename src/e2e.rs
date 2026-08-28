@@ -878,6 +878,200 @@ fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
     Err(format!("{WRONG}missing {missing:?}: {said:?}"))
 }
 
+/// Put the editor on a note in this project, which is what decides the project
+/// a conversation is about. The note is made if it is not there, and found by
+/// name - so the name had better be one nothing else in the vault shares, as
+/// the finder takes the best match and by now there are a dozen to match.
+fn looking_at(app: &mut App, project: &str, seed: &str) -> Result<(), String> {
+    let folder = if project.is_empty() {
+        app.dir.clone()
+    } else {
+        app.dir.join(project)
+    };
+    std::fs::create_dir_all(&folder).map_err(|e| format!("{e}"))?;
+    let file = folder.join(format!("{seed}.md"));
+    if !file.exists() {
+        std::fs::write(&file, format!("# {seed}\n\nsomething.\n")).map_err(|e| format!("{e}"))?;
+    }
+    app.steps(90);
+    // The keyboard first: a conversation left open by the scene before takes
+    // every key, and the finder never hears about it.
+    if app.app.chat.is_some() {
+        chatting(app)?;
+        app.key(Key::Escape);
+        app.steps(4);
+    }
+    app.press(Key::Char('e'), cmd(Key::Char('e')));
+    app.press(Key::Char('p'), cmd(Key::Char('p')));
+    app.typed(seed);
+    app.key(Key::Enter);
+    app.steps(6);
+    let (at, on) = (app.app.note().project.clone(), app.app.note().filename());
+    if at != project || on != format!("{seed}.md") {
+        return Err(format!(
+            "the editor is in {at:?} on {on:?}, not {project:?}/{seed}.md"
+        ));
+    }
+    Ok(())
+}
+
+/// Whether the answer has a number within `tol` of `want` in it.
+fn number_near(said: &str, want: f64, tol: f64) -> bool {
+    said.replace(',', "")
+        .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+        .filter_map(|w| w.trim_matches('.').parse::<f64>().ok())
+        .any(|n| (n - want).abs() <= tol)
+}
+
+/// Whether the last answer reached for this tool.
+fn looked_with(app: &App, tool: &str) -> bool {
+    app.app
+        .chat
+        .as_ref()
+        .and_then(|c| c.turns.last())
+        .map(|t| crate::chat::lookups(&t.text).1)
+        .unwrap_or_default()
+        .iter()
+        .any(|l| l.tool == tool)
+}
+
+/// A note in another project: there to be read, and not to be changed.
+///
+/// Only the project on screen can be changed; the whole vault can be read.
+/// The fact asked about is kept off the note's first line, because the first
+/// line is in the list at the top of every conversation and a model can
+/// answer from that without reading anything.
+fn another_project_can_be_read_but_not_changed(app: &mut App) -> Result<(), String> {
+    let garden = app.dir.join("garden");
+    std::fs::create_dir_all(&garden).map_err(|e| format!("{e}"))?;
+    let roses = garden.join("roses.md");
+    let planted = "# Roses\n\nPlanted in March.\n\nThe roses are CRIMSON.\n";
+    std::fs::write(&roses, planted).map_err(|e| format!("{e}"))?;
+    looking_at(app, "new-one", "zzqqseed")?;
+    fresh_chat(app)?;
+
+    asking(
+        app,
+        "what colour are the roses in garden/roses.md? one word.",
+    )?;
+    let read = looked_with(app, "read");
+    said(app, &["crimson"]).map_err(|e| format!("{WRONG}{e}"))?;
+    if !read {
+        return Err(format!("{WRONG}it answered without reading the note"));
+    }
+
+    asking(app, "change garden/roses.md to say the roses are YELLOW")?;
+    accept_all(app);
+    // Whatever it proposed and whatever was clicked, the other project is as
+    // it was, and nothing was made here in its place.
+    let now = std::fs::read_to_string(&roses).map_err(|e| format!("{e}"))?;
+    if now != planted {
+        return Err(format!("a note in another project was changed: {now:?}"));
+    }
+    if app.dir.join("new-one").join("roses.md").exists() {
+        return Err("made in this project instead of refusing".into());
+    }
+    Ok(())
+}
+
+/// Sums over a table, in more than one step, and then a change built on them.
+///
+/// What people actually ask of a note with numbers in it: a total, a share of
+/// it, and then put the total in. Two questions, several tools, and an edit
+/// that has to land on the right line of a table.
+fn a_table_summed_and_shared(app: &mut App) -> Result<(), String> {
+    let table = "# Spend\n\n| Item | Cost |\n| --- | --- |\n| Rent | 1450 |\n| Food | 386 |\n\
+                 | Transport | 92 |\n| Phone | 45 |\n";
+    std::fs::write(app.dir.join("spend.md"), table).map_err(|e| format!("{e}"))?;
+    looking_at(app, "", "spend")?;
+    fresh_chat(app)?;
+
+    asking(
+        app,
+        "in spend.md, what is the total cost, and what share of the total is rent, \
+         as a percentage to one decimal place?",
+    )?;
+    let answer = last_answer(app);
+    let mut missing = Vec::new();
+    if !number_near(&answer, 1973.0, 0.0) {
+        missing.push("the total (1973)");
+    }
+    if !number_near(&answer, 73.5, 0.1) {
+        missing.push("the share (73.5)");
+    }
+    if !missing.is_empty() {
+        return Err(format!("{WRONG}missing {missing:?}: {answer:?}"));
+    }
+
+    asking(app, "add a Total row at the end of the table")?;
+    if accept_all(app) == 0 {
+        return Err(format!(
+            "{WRONG}it proposed nothing: {:?}",
+            last_answer(app).chars().take(120).collect::<String>()
+        ));
+    }
+    app.saved();
+    let now = std::fs::read_to_string(app.dir.join("spend.md")).map_err(|e| format!("{e}"))?;
+    if !now.contains("1973") {
+        return Err(format!("{WRONG}the total row is not there: {now:?}"));
+    }
+    if !now.contains("| Rent | 1450 |") || !now.contains("| Phone | 45 |") {
+        return Err(format!(
+            "the rows that were there are not any more: {now:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Three questions, each leaning on the one before, ending in a note.
+///
+/// The dates go to the clock, the difference to the calculator, the weeks to
+/// the calculator again, and the note has to carry both numbers - which the
+/// model only has if it kept what it worked out two questions ago.
+fn a_thread_that_leans_on_earlier_answers(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
+    asking(
+        app,
+        "how many days are there from 31 July 1989 to 26 October 1989?",
+    )?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 87.0, 0.0) {
+        return Err(format!("{WRONG}87 days, it said: {answer:?}"));
+    }
+    asking(app, "and that in weeks, to one decimal place?")?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 12.4, 0.05) {
+        return Err(format!("{WRONG}12.4 weeks, it said: {answer:?}"));
+    }
+    asking(
+        app,
+        "write both of those numbers into a new note called gap.md",
+    )?;
+    if accept_all(app) == 0 {
+        return Err(format!(
+            "{WRONG}it proposed nothing: {:?}",
+            last_answer(app).chars().take(120).collect::<String>()
+        ));
+    }
+    app.saved();
+    let Some(gap) = app.vault().into_iter().find(|p| p.ends_with("gap.md")) else {
+        return Err(format!("no gap.md on disk. vault: {:?}", app.vault()));
+    };
+    let now = std::fs::read_to_string(app.dir.join(&gap)).map_err(|e| format!("{e}"))?;
+    let mut missing = Vec::new();
+    if !number_near(&now, 87.0, 0.0) {
+        missing.push("87");
+    }
+    if !number_near(&now, 12.4, 0.05) {
+        missing.push("12.4");
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{WRONG}gap.md is missing {missing:?}: {now:?}"))
+    }
+}
+
 /// A note edited by something other than this, mid-conversation.
 ///
 /// The vault used to be read once at startup and never again, so this was
@@ -1139,6 +1333,15 @@ const SCENES: &[Scene] = &[
     (
         "a long note changed in two places",
         a_long_note_changed_in_two_places,
+    ),
+    (
+        "another project can be read but not changed",
+        another_project_can_be_read_but_not_changed,
+    ),
+    ("a table summed and shared", a_table_summed_and_shared),
+    (
+        "a thread that leans on earlier answers",
+        a_thread_that_leans_on_earlier_answers,
     ),
     ("the conversation is kept", the_conversation_is_kept),
 ];

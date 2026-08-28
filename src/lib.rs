@@ -1134,6 +1134,14 @@ impl Notes {
 
     pub fn apply_change(&mut self, change: &chat::Change) {
         let here = self.note().project.clone();
+        // Only this project. The panel does not offer a change aimed at
+        // another, and this is the same rule at the other door, so nothing
+        // that reaches here by another road can get past it either.
+        if let Some(project) = change.misplaced(&self.folder()) {
+            self.status =
+                format!("THAT NOTE IS IN {project} - OPEN IT TO CHANGE IT").to_uppercase();
+            return;
+        }
         let named = change
             .file
             .as_deref()
@@ -1438,6 +1446,7 @@ impl Notes {
     fn folder(&self) -> chat::Folder<'_> {
         let here = self.note().project.clone();
         chat::Folder {
+            project: here.clone(),
             here: self.note().filename(),
             files: self
                 .notes
