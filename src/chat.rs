@@ -1159,16 +1159,55 @@ fn block_end(text: &str, kind: &str, close: usize) -> usize {
 ///
 /// Into the tag, so it is carried by the transcript and is still true when the
 /// conversation is opened again.
-pub fn settle(text: &str, nth: usize, taken: bool) -> String {
-    for (i, (_, tag, open, _)) in blocks(text).into_iter().enumerate() {
-        if i == nth {
-            let word = if taken { "applied" } else { "rejected" };
+///
+/// Every block the change came from, not one block by its number. A change
+/// offered is not always one block: drafts of the same edit are one change,
+/// and a write with deletes beside it is one merge. Marking the nth block for
+/// the nth change marked the wrong draft applied and left the right one
+/// waiting to be answered, and a merge folded from three blocks marked one of
+/// the three.
+pub fn settle(text: &str, change: &Change, taken: bool) -> String {
+    let word = if taken { "applied" } else { "rejected" };
+    let place = |c: &Change| (c.file.as_deref().map(own_name), c.headline(""));
+    let wanted = place(change);
+    // For a merge, the write that became it and the deletes it folds in.
+    let (target, from): (Option<String>, Vec<String>) = match &change.what {
+        What::Merge { from, .. } => (
+            change.file.as_deref().map(own_name),
+            from.iter().map(|f| own_name(f)).collect(),
+        ),
+        _ => (None, Vec::new()),
+    };
+    let mut out = String::new();
+    let mut at = 0;
+    for (kind, tag, open, close) in blocks(text) {
+        let end = block_end(text, kind, close);
+        let own = every_proposal(&text[tag..end]).1.into_iter().next();
+        let mine = own.as_ref().is_some_and(|c| {
+            place(c) == wanted
+                || match &c.what {
+                    What::Write { .. } | What::Merge { .. } => {
+                        c.file.as_deref().map(own_name) == target && target.is_some()
+                    }
+                    What::Delete => c
+                        .file
+                        .as_deref()
+                        .is_some_and(|f| from.contains(&own_name(f))),
+                    _ => false,
+                }
+        });
+        out.push_str(&text[at..tag]);
+        if mine {
             let bare = strip_state(&text[tag..open]);
             let bare = bare.trim_end().trim_end_matches('>').trim_end();
-            return format!("{}{bare} state=\"{word}\">{}", &text[..tag], &text[open..]);
+            out.push_str(&format!("{bare} state=\"{word}\">"));
+            at = open;
+        } else {
+            at = tag;
         }
     }
-    text.to_string()
+    out.push_str(&text[at..]);
+    out
 }
 
 /// The tag without any decision already written into it.
@@ -2328,7 +2367,8 @@ impl Chat {
         );
         match answered {
             Some((i, j, edit, taken)) => {
-                self.turns[i].text = settle(&self.turns[i].text, j, taken);
+                let _ = j;
+                self.turns[i].text = settle(&self.turns[i].text, &edit, taken);
                 if taken {
                     Outcome::Apply(edit)
                 } else {

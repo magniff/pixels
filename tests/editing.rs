@@ -3549,7 +3549,8 @@ fn a_change_that_was_decided_stays_decided() {
     // The bug this exists for: the decision lived in memory, so a conversation
     // opened again offered a change that had already been taken.
     let reply = "Split it.\n\n<edit lines=\"6-6\">\none\ntwo\n</edit>";
-    let settled = chat::settle(reply, 0, true);
+    let first = chat::proposals(reply).1.remove(0);
+    let settled = chat::settle(reply, &first, true);
     let (_, edits) = chat::proposals(&settled);
     assert_eq!(
         edits[0].state,
@@ -3566,7 +3567,7 @@ fn a_change_that_was_decided_stays_decided() {
         "and the change itself is untouched"
     );
 
-    let rejected = chat::settle(&settled, 0, false);
+    let rejected = chat::settle(&settled, &first, false);
     let (_, edits) = chat::proposals(&rejected);
     assert_eq!(
         edits[0].state,
@@ -3635,7 +3636,8 @@ fn a_settled_change_says_how_much_it_moved() {
 #[test]
 fn only_the_block_that_was_decided_is_marked() {
     let two = "<edit lines=\"1-1\">a</edit>\n\n<edit lines=\"5-5\">b</edit>";
-    let (_, edits) = chat::proposals(&chat::settle(two, 1, true));
+    let second = chat::proposals(two).1.remove(1);
+    let (_, edits) = chat::proposals(&chat::settle(two, &second, true));
     assert_eq!(edits[0].state, None, "the first is still open");
     assert_eq!(
         edits[1].state,
@@ -3671,7 +3673,8 @@ fn a_change_waiting_for_an_answer_holds_the_field() {
         "it asked something back and is owed an answer"
     );
 
-    talk.turns[1].text = chat::settle(&talk.turns[1].text, 0, false);
+    let offered = chat::proposals(&talk.turns[1].text).1.remove(0);
+    talk.turns[1].text = chat::settle(&talk.turns[1].text, &offered, false);
     assert!(!talk.pending(&folder), "rejecting is an answer too");
 }
 
@@ -5921,6 +5924,59 @@ fn the_last_block_aimed_at_a_place_stands_for_the_earlier_ones() {
     // Two edits to different lines of one file are two edits.
     let said = "<edit file=\"a.md\" lines=\"2\">x</edit>\n<edit file=\"a.md\" lines=\"9\">y</edit>";
     assert_eq!(proposals(said).1.len(), 2);
+}
+
+#[test]
+fn a_merge_applied_at_the_top_of_the_vault_takes_both_parts_away() {
+    use notes::chat::{Change, What};
+    let dir = std::env::temp_dir().join(format!("notes-mergetop-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a vault");
+    std::fs::write(dir.join("monday.md"), "# Monday\n\n- Swim\n").expect("a note");
+    std::fs::write(dir.join("tuesday.md"), "# Tuesday\n\n- Climb\n").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "monday.md")
+        .expect("there");
+    app.apply_change(&Change {
+        file: Some("week.md".into()),
+        what: What::Merge {
+            from: vec!["monday.md".into(), "tuesday.md".into()],
+            text: "# Week\n\n- Swim\n- Climb\n".into(),
+        },
+        state: Some(true),
+    });
+    assert!(!dir.join("monday.md").exists(), "monday is still there");
+    assert!(!dir.join("tuesday.md").exists(), "tuesday is still there");
+    let week = app
+        .notes
+        .iter()
+        .find(|n| n.filename() == "week.md")
+        .expect("the week was made");
+    assert!(week.buffer.to_text().contains("Climb"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn deciding_a_change_marks_every_block_it_came_from() {
+    use notes::chat::{proposals, settle};
+    // Drafts: three blocks for one place, one change. Deciding it must mark
+    // all three, or the one not marked is offered again.
+    let drafts =
+        "<edit file=\"a.md\" lines=\"2\">x</edit>\nwait\n<edit file=\"a.md\" lines=\"2\">y</edit>";
+    let change = proposals(drafts).1.remove(0);
+    let settled = settle(drafts, &change, true);
+    assert_eq!(settled.matches("state=\"applied\"").count(), 2, "{settled}");
+    assert!(proposals(&settled).1.iter().all(|c| c.state == Some(true)));
+
+    // A merge folded from a write and two deletes marks all three blocks.
+    let merge = "<write file=\"week.md\">w</write>\n<delete file=\"monday.md\"></delete>\n<delete file=\"tuesday.md\"></delete>";
+    let change = proposals(merge).1.remove(0);
+    let settled = settle(merge, &change, true);
+    assert_eq!(settled.matches("state=\"applied\"").count(), 3, "{settled}");
+    assert!(proposals(&settled).1.iter().all(|c| c.state == Some(true)));
 }
 
 #[test]
