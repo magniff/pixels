@@ -655,15 +655,20 @@ fn gemma_calls(reply: &str) -> Vec<(String, String)> {
         // `{when:"today"}` one time and `{file="garden/harvest.md"}` the next,
         // from the same model in the same run. Whichever comes first is the
         // one dividing the name from the value.
+        // And quoted with a token of its own as often as with a quote mark:
+        // `{expression:<|"|>384 * 517<|"|>}`. The calculator was handed the
+        // token and said `<` was not something it could work out.
         let value = inner
             .split_once([':', '='])
             .map(|(_, v)| v)
             .unwrap_or("")
+            .replace("<|\"|>", "\"")
             .trim()
-            .trim_matches(|c| c == '"' || c == '\'');
+            .trim_matches(|c| c == '"' || c == '\'')
+            .to_string();
         let name = name.trim();
         if !name.is_empty() {
-            out.push((name.to_string(), value.to_string()));
+            out.push((name.to_string(), value));
         }
     }
     out

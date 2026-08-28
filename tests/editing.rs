@@ -5842,6 +5842,12 @@ fn a_tool_call_is_heard_in_every_dialect() {
             ("calc".to_string(), "87 / 7".to_string())
         ]
     );
+    // Quoted with Gemma's own quote token, which it uses as often as a mark.
+    let token = "<|tool_call>call:calc{expression:<|\"|>384 * 517<|\"|>}<tool_call|>";
+    assert_eq!(
+        calls(token),
+        vec![("calc".to_string(), "384 * 517".to_string())]
+    );
     // Liquid: a Python list of calls.
     let liquid =
         "<|tool_call_start|>[date(when=\"today\"), calc(expression='2 + 2')]<|tool_call_end|>";
