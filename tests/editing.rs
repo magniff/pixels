@@ -5896,6 +5896,63 @@ fn a_call_with_the_argument_left_out_is_still_a_call() {
 }
 
 #[test]
+fn a_delete_written_as_a_lone_tag_is_a_delete() {
+    use notes::chat::{proposals, What};
+    for said in [
+        "<delete file=\"scratch.md\">",
+        "<delete file=\"scratch.md\"/>",
+        "Gone.\n<delete file=\"scratch.md\">\nThat was it.",
+        "<delete file=\"scratch.md\"></delete>",
+    ] {
+        let (prose, changes) = proposals(said);
+        assert_eq!(changes.len(), 1, "{said:?}: {changes:?}");
+        assert_eq!(changes[0].what, What::Delete, "{said:?}");
+        assert_eq!(changes[0].file.as_deref(), Some("scratch.md"));
+        assert!(!prose.contains("<delete"), "{said:?}: {prose:?}");
+    }
+}
+
+#[test]
+fn an_edit_undone_by_hand_is_seen_as_a_change() {
+    use notes::chat::Chat;
+    let file = |t: &str| vec![("door.md".to_string(), t.to_string())];
+    // Long enough that what changed is said as a diff rather than the file.
+    let room = "a line about the hallway\n".repeat(30);
+    let blue = &format!("# Door\n\n{room}The door is BLUE.\n");
+    let green = &format!("# Door\n\n{room}The door is GREEN.\n");
+    let mut chat = Chat::new("home".into(), "door.md".into());
+    chat.context("- `door.md`", &file(blue));
+
+    // The model's edit, applied: what it did is said once, as its own doing.
+    let before = chat.knows("door.md").unwrap().to_string();
+    chat.did("door.md", &before, green);
+    chat.wrote("door.md", Some(green));
+    let (_, _, moved) = chat.context("- `door.md`", &file(green));
+    let said = moved.expect("what the edit did is said");
+    assert!(
+        said.contains("Your edit to `door.md` was applied"),
+        "{said}"
+    );
+    assert!(said.contains("+The door is GREEN."), "{said}");
+    assert!(
+        !said.contains("STOP"),
+        "its own edit is not news from outside: {said}"
+    );
+
+    // Once. Asked again with nothing moved, nothing is said.
+    let (_, _, moved) = chat.context("- `door.md`", &file(green));
+    assert!(moved.is_none(), "{moved:?}");
+
+    // Undone by hand: back to blue, which is a change from what it knows.
+    // It used to look like nothing, because the file was still known as it
+    // was before the edit - and the model went on saying green.
+    let (_, _, moved) = chat.context("- `door.md`", &file(blue));
+    let said = moved.expect("the undo is a change");
+    assert!(said.contains("STOP"), "{said}");
+    assert!(said.contains("+The door is BLUE."), "{said}");
+}
+
+#[test]
 fn a_line_is_added_below_another_without_replacing_it() {
     use notes::chat::{proposals, Change, Folder, What};
     let said = "<edit file=\"shop.md\" after=\"3\">- bread 1.80</edit>";

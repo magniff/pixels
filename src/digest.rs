@@ -391,6 +391,12 @@ pub fn relisted(before: &str, after: &str) -> Option<String> {
     Some(out)
 }
 
+/// The lines that differ between two versions of one file, as a diff, on
+/// their own - for saying what something did rather than that something moved.
+pub fn changed(before: &str, after: &str) -> String {
+    replaced(before, after)
+}
+
 /// How many unchanged lines to show either side of a change.
 ///
 /// Two rather than the three a unified diff usually carries. A note is not

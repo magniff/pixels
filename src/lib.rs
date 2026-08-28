@@ -1120,16 +1120,27 @@ impl Notes {
         // So the file is left measured against what it was before, and the
         // next question carries the diff - which says, in two lines, exactly
         // what the change did.
-        let told = match (&change.what, &now) {
-            (chat::What::Write { text }, Some(now)) => Self::same_text(text, now),
-            (chat::What::Merge { text, .. }, Some(now)) if !text.trim().is_empty() => {
-                Self::same_text(text, now)
+        let Some(now) = now else {
+            return;
+        };
+        let told = match &change.what {
+            chat::What::Write { text } => Self::same_text(text, &now),
+            chat::What::Merge { text, .. } if !text.trim().is_empty() => {
+                Self::same_text(text, &now)
             }
             _ => false,
         };
-        if told {
-            talk.wrote(&named, now.as_deref());
+        if !told {
+            // Said once, as its own doing, and then the file is known as it
+            // is - so that an undo by hand afterwards reads as the change it
+            // is. With the file left known as it was before the edit, undoing
+            // the edit made it look as though nothing had ever happened, and
+            // the model went on believing its change stood.
+            if let Some(before) = talk.knows(&named).map(str::to_string) {
+                talk.did(&named, &before, &now);
+            }
         }
+        talk.wrote(&named, Some(&now));
     }
 
     pub fn apply_change(&mut self, change: &chat::Change) {

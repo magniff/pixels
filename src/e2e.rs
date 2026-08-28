@@ -1017,7 +1017,7 @@ fn a_table_summed_and_shared(app: &mut App) -> Result<(), String> {
     }
     if !now.contains("| Rent | 1450 |") || !now.contains("| Phone | 45 |") {
         return Err(format!(
-            "the rows that were there are not any more: {now:?}"
+            "{WRONG}a row that was there is not any more: {now:?}"
         ));
     }
     Ok(())

@@ -213,6 +213,9 @@ pub struct Chat {
     /// time, and a one-line change to a long note re-sends the whole note for
     /// the rest of the conversation.
     known: Vec<(String, String)>,
+    /// What the model's own edits did, waiting to be said with the next
+    /// question and then let go of. See `did`.
+    done: Vec<String>,
 }
 
 /// A conversation on disk, as the picker lists it.
@@ -844,8 +847,8 @@ fn bodies_but(text: &str, keep: &[usize]) -> (String, Vec<String>) {
         };
         out.push_str(&text[at..tag]);
         if keep.contains(&nth) {
-            out.push_str(&text[tag..close + kind.len() + 3]);
-            at = close + kind.len() + 3;
+            out.push_str(&text[tag..block_end(text, kind, close)]);
+            at = block_end(text, kind, close);
             continue;
         }
         // Taken out of their turn and said in ours. What it said is gone
@@ -853,7 +856,7 @@ fn bodies_but(text: &str, keep: &[usize]) -> (String, Vec<String>) {
         // that it was proposed and how it went, and that is our news, not
         // theirs.
         notes.push(format!("Your {kind} to `{named}` was {done}."));
-        at = close + kind.len() + 3;
+        at = block_end(text, kind, close);
     }
     out.push_str(&text[at..]);
     // Blocks first and lookups after, in that order and not the other way. A
@@ -921,7 +924,7 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
             }
             _ => None,
         };
-        let shut = close + kind.len() + 3;
+        let shut = block_end(reply, kind, close);
         match what {
             Some(what) => {
                 prose.push_str(&reply[at..tag]);
@@ -989,6 +992,15 @@ fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
             break;
         };
         let shut = format!("</{kind}>");
+        // A delete has nothing inside it, and a model writes the tag on its
+        // own - `<delete file="scratch.md">`, or with a slash - as often as it
+        // writes the pair. Nothing was proposed and the note stayed. The tag
+        // alone is the block.
+        if kind == "delete" && !text[open..].contains(&shut) {
+            out.push((kind, start, open, open));
+            at = open;
+            continue;
+        }
         let Some(close) = text[open..].find(&shut).map(|i| open + i) else {
             // An opener with nothing closing it is not the end of the reply.
             //
@@ -1006,6 +1018,17 @@ fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
         at = close + shut.len();
     }
     out
+}
+
+/// Where a block ends, given where its body ends: after the closing tag,
+/// or - for a delete written as a lone tag - right where the body would be.
+fn block_end(text: &str, kind: &str, close: usize) -> usize {
+    let shut = format!("</{kind}>");
+    if text[close..].starts_with(&shut) {
+        close + shut.len()
+    } else {
+        close
+    }
 }
 
 /// Write down what was decided about the `nth` change in a reply.
@@ -1116,6 +1139,7 @@ impl Chat {
             known_index: String::new(),
             front: Vec::new(),
             known: Vec::new(),
+            done: Vec::new(),
         }
     }
 
@@ -1165,6 +1189,33 @@ impl Chat {
         if let Some(text) = text {
             self.known.push((file.to_string(), text.to_string()));
         }
+    }
+
+    /// What the model has been told a file says, if it has been told.
+    pub fn knows(&self, file: &str) -> Option<&str> {
+        self.known
+            .iter()
+            .find(|(n, _)| n == file)
+            .map(|(_, t)| t.as_str())
+    }
+
+    /// Say, once, what an edit of the model's actually did to a file.
+    ///
+    /// An edit is line numbers, and if the numbers were wrong the file is not
+    /// what the model meant - and it is the only one who cannot tell. So the
+    /// lines that changed are shown to it with the next question, as its own
+    /// doing rather than as news from outside. Once: after that the file is
+    /// known as it is, so that somebody undoing the change by hand is seen as
+    /// a change, which for a while it was not - the file was still known as
+    /// it was before the edit, and going back to that looked like nothing.
+    pub fn did(&mut self, file: &str, before: &str, after: &str) {
+        if before == after {
+            return;
+        }
+        self.done.push(format!(
+            "Your edit to `{file}` was applied. {}",
+            crate::digest::changed(before, after)
+        ));
     }
 
     /// Run a `/` command, and say whether it was one.
@@ -1298,6 +1349,14 @@ impl Chat {
             .cloned()
             .collect();
         let moved = crate::digest::since(&shown, now);
+        // What its own edits did, said once, in front of anything that moved
+        // since - it is older news, and the newer is the one to act on.
+        let done = std::mem::take(&mut self.done);
+        let moved = match (done.is_empty(), moved) {
+            (true, moved) => moved,
+            (false, Some(moved)) => Some(format!("{}\n\n{moved}", done.join("\n\n"))),
+            (false, None) => Some(done.join("\n\n")),
+        };
         let listed = crate::digest::relisted(&self.known_index, index);
         // Both are corrections, and both are paid for the same way, so both go
         // through the same choice. What must not happen is the front being
