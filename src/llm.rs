@@ -518,6 +518,27 @@ fn asked_to_read(reply: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Write something down for somebody watching, if anybody is.
+///
+/// `PIXUI_PROMPT=<file>` turns it on. Both halves go in: what the model was
+/// given and what it wrote back. A file of questions without the answers is
+/// half a transcript, and the half that was missing is the one that matters
+/// when a question comes back empty - there was no way to tell whether the
+/// model had written nothing or had written something nothing understood.
+pub(crate) fn jotted(head: &str, body: &str) {
+    let Some(where_to) = std::env::var_os("PIXUI_PROMPT") else {
+        return;
+    };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(where_to)
+    {
+        let _ = writeln!(f, "\n===== {head} =====\n{body}");
+    }
+}
+
 /// One call, from the text just after its `<function=`.
 fn one_call(after: &str) -> Option<(String, String)> {
     let name = after.split('>').next()?.trim().to_string();
@@ -659,6 +680,7 @@ fn answer(
             ..ask.clone()
         };
         let said = to_ascii(&backend.edit(&asked, &mut watch)?);
+        jotted(&format!("REPLY ({} chars)", said.len()), &said);
         let at = watch.at;
         // Stopped: what it had got to is the answer. Half a paragraph you
         // asked it to stop writing is more use than nothing, and it is what
