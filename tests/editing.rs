@@ -6063,3 +6063,51 @@ fn a_change_it_proposed_is_not_sent_back_as_a_copy_of_the_file() {
     let plain = "The bike is red.";
     assert_eq!(without_bodies(plain), plain);
 }
+
+#[test]
+fn a_one_line_change_stays_a_one_line_change() {
+    use notes::chat::Chat;
+    // A note first mentioned in a correction used to be new every time after
+    // that, because corrections were measured against what was written at the
+    // front and it was never there. So a one-line change to a long note
+    // re-sent the whole note, and went on re-sending it for the rest of the
+    // conversation - which is the opposite of the point.
+    let long = (1..=400)
+        .map(|i| format!("line {i} of a note that is quite long"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let file = |t: &str| vec![("big.md".to_string(), t.to_string())];
+    let mut chat = Chat::new("home".into(), "big.md".into());
+
+    let (_, whole, _) = chat.context("- `big.md`", &file(&long));
+    assert!(whole.len() > 10_000, "a long note to start from");
+
+    // One line changes. What is said about it is a line, not a note.
+    let once = long.replacen("line 200 of", "line 200 CHANGED of", 1);
+    let (_, front, moved) = chat.context("- `big.md`", &file(&once));
+    assert_eq!(front, whole, "the front must not move");
+    let first = moved.expect("the change is reported");
+    assert!(first.contains("CHANGED"), "{first}");
+    assert!(
+        first.len() < whole.len() / 10,
+        "the whole note came back: {} against {}",
+        first.len(),
+        whole.len()
+    );
+
+    // And a second change is measured from the first, not from the front.
+    let twice = once.replacen("line 300 of", "line 300 ALSO of", 1);
+    let (_, front, moved) = chat.context("- `big.md`", &file(&twice));
+    assert_eq!(front, whole, "still must not move");
+    let second = moved.expect("the second change is reported");
+    assert!(second.contains("ALSO"), "{second}");
+    assert!(
+        !second.contains("CHANGED"),
+        "it repeated a change already told: {second}"
+    );
+    assert!(second.len() < whole.len() / 10, "{}", second.len());
+
+    // Nothing moving says nothing.
+    let (_, _, moved) = chat.context("- `big.md`", &file(&twice));
+    assert!(moved.is_none());
+}

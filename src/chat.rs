@@ -192,7 +192,17 @@ pub struct Chat {
     /// is also what makes a file edited in another window - or in this one,
     /// with the panel closed - come out right, because what is compared
     /// against is what was *sent*, not what the notes were doing at the time.
-    shown: Vec<(String, String)>,
+    front: Vec<(String, String)>,
+    /// Everything the model has been told about the project, however it was
+    /// told: written out at the front, or corrected at the end afterwards.
+    ///
+    /// Kept apart from `front` because they answer different questions. The
+    /// front is what must not move, or the reading starts again. This is what
+    /// the model actually knows, and what a correction has to be measured
+    /// against - otherwise a file first mentioned in a correction is new every
+    /// time, and a one-line change to a long note re-sends the whole note for
+    /// the rest of the conversation.
+    known: Vec<(String, String)>,
 }
 
 /// A conversation on disk, as the picker lists it.
@@ -756,7 +766,8 @@ impl Chat {
             follow: true,
             overhead: 0,
             shown_index: String::new(),
-            shown: Vec::new(),
+            front: Vec::new(),
+            known: Vec::new(),
         }
     }
 
@@ -891,25 +902,25 @@ impl Chat {
         // of the question is not.
         let afresh = |chat: &mut Self, moved: Option<String>| {
             chat.shown_index = index.to_string();
-            chat.shown = now.to_vec();
+            chat.front = now.to_vec();
+            chat.known = now.to_vec();
             (index.to_string(), crate::digest::project(now), moved)
         };
-        if self.shown.is_empty() {
+        if self.front.is_empty() {
             return afresh(self, None);
         }
-        let moved = crate::digest::since(&self.shown, now);
-        let listed = (self.shown_index != index).then(|| {
-            format!(
-                "The list of notes at the top is out of date. It is now:\n\n{index}"
-            )
-        });
-        // Only the index moved, or nothing did. An index on its own is a note
-        // renamed or its first line changed, which is cheap to say and does
-        // not justify writing the project out again.
+        // Against what it has been told, not against what is at the front: a
+        // note first mentioned in a correction is not new the second time.
+        let moved = crate::digest::since(&self.known, now);
+        let listed = (self.shown_index != index)
+            .then(|| format!("The list of notes at the top is out of date. It is now:\n\n{index}"));
         let Some(moved) = moved else {
+            if listed.is_some() {
+                self.shown_index = index.to_string();
+            }
             return (
                 self.shown_index.clone(),
-                crate::digest::project(&self.shown),
+                crate::digest::project(&self.front),
                 listed,
             );
         };
@@ -920,9 +931,11 @@ impl Chat {
         if both.len() >= crate::digest::project(now).len() + index.len() {
             return afresh(self, Some(both));
         }
+        // Told, so next time only what moves after this has to be said.
+        self.known = now.to_vec();
         (
             self.shown_index.clone(),
-            crate::digest::project(&self.shown),
+            crate::digest::project(&self.front),
             Some(both),
         )
     }
