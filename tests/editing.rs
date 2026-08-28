@@ -6721,6 +6721,57 @@ fn a_block_nested_in_an_unclosed_one_is_still_found() {
 }
 
 #[test]
+fn a_file_the_model_has_only_seen_in_pieces_is_shown_whole_when_it_moves() {
+    use notes::chat::Chat;
+    let file = |n: &str, t: &str| (n.to_string(), t.to_string());
+    let big = "a line that is here to take up room\n".repeat(60);
+    let start = vec![file("notes.md", &format!("# Notes\n\n{big}"))];
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    chat.context("- `notes.md`", &start);
+
+    // Made by the model mid-conversation and accepted: known, not at the
+    // front. Long enough that a diff would be the smaller thing to send.
+    let list = format!(
+        "# Shop\n\n{}",
+        (1..=30)
+            .map(|i| format!("- item {i}\n"))
+            .collect::<String>()
+    );
+    chat.wrote("shop.md", Some(&list));
+    let mut both = start.clone();
+    both.push(file("shop.md", &list));
+    let (_, _, moved) = chat.context("- `notes.md`\n- `shop.md`", &both);
+    // The list of notes has a new line, and that is said; the file itself is
+    // not, because the model wrote it.
+    assert!(
+        !moved.as_deref().unwrap_or("").contains("STOP"),
+        "its own file was reported as news: {moved:?}"
+    );
+
+    // Changed by somebody else, in one line. A file at the front would get a
+    // diff; this one gets the whole thing, because the model has never had
+    // the whole thing in front of it.
+    both[1].1 = list.replace("- item 7\n", "- item 7, changed\n");
+    let (_, _, moved) = chat.context("- `notes.md`\n- `shop.md`", &both);
+    let said = moved.expect("the change is reported");
+    assert!(said.contains("now contains, in full"), "{said}");
+    assert!(
+        said.contains("item 1\n") && said.contains("item 30"),
+        "{said}"
+    );
+
+    // A file that is at the front still gets the diff it always got.
+    both[0].1 = both[0].1.replace("# Notes", "# Notes, renamed");
+    let (_, _, moved) = chat.context("- `notes.md`\n- `shop.md`", &both);
+    let said = moved.expect("the change is reported");
+    assert!(said.contains("@@ "), "{said}");
+    assert!(
+        !said.contains("take up room\n a line"),
+        "the project came whole: {said}"
+    );
+}
+
+#[test]
 fn a_change_we_made_is_not_reported_as_one_we_found() {
     use notes::chat::Chat;
     let file = |n: &str, t: &str| (n.to_string(), t.to_string());

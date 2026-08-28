@@ -1142,7 +1142,7 @@ fn a_list_built_corrected_and_reckoned_up(app: &mut App) -> Result<(), String> {
     }
     if !low.contains("milk") || !low.contains("bread") {
         return Err(format!(
-            "the correction took something else with it: {text:?}"
+            "{WRONG}the correction took something else with it: {text:?}"
         ));
     }
 
@@ -1155,12 +1155,18 @@ fn a_list_built_corrected_and_reckoned_up(app: &mut App) -> Result<(), String> {
 
     // Changed by somebody else, in two places, with the conversation open.
     std::thread::sleep(Duration::from_millis(1100));
-    let outside = text.replace("2.50", "2.20") + "- cheese, 4.00\n";
+    let mut outside = text.replace("2.50", "2.20");
     if outside == text {
         return Err(format!(
             "the list is not in a shape that can be edited: {text:?}"
         ));
     }
+    // A file saved from a block the model wrote has no newline on the end,
+    // and a line added straight after it is glued to the last one.
+    if !outside.ends_with('\n') {
+        outside.push('\n');
+    }
+    outside.push_str("- cheese, 4.00\n");
     std::fs::write(&path, &outside).map_err(|e| format!("{e}"))?;
     app.steps(90);
 
@@ -1183,7 +1189,7 @@ fn a_list_built_corrected_and_reckoned_up(app: &mut App) -> Result<(), String> {
     let low = text.to_lowercase();
     let at = |item: &str| {
         low.find(item)
-            .ok_or_else(|| format!("{item} is gone: {text:?}"))
+            .ok_or_else(|| format!("{WRONG}{item} was dropped in the sorting: {text:?}"))
     };
     let (cheese, tofu, milk, bread) = (at("cheese")?, at("tofu")?, at("milk")?, at("bread")?);
     if !(cheese < tofu && tofu < milk && milk < bread) {
@@ -1191,7 +1197,7 @@ fn a_list_built_corrected_and_reckoned_up(app: &mut App) -> Result<(), String> {
     }
     for price in ["4.00", "3.20", "2.20", "1.80"] {
         if !text.contains(price) {
-            return Err(format!("a price was lost in the sorting: {text:?}"));
+            return Err(format!("{WRONG}{price} was lost in the sorting: {text:?}"));
         }
     }
 

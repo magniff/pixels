@@ -1247,7 +1247,25 @@ impl Chat {
         }
         // Against what it has been told, not against what is at the front: a
         // note first mentioned in a correction is not new the second time.
-        let moved = crate::digest::since(&self.known, now);
+        //
+        // With one exception. A file that is not at the front - one the model
+        // made mid-conversation - is a file it has only ever seen in pieces:
+        // its own write, then its own edits, then whatever moved since. Asked
+        // to sort a list it had built that way after somebody else changed
+        // two lines of it, it sorted from memory: the old price of the milk,
+        // and the cheese that had been added left out. When such a file moves,
+        // it is shown whole, which is what a diff against the front would
+        // have been anyway had the file been there.
+        let shown: Vec<(String, String)> = self
+            .known
+            .iter()
+            .filter(|(name, text)| {
+                self.front.iter().any(|(f, _)| f == name)
+                    || now.iter().any(|(n, t)| n == name && t == text)
+            })
+            .cloned()
+            .collect();
+        let moved = crate::digest::since(&shown, now);
         let listed = crate::digest::relisted(&self.known_index, index);
         // Both are corrections, and both are paid for the same way, so both go
         // through the same choice. What must not happen is the front being
