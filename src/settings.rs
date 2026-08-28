@@ -54,7 +54,10 @@ pub struct Weights {
 ///
 /// | model | on disk | right | writing | cold | scenes |
 /// | --- | --- | --- | --- | --- | --- |
-/// | Qwen3.6 35B-A3B (IQ3_XXS) | 13.2 GB | 7/7 | 37.5 tok/s | 12 s | 9/9 |
+/// | Qwen3.6 35B-A3B (IQ3_XXS) | 13.2 GB | 7/7 | 37.5 tok/s | 12 s | 9/9, 16/18 |
+/// | Gemma 4 26B-A4B (Q3_K_XL) | 12.9 GB | - | - | 10 s | 16/18 |
+/// | LFM2 24B-A2B (IQ4_XS) | 12.7 GB | - | - | 12 s | 11/18 |
+/// | Trinity Mini 26B-A3B (Q3_K_M) | 12.1 GB | - | - | 13 s | 4/18 |
 /// | Qwen3.5 35B-A3B (IQ3_XXS) | 13.1 GB | 7/7 | 36.6 tok/s | 15 s | 7/9 |
 /// | Qwen3.5 27B (Q3_K_S) | 12.3 GB | 6/6 | 8.5 tok/s | 37 s | - |
 /// | Ornith 1.5 9B | 5.8 GB | 6/6 | 18.8 tok/s | 12 s | 7/9 |
@@ -62,8 +65,24 @@ pub struct Weights {
 /// | gpt-oss 20b | 12.1 GB | 3/6 | 40.7 tok/s | 13 s | - |
 ///
 /// The last column is `tools/e2e.sh`, which drives the whole application and
-/// then looks at the vault. Qwen3.6 is the only one that has answered every
-/// scene of it.
+/// then looks at the vault - nine scenes when the first six were measured,
+/// eighteen by the time the last three were. Qwen3.6 is the only one that has
+/// answered every scene of the nine.
+///
+/// Gemma 4 is the other one worth having. Level with Qwen3.6 on the eighteen
+/// and faster on most of them - twenty seconds against thirty-three on the
+/// scene that changes a file behind its back - and terser: asked for one
+/// word it gives one. What it gets wrong is its own: told the next Christmas
+/// is a Friday and the last was a Thursday, it answers Thursday; asked about
+/// a note in another project it sometimes says the web is switched off. It
+/// would not load at all until its turns were written out by hand, because
+/// its template is eighteen thousand characters of Jinja the formatter here
+/// cannot run - see `llm::local::gemma_turns`.
+///
+/// LFM2 24B-A2B loads and is quick, and invents: today was the 31st of July
+/// 2023, Christmas 2023 fell on a Monday. Trinity Mini describes a change in
+/// prose instead of writing the block for it, and made bike.md by editing
+/// line one of a file that did not exist. Neither is offered.
 ///
 /// The 35B is the one to have, and it is a surprise: it is quantised down to
 /// three bits to fit, which has spoiled every other model tried that way. It
@@ -102,7 +121,14 @@ pub const CATALOGUE: &[Weights] = &[
         file: "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
         url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
         megabytes: 13200,
-        note: "THE BEST OF THESE, AND THE FASTEST",
+        note: "THE MOST RIGHT OF THESE",
+    },
+    Weights {
+        label: "GEMMA 4 26B",
+        file: "gemma-4-26B-A4B-it-UD-Q3_K_XL.gguf",
+        url: "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q3_K_XL.gguf",
+        megabytes: 12900,
+        note: "AS RIGHT, FASTER, AND TERSER",
     },
 ];
 

@@ -74,10 +74,10 @@ system's — they are built from the same widgets as everything else.
 **An assistant, on your machine** — select something, press `Cmd-Enter`, and
 ask for a change.
 
-- Qwen3.6 35B through llama.cpp, on the GPU where there is one;
+- Qwen3.6 35B or Gemma 4 26B through llama.cpp, on the GPU where there is one;
   no key, no account, and nothing leaves the machine unless you switch the next
-  one on. One rather than a list, because thirteen were measured on a 24GB Mac and
-  it is the one worth keeping — the reasoning is in `settings.rs`, with the
+  one on. Two rather than a list, because sixteen were measured on a 24GB Mac and
+  these are the two worth keeping — the reasoning is in `settings.rs`, with the
   table. The 35B is a surprise: only three of its thirty-five billion are awake
   for any one token, so it is the largest model here and also the fastest
 - **Working sums out** rather than remembering them, and **knowing what the
