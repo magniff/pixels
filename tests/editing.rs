@@ -5896,6 +5896,22 @@ fn a_call_with_the_argument_left_out_is_still_a_call() {
 }
 
 #[test]
+fn a_delete_a_merge_already_covers_is_dropped() {
+    use notes::chat::{proposals, What};
+    // Word for word: a merge, and then the deletes the merge already does.
+    // Taken in the wrong order the days are gone before the week is made.
+    let said = "<merge into=\"week.md\" from=\"monday.md, tuesday.md\"># Week\n</merge>\n\
+                <delete file=\"monday.md\"></delete>\n<delete file=\"tuesday.md\"></delete>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(matches!(changes[0].what, What::Merge { .. }));
+    // A delete of something else in the same reply is still a delete.
+    let said = "<merge into=\"week.md\" from=\"monday.md\"># Week\n</merge>\n<delete file=\"old.md\"></delete>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 2, "{changes:?}");
+}
+
+#[test]
 fn a_delete_written_as_a_lone_tag_is_a_delete() {
     use notes::chat::{proposals, What};
     for said in [

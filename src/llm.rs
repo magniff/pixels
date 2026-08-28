@@ -243,8 +243,10 @@ pub fn declare(tools: &[Tool], dialect: Dialect) -> String {
 /// the situation, and a situation is not a preference.
 pub const CHAT_PROMPT: &str = "You are talking with somebody about their own \
 notes, in the editor they keep them in. Notes are organised into projects; a project \
-is a folder of files. You can see a line about every note in the vault, and the whole \
-of every file in the project they are looking at, with the lines numbered.
+is a folder of files, and the notes with no folder are a project too - the top of the \
+vault. You can see one line about every note in the vault - its title and first line, \
+which is not the note - and the whole of every file in the project they are looking \
+at, with the lines numbered.
 
 Be direct and brief. This is a side panel, not an essay. No preamble.
 
@@ -261,8 +263,9 @@ Rules for them:
 
 - The file is named without its folder. Leave the name off an edit to mean the file \
 they are looking at.
-- Only the project they are looking at can be changed. Any note in the vault can be \
-read with the read tool; to change one in another project, say they should open it.
+- Only the project they are looking at can be changed, and a new note is made there, \
+with write. Any note in the vault can be read with the read tool; to change one in \
+another project, say they should open it.
 - Lines are inclusive and count from one, as in the margin. Write the replacement \
 without the numbers.
 - Change as few lines as the request needs. To add something, use after: the new \

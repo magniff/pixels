@@ -910,6 +910,34 @@ fn bodies_but(text: &str, keep: &[usize], moved_on: &[usize]) -> (String, Vec<St
 /// read as a sentence and a change, and showing the raw block would be showing
 /// somebody the machinery instead of the change.
 pub fn proposals(reply: &str) -> (String, Vec<Change>) {
+    let (prose, changes) = every_proposal(reply);
+    // A delete of a file a merge in the same reply folds in is the merge's
+    // own work said twice, and dangerous: accepted first, the file is gone
+    // before the merge can fold it, and the merge then has nothing to fold -
+    // which is the note lost that the verb exists to prevent. A model wrote
+    // exactly that, a merge and two deletes, and the week's note was never
+    // made while both days were.
+    let folded: Vec<String> = changes
+        .iter()
+        .filter_map(|c| match &c.what {
+            What::Merge { from, .. } => Some(from.iter().map(|f| own_name(f)).collect::<Vec<_>>()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let changes = changes
+        .into_iter()
+        .filter(|c| {
+            !(matches!(c.what, What::Delete)
+                && c.file
+                    .as_deref()
+                    .is_some_and(|f| folded.contains(&own_name(f))))
+        })
+        .collect();
+    (prose, changes)
+}
+
+fn every_proposal(reply: &str) -> (String, Vec<Change>) {
     let mut prose = String::new();
     let mut changes = Vec::new();
     let mut at = 0;
