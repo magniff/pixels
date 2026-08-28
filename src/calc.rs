@@ -13,7 +13,11 @@
 /// Work out what an expression comes to.
 pub fn evaluate(expression: &str) -> Result<String, String> {
     if expression.trim().is_empty() {
-        return Err("no sum was given - put the expression in the call, like 384 * 517".into());
+        return Err(
+            "the call had no sum in it. Write it again with the sum inside the parameter, \
+             like <parameter=expression>384 * 517</parameter>"
+                .into(),
+        );
     }
     let tokens = scan(expression)?;
     let mut at = 0;

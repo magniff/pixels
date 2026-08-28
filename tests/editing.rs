@@ -4765,7 +4765,7 @@ fn a_sum_that_does_not_work_says_why() {
     assert!(sum("(2 + 3").contains("not closed"));
     assert!(sum("sqrt(-1)").contains("no square root"));
     assert!(sum("frobnicate(2)").contains("not something this knows"));
-    assert!(sum("").contains("no sum was given"), "{}", sum(""));
+    assert!(sum("").contains("no sum in it"), "{}", sum(""));
     assert!(sum("2 & 3").contains("not something this can work out"));
     assert!(
         sum("2 3").contains("left over"),
@@ -5839,7 +5839,7 @@ fn a_call_with_the_argument_left_out_is_still_a_call() {
     assert_eq!(calls(said), vec![("calc".to_string(), String::new())]);
     // Run with nothing, the tool says what it wanted rather than nothing.
     let told = notes::tools::run("calc", "", "");
-    assert!(told.contains("no sum was given"), "{told}");
+    assert!(told.contains("<parameter=expression>"), "{told}");
     // And the shape the instructions show is not read as a call to nothing.
     assert!(calls("<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n</function>").len() == 1);
     assert!(calls("nothing here").is_empty());
