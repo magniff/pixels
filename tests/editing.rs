@@ -6376,9 +6376,16 @@ fn a_change_naming_this_project_is_a_change_here_and_one_naming_another_is_not()
     assert_eq!(here.replacing(&folder), edit("bikes.md").replacing(&folder));
     assert!(here.misplaced(&folder).is_none());
 
-    // A name nothing is filed under, with no folder, means the note in front
-    // of you - that is what a missing name has always meant.
-    assert_eq!(edit("other.md").replacing(&folder), here.replacing(&folder));
+    // A name nothing is filed under is a file that is not there. It used to
+    // mean the note in front of you, and a model asked to make bike.md wrote
+    // an edit to line 1 of it - and line 1 of the open note became "RED".
+    assert!(edit("other.md").replacing(&folder).is_none());
+    // No name at all is still the note in front of you.
+    let unnamed = Change {
+        file: None,
+        ..edit("x")
+    };
+    assert_eq!(unnamed.replacing(&folder), here.replacing(&folder));
 
     // A folder that is some other project is a change this conversation
     // cannot make, and says which project. It used to fall through to the

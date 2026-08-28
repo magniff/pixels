@@ -567,20 +567,19 @@ impl Change {
             // Below a line that is there, or at the top, and nothing is
             // replaced. Where the file is looked for is as for an edit.
             What::Insert { after, .. } => {
-                let lines = lines.or_else(|| folder.lines(None))?;
+                let lines = lines?;
                 (*after <= lines.len()).then(String::new)
             }
             What::Edit { from, to, .. } => {
-                // A name that matches nothing in the project is no better than
-                // no name, and no name means the note in front of you - which
-                // is what an edit almost always is about. Models name files
-                // that are not there, and the ones they reach for are the ones
-                // written in front of them: an example in the instructions, a
-                // folder off the list of notes. Refusing leaves the change
-                // undone and unexplained; this offers it against the note it
-                // was plainly about, with the lines it would replace on show
-                // before anybody agrees to it.
-                let lines = lines.or_else(|| folder.lines(None))?;
+                // A name that matches nothing is a file that is not there,
+                // and the change is refused - not offered against the note in
+                // front of you, which it was for a while. That was for a model
+                // copying `notes.md` out of the example; the example names the
+                // open note now, so there is nothing to copy wrong. And it was
+                // dangerous: asked to make bike.md, a model wrote an edit to
+                // line 1 of a bike.md that did not exist, and line 1 of
+                // whatever was open became "RED".
+                let lines = lines?;
                 let first = from.checked_sub(1)?;
                 // One past the end is the line that is not there yet, and an
                 // edit to it means "after the last one". The instructions say

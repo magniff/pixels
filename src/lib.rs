@@ -1249,7 +1249,7 @@ impl Notes {
                 self.status = format!("DELETED {named}").to_uppercase();
             }
             chat::What::Insert { after, text } => {
-                let Some(i) = found.or(Some(self.current).filter(|i| *i < self.notes.len())) else {
+                let Some(i) = found else {
                     self.status = "THAT FILE IS NOT THERE".into();
                     return;
                 };
@@ -1267,11 +1267,10 @@ impl Notes {
                 self.status = "APPLIED".into();
             }
             chat::What::Edit { from, to, text } => {
-                // Falling back to the note in front of you, which is what an
-                // edit with no name means and what one with a name nothing is
-                // filed under amounts to. See `Change::replacing`, which shows
-                // the same lines in the panel before this runs.
-                let Some(i) = found.or(Some(self.current).filter(|i| *i < self.notes.len())) else {
+                // A named file that is not there is refused, as in
+                // `Change::replacing`; only an edit with no name at all means
+                // the note in front of you, and that one `named` already is.
+                let Some(i) = found else {
                     self.status = "THAT FILE IS NOT THERE".into();
                     return;
                 };

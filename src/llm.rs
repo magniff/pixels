@@ -645,8 +645,11 @@ fn gemma_calls(reply: &str) -> Vec<(String, String)> {
             continue;
         };
         let inner = rest.rsplit_once('}').map(|(i, _)| i).unwrap_or(rest);
+        // `{when:"today"}` one time and `{file="garden/harvest.md"}` the next,
+        // from the same model in the same run. Whichever comes first is the
+        // one dividing the name from the value.
         let value = inner
-            .split_once(':')
+            .split_once([':', '='])
             .map(|(_, v)| v)
             .unwrap_or("")
             .trim()
