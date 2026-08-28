@@ -564,30 +564,54 @@ fn undecided(reply: &str) -> String {
 /// text of it is not, because the text of it is in the project, once, and
 /// current. The stored transcript keeps the whole thing: this is only what is
 /// sent, and the panel still draws the diff.
-/// A note the model read, kept as the fact that it read it.
+/// What the conversation looked up, said rather than tagged.
 ///
-/// What comes back from the read tool is the whole file with its lines
-/// numbered, and it stays in the conversation once it is there - so a note read
-/// on the first question is still being sent on the tenth, in the state it was
-/// in on the first. That is the expensive way and the wrong way at once: it is
-/// the largest thing in the prompt, and it is a copy of a file that has had ten
-/// turns to change, sitting there arguing with the current one.
+/// Two reasons, and the second one is the reason.
 ///
-/// The fact survives, because it is worth knowing that it looked. What it saw
-/// does not, because it can look again, and looking again is a round trip
-/// against being confidently out of date.
-fn without_readings(text: &str) -> String {
+/// A note read comes back whole, with its lines numbered, and it stayed in the
+/// conversation once it was there - a note read on the first question still
+/// being sent on the tenth, in the state it was in on the first. The largest
+/// thing in the prompt, and a copy of a file that has had ten turns to change,
+/// arguing with the current one. The fact that it looked survives; what it saw
+/// does not, because it can look again.
+///
+/// And a lookup written as `<used tool="date" arg="...">` is a shape, and a
+/// shape in an assistant's own turn is a shape an assistant writes. One did:
+/// asked how old somebody was, it wrote the block itself and filled it in -
+/// Tuesday for a Monday, five hundred and ninety-five days for six hundred and
+/// thirteen, and a span written "1 year, 8 months, and 5 days" where this
+/// application writes "1 year and 8 months". Nothing was asked and nothing
+/// answered. It had simply learnt, from its own transcript, that this is
+/// something it may write, and what it writes it may invent.
+///
+/// So none of it goes back as a tag. The answers still do - a sum and a date
+/// are a line each and cannot go stale - but written as something that was
+/// told to it, which is what it was.
+fn without_lookups(text: &str) -> String {
     let mut out = String::new();
     let mut at = 0usize;
     const SHUT: &str = "</used>";
-    while let Some(i) = text[at..].find("<used tool=\"read\"") {
+    while let Some(i) = text[at..].find("<used tool=") {
         let from = at + i;
         let Some(end) = text[from..].find(SHUT).map(|j| from + j + SHUT.len()) else {
             break;
         };
-        let named = text[from..end].split('"').nth(3).unwrap_or("a note");
+        let span = &text[from..end];
+        let mut quoted = span.split('"');
+        let tool = quoted.nth(1).unwrap_or("something").to_string();
+        let arg = quoted.nth(1).unwrap_or("").to_string();
+        let body = span
+            .split_once('>')
+            .map(|(_, rest)| rest.trim_end_matches(SHUT).trim())
+            .unwrap_or("");
         out.push_str(&text[at..from]);
-        out.push_str(&format!("[you read `{named}` here]"));
+        if tool == "read" {
+            out.push_str(&format!("[you read `{arg}` here]"));
+        } else {
+            out.push_str(&format!(
+                "[you asked {tool} about {arg}, and were told: {body}]"
+            ));
+        }
         at = end;
     }
     out.push_str(&text[at..]);
@@ -648,7 +672,6 @@ pub fn as_sent(turns: &[Turn]) -> Vec<String> {
 
 /// Every block replaced by a label, save the ones named by position.
 fn bodies_but(text: &str, keep: &[usize]) -> String {
-    let text = &without_readings(text);
     let mut out = String::new();
     let mut at = 0;
     for (nth, (kind, tag, open, close)) in blocks(text).into_iter().enumerate() {
@@ -684,7 +707,13 @@ fn bodies_but(text: &str, keep: &[usize]) -> String {
         at = close + kind.len() + 3;
     }
     out.push_str(&text[at..]);
-    out.trim().to_string()
+    // Blocks first and lookups after, in that order and not the other way. A
+    // tool's answer may quote the shape of a change - the one telling a model
+    // that a write is not something to call quotes it on purpose - and the
+    // scan for blocks knows to leave a quoted answer alone. Unwrap the answer
+    // first and that protection is gone: the quote is loose in the turn, and
+    // it comes back as a change nobody proposed.
+    without_lookups(&out).trim().to_string()
 }
 
 /// Split a reply into what it said and what it proposed.

@@ -6130,6 +6130,27 @@ fn a_list_is_corrected_by_the_lines_that_moved() {
 }
 
 #[test]
+fn a_lookup_goes_back_as_something_it_was_told() {
+    use notes::chat::without_bodies;
+    // A date it really did ask for. What must not go back is the shape.
+    let said = "<used tool=\"date\" arg=\"2024-12-23\">\n23 December 2024 is a Monday, which was \
+                613 days ago - 1 year and 8 months.\n</used>\n\nEva is 613 days old.";
+    let sent = without_bodies(said);
+
+    // The answer survives: a date is a line and cannot go stale.
+    assert!(sent.contains("613 days ago"), "{sent}");
+    assert!(sent.contains("Eva is 613 days old."), "{sent}");
+    assert!(sent.contains("you asked date about 2024-12-23"), "{sent}");
+
+    // The tag does not. An assistant turn holding `<used tool=...>` teaches
+    // that writing one is a thing an assistant does - and one then wrote its
+    // own, with a Tuesday for a Monday and 595 days for 613, having asked
+    // nothing and been told nothing.
+    assert!(!sent.contains("<used"), "{sent}");
+    assert!(!sent.contains("</used>"), "{sent}");
+}
+
+#[test]
 fn a_note_read_is_remembered_as_read_and_not_as_its_contents() {
     use notes::chat::without_bodies;
     let long = (1..=40)
@@ -6304,7 +6325,12 @@ fn what_a_tool_answered_is_quoted_and_not_proposed() {
     // the `</used>` and come back as two changes and half a sentence, so the
     // conversation carried a proposal that was never made.
     let sent = without_bodies(said);
-    assert!(sent.contains("</used>"), "the answer was cut into: {sent}");
+    assert!(
+        sent.contains("write is not a tool"),
+        "the answer was cut into: {sent}"
+    );
+    // And it goes back as something it was told, not as a tag it could write.
+    assert!(!sent.contains("<used"), "{sent}");
     assert_eq!(
         sent.matches("write to `bike.md`").count(),
         1,
