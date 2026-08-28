@@ -241,9 +241,20 @@ pub fn project(files: &[(String, String)]) -> String {
 /// exact line it means will get a space or a dash wrong eventually, and then
 /// the edit lands nowhere. A number is a number. It also gives the two sides
 /// something to point at - "line 14" is a thing both can say.
+/// A file's lines, counted the way the editor counts them.
+///
+/// On `\n` and not by `str::lines`, because the buffer in the editor splits on
+/// `\n` - so a file ending in a newline has an empty last line, the margin
+/// numbers it, and a line number the model is given has to mean the same thing
+/// here as it does there. Getting this wrong showed the model lines numbered
+/// one to six and then told it the file was five lines long.
+fn rows(text: &str) -> Vec<&str> {
+    text.split('\n').collect()
+}
+
 pub fn numbered(text: &str) -> String {
     let mut out = String::new();
-    for (i, line) in text.split('\n').enumerate() {
+    for (i, line) in rows(text).into_iter().enumerate() {
         out.push_str(&format!("{:>4} | {line}\n", i + 1));
     }
     out
@@ -413,8 +424,7 @@ const CELLS: usize = 4_000_000;
 /// to say two. That is the case this exists for - a one-line change in a large
 /// file - and it now sends two lines and their context.
 fn replaced(before: &str, after: &str) -> String {
-    let old: Vec<&str> = before.lines().collect();
-    let new: Vec<&str> = after.lines().collect();
+    let (old, new) = (rows(before), rows(after));
     let head = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
     let tail = old[head..]
         .iter()

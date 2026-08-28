@@ -5873,6 +5873,91 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
 }
 
 #[test]
+fn an_edit_that_landed_somewhere_else_is_reported_back() {
+    use notes::chat::{Change, What};
+    use notes::text::Buffer;
+    let dir = std::env::temp_dir().join(format!("notes-wrongline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a vault");
+    let file = dir.join("bike.md");
+    // Long enough that saying what changed beats saying the file, which is the
+    // path worth testing: the two lines it touched, and nothing else.
+    let filler = (1..=40)
+        .map(|n| format!("Some other note about bikes, number {n}.\n"))
+        .collect::<String>();
+    let started = format!(
+        "# Bikes\n\n- Alice's bike is green.\n- Bob's bike is blue.\n\
+         - Magniff's bike is orange.\n{filler}"
+    );
+    let started = started.as_str();
+    std::fs::write(&file, started).expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    let i = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "bike.md")
+        .expect("there");
+    app.current = i;
+    let mut chat = notes::chat::Chat::new(String::new(), "bike.md".into());
+    let index = "- `bike.md` \"Bikes\"";
+    let now = |app: &notes::Notes| -> Vec<(String, String)> {
+        app.notes
+            .iter()
+            .map(|n| (n.filename(), n.buffer.to_text()))
+            .collect()
+    };
+    chat.context(index, &now(&app));
+
+    // Word for word what happened: asked to change the line about Magniff,
+    // which is the fifth, it wrote the third. The third was Alice's.
+    let change = Change {
+        file: Some("bike.md".into()),
+        what: What::Edit {
+            from: 3,
+            to: 3,
+            text: "- Magniff's bike is black.".into(),
+        },
+        state: Some(true),
+    };
+    app.apply_change(&change);
+    app.took_up_for_test(&change, &mut chat);
+
+    let text = app.notes[i].buffer.to_text();
+    assert!(text.contains("Magniff's bike is black"), "{text}");
+    assert!(
+        !text.contains("Alice"),
+        "the app applied it as asked: {text}"
+    );
+
+    // And the next question says what the edit actually did, so the model can
+    // see that it took out a line it never meant to.
+    let (_, _, moved) = chat.context(index, &now(&app));
+    let said = moved.expect("an edit that did something else must come back");
+    assert!(said.contains("-- Alice's bike is green."), "{said}");
+    assert!(said.contains("+- Magniff's bike is black."), "{said}");
+
+    // A whole file it wrote itself is not read back to it - it knows that one.
+    let wrote = Change {
+        file: Some("bike.md".into()),
+        what: What::Write {
+            text: "# Bikes\n\n- one bike.\n".into(),
+        },
+        state: Some(true),
+    };
+    app.apply_change(&wrote);
+    app.took_up_for_test(&wrote, &mut chat);
+    app.notes[i].buffer = Buffer::from_text("# Bikes\n\n- one bike.\n");
+    app.took_up_for_test(&wrote, &mut chat);
+    let (_, _, moved) = chat.context(index, &now(&app));
+    assert!(
+        moved.is_none(),
+        "it was told what it already wrote: {moved:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_file_that_has_not_moved_is_not_sent_again() {
     use notes::chat::Chat;
     use notes::digest::fingerprint;

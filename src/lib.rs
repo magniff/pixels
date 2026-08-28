@@ -1044,6 +1044,26 @@ impl Notes {
     /// Through the buffer's own editing rather than by rewriting the lines
     /// underneath it, so `u` takes it back like anything else and the caret
     /// ends up somewhere sensible.
+    /// The same as `took_up`, reachable from a test.
+    ///
+    /// Applying a change and telling the conversation about it are one action
+    /// as far as anything outside is concerned, and a test that could do the
+    /// first without the second would be testing a state the application never
+    /// reaches.
+    pub fn took_up_for_test(&mut self, change: &chat::Change, talk: &mut chat::Chat) {
+        self.took_up(change, talk);
+    }
+
+    /// Whether two versions of a file say the same thing.
+    ///
+    /// A trailing newline apart, because a block written by a model has one or
+    /// has not depending on how it felt, and the buffer settles that either
+    /// way. Nothing else is forgiven: this decides whether the model can be
+    /// left believing its own copy.
+    fn same_text(a: &str, b: &str) -> bool {
+        a.trim_end_matches('\n') == b.trim_end_matches('\n')
+    }
+
     /// Tell the conversation what the files say now that it has been applied.
     ///
     /// Only the files this change touched, and only what they say here: the
@@ -1062,6 +1082,7 @@ impl Notes {
                 .find(|n| n.filename() == want)
                 .map(|n| n.buffer.to_text())
         };
+        // Files that are simply gone, which the model does know about.
         if let chat::What::Merge { from, .. } = &change.what {
             for one in from {
                 let one = bare(one);
@@ -1071,7 +1092,33 @@ impl Notes {
             }
         }
         let now = says(self, &named);
-        talk.wrote(&named, now.as_deref());
+        if matches!(change.what, chat::What::Delete) {
+            talk.wrote(&named, None);
+            return;
+        }
+        // Only silent when what the file says is what the model wrote.
+        //
+        // A whole-file write it knows: the block it sent is the file. An edit
+        // it does not, because an edit is line numbers, and if the numbers were
+        // wrong the file is not what it meant and it is the only one who cannot
+        // tell. That happened: asked to change a line that was fifth, it wrote
+        // `lines="3-3"`, the third line was somebody else's, and it went on
+        // answering about a file that had stopped existing when the change it
+        // asked for was made. What it is not told, it cannot notice.
+        //
+        // So the file is left measured against what it was before, and the
+        // next question carries the diff - which says, in two lines, exactly
+        // what the change did.
+        let told = match (&change.what, &now) {
+            (chat::What::Write { text }, Some(now)) => Self::same_text(text, now),
+            (chat::What::Merge { text, .. }, Some(now)) if !text.trim().is_empty() => {
+                Self::same_text(text, now)
+            }
+            _ => false,
+        };
+        if told {
+            talk.wrote(&named, now.as_deref());
+        }
     }
 
     pub fn apply_change(&mut self, change: &chat::Change) {
