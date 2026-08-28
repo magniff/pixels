@@ -208,9 +208,16 @@ pub fn declare(tools: &[Tool], dialect: Dialect) -> String {
             for tool in tools {
                 out.push_str(&format!("<|tool>{}<tool|>\n", json(tool)));
             }
+            // Told not to ask. Asked what colour the roses in another note
+            // were, this family answered that it could not see that note
+            // and offered to read it if asked - with the tool that reads
+            // notes right there in front of it. It reads when told to read;
+            // it needs telling that it may without being told.
             out.push_str(
                 "\nTo use one, write exactly: <|tool_call>call:example_function_name{example_parameter_1:the value}<tool_call|>\n\
-                 Several at once means several such calls. If no tool fits, answer normally.",
+                 Several at once means several such calls. Use a tool whenever it would help, \
+                 without asking permission first - reading a note is never something to ask about. \
+                 If no tool fits, answer normally.",
             );
             out
         }

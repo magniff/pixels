@@ -1399,7 +1399,14 @@ fn a_note_in_a_project_changed_outside(app: &mut App) -> Result<(), String> {
 fn reading_a_note_when_asked(app: &mut App) -> Result<(), String> {
     fresh_chat(app)?;
     let note = app.dir.join("weather.md");
-    std::fs::write(&note, "# Weather\n\nIt is RAINING today.\n").map_err(|e| format!("{e}"))?;
+    // The fact is kept off the note's first line, because the first line is
+    // in the list at the top of every conversation and a model can answer
+    // from that without reading anything - and one did.
+    std::fs::write(
+        &note,
+        "# Weather\n\nChecked at breakfast.\n\nIt is RAINING today.\n",
+    )
+    .map_err(|e| format!("{e}"))?;
     app.steps(90);
     asking(app, "read weather.md and tell me the weather in one word")?;
     let said = last_answer(app).to_lowercase();
