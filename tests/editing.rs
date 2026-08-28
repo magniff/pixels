@@ -5907,6 +5907,51 @@ fn a_list_is_corrected_by_the_lines_that_moved() {
 }
 
 #[test]
+fn a_note_read_is_remembered_as_read_and_not_as_its_contents() {
+    use notes::chat::without_bodies;
+    let long = (1..=40)
+        .map(|n| format!("  {n:3} | line {n} of a note that is not short\n"))
+        .collect::<String>();
+    let said = format!(
+        "<used tool=\"read\" arg=\"long.md\">\n`long.md` says, as of now:\n\n{long}</used>\n\nIt is long.",
+    );
+    let sent = without_bodies(&said);
+    assert!(sent.contains("[you read `long.md` here]"), "{sent}");
+    assert!(sent.contains("It is long."), "what it said is kept: {sent}");
+    assert!(
+        !sent.contains("line 20 of a note"),
+        "the whole file is still being sent back: {sent}"
+    );
+    assert!(sent.len() < said.len() / 4, "no smaller: {}", sent.len());
+
+    // A sum or a date is one line and is worth keeping - it was looked up
+    // once, it cannot go stale, and what it cost to keep is nothing.
+    let sum = "<used tool=\"calc\" arg=\"384 * 517\">\n198528\n</used>\n\nIt is 198528.";
+    assert!(without_bodies(sum).contains("198528"));
+}
+
+#[test]
+fn a_block_nested_in_an_unclosed_one_is_still_found() {
+    use notes::chat::{proposals, What};
+    // Word for word out of a run: the example tag from the instructions,
+    // copied, never closed, with the real change written inside it.
+    let said = "<edit file=\"notes.md\" lines=\"12-14\">\n\
+                <write file=\"ages.md\"># Ages\n\n- Eva: 613 days\n</write>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 1, "the write was thrown away: {changes:?}");
+    assert_eq!(changes[0].file.as_deref(), Some("ages.md"));
+    match &changes[0].what {
+        What::Write { text } => assert!(text.contains("613 days"), "{text}"),
+        other => panic!("read as {other:?}"),
+    }
+
+    // And an opener on its own still proposes nothing at all.
+    assert!(proposals("<write file=\"a.md\">never finished")
+        .1
+        .is_empty());
+}
+
+#[test]
 fn what_a_tool_answered_is_quoted_and_not_proposed() {
     use notes::chat::{proposals, without_bodies};
     // Straight out of a real conversation. The model tried to call `write` as

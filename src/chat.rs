@@ -540,7 +540,38 @@ fn undecided(reply: &str) -> String {
 /// text of it is not, because the text of it is in the project, once, and
 /// current. The stored transcript keeps the whole thing: this is only what is
 /// sent, and the panel still draws the diff.
+/// A note the model read, kept as the fact that it read it.
+///
+/// What comes back from the read tool is the whole file with its lines
+/// numbered, and it stays in the conversation once it is there - so a note read
+/// on the first question is still being sent on the tenth, in the state it was
+/// in on the first. That is the expensive way and the wrong way at once: it is
+/// the largest thing in the prompt, and it is a copy of a file that has had ten
+/// turns to change, sitting there arguing with the current one.
+///
+/// The fact survives, because it is worth knowing that it looked. What it saw
+/// does not, because it can look again, and looking again is a round trip
+/// against being confidently out of date.
+fn without_readings(text: &str) -> String {
+    let mut out = String::new();
+    let mut at = 0usize;
+    const SHUT: &str = "</used>";
+    while let Some(i) = text[at..].find("<used tool=\"read\"") {
+        let from = at + i;
+        let Some(end) = text[from..].find(SHUT).map(|j| from + j + SHUT.len()) else {
+            break;
+        };
+        let named = text[from..end].split('"').nth(3).unwrap_or("a note");
+        out.push_str(&text[at..from]);
+        out.push_str(&format!("[you read `{named}` here]"));
+        at = end;
+    }
+    out.push_str(&text[at..]);
+    out
+}
+
 pub fn without_bodies(text: &str) -> String {
+    let text = &without_readings(text);
     let mut out = String::new();
     let mut at = 0;
     for (kind, tag, open, close) in blocks(text) {
@@ -690,7 +721,17 @@ fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
         };
         let shut = format!("</{kind}>");
         let Some(close) = text[open..].find(&shut).map(|i| open + i) else {
-            break;
+            // An opener with nothing closing it is not the end of the reply.
+            //
+            // Measured: asked for a note of birthdays, the model copied the
+            // example tag out of its own instructions - `<edit file="notes.md"
+            // lines="12-14">` and all - never closed it, and wrote the real
+            // block inside. Stopping here threw away a write that was correct,
+            // right down to the day count, and the answer came out empty. Step
+            // over the opener and keep reading: what is nested inside it is
+            // still a change somebody asked for.
+            at = open;
+            continue;
         };
         out.push((kind, start, open, close));
         at = close + shut.len();
