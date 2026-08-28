@@ -314,6 +314,47 @@ pub fn copyable(turn: &Turn) -> String {
     lookups(&turn.text).0.trim().to_string()
 }
 
+/// What the assistant is doing right now, in a line.
+///
+/// It said "reading the notes" for the whole of anything that was not yet
+/// writing, and most of that was not reading the notes: it was the weights
+/// going in, or the tail of a question being read while the notes sat in the
+/// cache from last time, or the wait for the first token, or a two-line tool
+/// response going in after a lookup. Each of those is something else, and
+/// somebody watching a panel for twelve seconds deserves the right one.
+pub fn doing(p: &crate::llm::Progress) -> String {
+    if p.loading {
+        return "LOADING THE MODEL...".to_string();
+    }
+    if p.looking {
+        return format!("LOOKING SOMETHING UP... ({} SO FAR)", p.steps);
+    }
+    if p.deliberating {
+        return format!("THINKING... {} TOKENS", p.written);
+    }
+    if p.written > 0 {
+        return format!("WRITING... {} TOKENS, {:.0}/S", p.written, p.rate());
+    }
+    if p.prompt == 0 {
+        return "ASKING...".to_string();
+    }
+    if p.read >= p.prompt {
+        return "ABOUT TO ANSWER...".to_string();
+    }
+    // A share rather than a count: the number of tokens in a vault is not
+    // something anybody has a feel for, and how near the end it is, is the
+    // only part being watched. Of what is actually being read, which is the
+    // notes the first time and the new part of the question after that.
+    let fresh = p.fresh.max(1);
+    let done = p.read.saturating_sub(p.prompt.saturating_sub(p.fresh));
+    let share = (100 * done / fresh).min(99);
+    if p.fresh * 2 < p.prompt {
+        format!("READING WHAT'S NEW... {share}%")
+    } else {
+        format!("READING THE NOTES... {share}%")
+    }
+}
+
 /// Lift the record of what was looked up out of a reply.
 ///
 /// Kept in the transcript rather than reported and forgotten: an answer that
@@ -1892,22 +1933,8 @@ impl Chat {
             }
             if self.waiting {
                 ui.space(3);
-                let p = self.progress;
                 let row = ui.alloc(line_h);
-                let said = if p.looking {
-                    format!("LOOKING SOMETHING UP... ({} SO FAR)", p.steps)
-                } else if p.deliberating {
-                    format!("THINKING... {} TOKENS", p.written)
-                } else if p.written > 0 {
-                    format!("WRITING... {} TOKENS, {:.0}/S", p.written, p.rate())
-                } else if p.prompt > 0 {
-                    // A share rather than a count: the number of tokens in a
-                    // vault is not something anybody has a feel for, and how
-                    // near the end it is, is the only part being watched.
-                    format!("READING THE NOTES... {}%", 100 * p.read / p.prompt.max(1))
-                } else {
-                    "READING THE NOTES...".to_string()
-                };
+                let said = doing(&self.progress);
                 font::draw_text_styled(ui.canvas, row.x + 4, row.y, &said, th.info.hi, true);
                 // The answer as it arrives, in the ink it will keep. A counter
                 // going up says the machine is busy; the words say what it is

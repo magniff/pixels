@@ -5747,6 +5747,56 @@ fn reading_a_note_by_name_prefers_the_project_in_question() {
 }
 
 #[test]
+fn the_panel_says_what_is_actually_happening() {
+    use notes::chat::doing;
+    use notes::llm::Progress;
+    let p = Progress::default;
+    // Sent, and nothing heard back yet: not reading anything.
+    assert_eq!(doing(&p()), "ASKING...");
+    // The weights going in are not the notes being read.
+    assert_eq!(
+        doing(&Progress {
+            loading: true,
+            ..p()
+        }),
+        "LOADING THE MODEL..."
+    );
+    // The first question of a conversation reads the whole thing: the notes.
+    let first = Progress {
+        prompt: 5000,
+        fresh: 5000,
+        read: 2500,
+        ..p()
+    };
+    assert_eq!(doing(&first), "READING THE NOTES... 50%");
+    // The next question reads its own tail; the notes are still in the
+    // cache. It used to say the notes were being read and start at 96%.
+    let next = Progress {
+        prompt: 5200,
+        fresh: 200,
+        read: 5100,
+        ..p()
+    };
+    assert_eq!(doing(&next), "READING WHAT'S NEW... 50%");
+    // Read, and nothing written: the wait for the first token, not 100%.
+    let ready = Progress {
+        prompt: 5200,
+        fresh: 200,
+        read: 5200,
+        ..p()
+    };
+    assert_eq!(doing(&ready), "ABOUT TO ANSWER...");
+    // And once it is writing, that.
+    let writing = Progress {
+        prompt: 5200,
+        read: 5200,
+        written: 12,
+        ..p()
+    };
+    assert!(doing(&writing).starts_with("WRITING... 12 TOKENS"));
+}
+
+#[test]
 fn every_part_of_a_multi_step_answer_is_kept() {
     use notes::llm::{Ask, Assistant, Backend, Reply, Tool, Turn, Watcher};
     /// A model answering a three-part question the way they do: a part, then

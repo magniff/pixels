@@ -683,6 +683,19 @@ impl Backend for Local {
 impl Local {
     fn attempt(&mut self, ask: &Ask, watch: &mut dyn super::Watcher) -> Reply {
         let started = std::time::Instant::now();
+        // Twelve seconds of weights going in used to be twelve seconds of
+        // "reading the notes", which it is not, and which is the wrong thing
+        // to be told about a question that has not been read yet.
+        if self.loaded.is_none() {
+            watch.tick(
+                super::Progress {
+                    loading: true,
+                    elapsed: started.elapsed(),
+                    ..super::Progress::default()
+                },
+                "",
+            );
+        }
         self.load()?;
         let thinks = self.thinks;
         // A conversation is not an edit, and the editing prompt - which is all
@@ -878,6 +891,7 @@ impl Local {
                 super::Progress {
                     prompt: tokens.len(),
                     read: at,
+                    fresh: tokens.len() - already,
                     elapsed: started.elapsed(),
                     ..super::Progress::default()
                 },
@@ -888,6 +902,7 @@ impl Local {
         let mut report = super::Progress {
             prompt: tokens.len(),
             read: tokens.len(),
+            fresh: tokens.len() - already,
             written: 0,
             elapsed: started.elapsed(),
             // Read off what comes back rather than predicted: a model that

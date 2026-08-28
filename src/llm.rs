@@ -267,6 +267,15 @@ pub struct Progress {
     pub looking: bool,
     /// How many tools have been run for this one question.
     pub steps: u8,
+    /// Whether the wait is the weights going in, which is not reading anything.
+    pub loading: bool,
+    /// Of `prompt`, how many tokens are actually being read this time. The
+    /// rest were read for the last question and are still in the cache -
+    /// which for a turn of a conversation is nearly all of it, so a panel that
+    /// says "reading the notes" over a two-hundred-token tail is telling
+    /// somebody their notes are being read when what is being read is their
+    /// question. Zero until the read has started.
+    pub fresh: usize,
 }
 
 impl Progress {
