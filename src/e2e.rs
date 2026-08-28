@@ -811,7 +811,11 @@ fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
         mine.parse::<f64>().unwrap_or(1.0),
         met.parse::<f64>().unwrap_or(0.0),
     );
-    let share = format!("{:.1}", 100.0 * together / alive);
+    // To the tenth and to the hundredth, because a share said as 42.4 and one
+    // said as 42.45 are the same answer and only one of them is a failure.
+    let exact = 100.0 * together / alive;
+    let share = format!("{exact:.1}");
+    let finer = format!("{exact:.2}");
 
     asking(
         app,
@@ -819,11 +823,14 @@ fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
          how many days have we been together, and what percentage of my life is that?",
     )?;
     let said = last_answer(app).replace(',', "");
-    let missing: Vec<String> = [(&mine, "days alive"), (&met, "days together"), (&share, "the share")]
+    let mut missing: Vec<String> = [(&mine, "days alive"), (&met, "days together")]
         .into_iter()
         .filter(|(want, _)| !said.contains(want.as_str()))
         .map(|(want, what)| format!("{what} ({want})"))
         .collect();
+    if !said.contains(&share) && !said.contains(&finer) {
+        missing.push(format!("the share ({share})"));
+    }
     if missing.is_empty() {
         return Ok(());
     }
