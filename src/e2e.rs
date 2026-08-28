@@ -828,11 +828,8 @@ fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
         mine.parse::<f64>().unwrap_or(1.0),
         met.parse::<f64>().unwrap_or(0.0),
     );
-    // To the tenth and to the hundredth, because a share said as 42.4 and one
-    // said as 42.45 are the same answer and only one of them is a failure.
     let exact = 100.0 * together / alive;
     let share = format!("{exact:.1}");
-    let finer = format!("{exact:.2}");
 
     asking(
         app,
@@ -845,7 +842,15 @@ fn a_share_of_a_lifetime(app: &mut App) -> Result<(), String> {
         .filter(|(want, _)| !said.contains(want.as_str()))
         .map(|(want, what)| format!("{what} ({want})"))
         .collect();
-    if !said.contains(&share) && !said.contains(&finer) {
+    // Read as a number rather than matched as a string. A share worked out
+    // from the right two numbers may be written 42.4, 42.45, 42.46 or 42.5,
+    // and those are one answer rounded four ways - checking for two spellings
+    // of it reported the model wrong for how it had written a right answer.
+    let near = said
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .filter_map(|w| w.trim_matches('.').parse::<f64>().ok())
+        .any(|n| (n - exact).abs() < 0.1);
+    if !near {
         missing.push(format!("the share ({share})"));
     }
     if missing.is_empty() {

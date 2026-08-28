@@ -5873,6 +5873,40 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
 }
 
 #[test]
+fn a_list_is_corrected_by_the_lines_that_moved() {
+    use notes::digest::relisted;
+    let was = "- `a.md` \"A\": the first one\n- `b.md` \"B\": the second one\n\
+               - `c.md` \"C\": the third one\n- `d.md` \"D\": the fourth one\n\
+               - `e.md` \"E\": the fifth one\n- `f.md` \"F\": the sixth one";
+
+    assert!(relisted(was, was).is_none(), "nothing moved");
+
+    // One note edited. The other five are already at the front and saying them
+    // again is what put every note in the vault into the prompt twice.
+    let now = was.replace("the third one", "the third one, rewritten");
+    let said = relisted(was, &now).expect("something moved");
+    assert!(said.contains("the third one, rewritten"), "{said}");
+    assert!(!said.contains("the sixth one"), "the rest came too: {said}");
+    assert_eq!(
+        said.matches("- `").count(),
+        1,
+        "one note moved, so one line: {said}"
+    );
+
+    // A note taken away is named, not silently absent from a list that is not
+    // being sent.
+    let fewer = was.replace("- `b.md` \"B\": the second one\n", "");
+    let said = relisted(was, &fewer).expect("something moved");
+    assert!(said.contains("`b.md`"), "{said}");
+    assert!(said.contains("no longer"), "{said}");
+
+    // And a vault that has changed all over is shown, not itemised.
+    let all = "- `x.md` \"X\": something else entirely\n- `y.md` \"Y\": and another";
+    let said = relisted(was, all).expect("something moved");
+    assert!(said.contains("It is now:"), "{said}");
+}
+
+#[test]
 fn what_a_tool_answered_is_quoted_and_not_proposed() {
     use notes::chat::{proposals, without_bodies};
     // Straight out of a real conversation. The model tried to call `write` as
@@ -5894,7 +5928,7 @@ fn what_a_tool_answered_is_quoted_and_not_proposed() {
     let sent = without_bodies(said);
     assert!(sent.contains("</used>"), "the answer was cut into: {sent}");
     assert_eq!(
-        sent.matches("you proposed").count(),
+        sent.matches("write to `bike.md`").count(),
         1,
         "one change was proposed, not two: {sent}"
     );

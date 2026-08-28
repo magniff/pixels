@@ -74,10 +74,10 @@ system's — they are built from the same widgets as everything else.
 **An assistant, on your machine** — select something, press `Cmd-Enter`, and
 ask for a change.
 
-- Qwen3.6 35B or Ornith 1.5 9B through llama.cpp, on the GPU where there is one;
+- Qwen3.6 35B through llama.cpp, on the GPU where there is one;
   no key, no account, and nothing leaves the machine unless you switch the next
-  one on. Two rather than a list, because thirteen were measured on a 24GB Mac and
-  these are the two worth keeping — the reasoning is in `settings.rs`, with the
+  one on. One rather than a list, because thirteen were measured on a 24GB Mac and
+  it is the one worth keeping — the reasoning is in `settings.rs`, with the
   table. The 35B is a surprise: only three of its thirty-five billion are awake
   for any one token, so it is the largest model here and also the fastest
 - **Working sums out** rather than remembering them, and **knowing what the
@@ -174,7 +174,7 @@ window — typing into the editor, opening a conversation, clicking the buttons
 the model's answers put on screen — and then looks at the vault on disk to see
 whether what was asked for actually happened. Everything runs in a sandbox made
 for the run and thrown away after, with its own settings, so it cannot touch the
-notes you keep. `tools/e2e.sh Ornith` picks a model by name and
+notes you keep. `tools/e2e.sh Qwen3.5` picks a model by name and
 `E2E_ONLY="turned down" tools/e2e.sh` runs one scene.
 
 The scenes are the things people actually do: a note typed by hand and saved,

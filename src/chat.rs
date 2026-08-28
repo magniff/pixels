@@ -549,15 +549,25 @@ pub fn without_bodies(text: &str) -> String {
             .or_else(|| attr(head, "file"))
             .unwrap_or_else(|| "the note".into());
         let done = match state_attr(head) {
-            Some(true) => "and it was accepted",
-            Some(false) => "and it was turned down",
-            None => "and it is still waiting to be answered",
+            Some(true) => "accepted",
+            Some(false) => "turned down",
+            None => "still waiting to be answered",
         };
         out.push_str(&text[at..tag]);
-        out.push_str(&format!(
-            "[you proposed a {kind} to `{named}` here, {done}. What that file says \
-             now is in the project above, which is the only version to go by.]"
-        ));
+        // A label, not a sentence, and true wherever the file happens to be.
+        //
+        // It used to read "what that file says now is in the project above,
+        // which is the only version to go by" - which is false for a file the
+        // model has just made, because the project at the front was written
+        // before that file existed. Told that at the moment it is deciding
+        // whether to trust itself, it was being pointed somewhere the file is
+        // not. A smaller model did worse than that and read the sentence back
+        // as its answer: asked what had changed, it replied with the bracket.
+        //
+        // What the file says is the correction's job, and the correction says
+        // it in the strongest words in this application. All that is needed
+        // here is that a change was proposed and how it went.
+        out.push_str(&format!("[{kind} to `{named}`: {done}]"));
         at = close + kind.len() + 3;
     }
     out.push_str(&text[at..]);
@@ -943,8 +953,7 @@ impl Chat {
         // Against what it has been told, not against what is at the front: a
         // note first mentioned in a correction is not new the second time.
         let moved = crate::digest::since(&self.known, now);
-        let listed = (self.known_index != index)
-            .then(|| format!("The list of notes at the top is out of date. It is now:\n\n{index}"));
+        let listed = crate::digest::relisted(&self.known_index, index);
         // Both are corrections, and both are paid for the same way, so both go
         // through the same choice. What must not happen is the front being
         // rewritten and the correction being sent as well: the rewrite empties

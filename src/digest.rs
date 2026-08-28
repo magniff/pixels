@@ -299,6 +299,68 @@ pub fn since(shown: &[(String, String)], now: &[(String, String)]) -> Option<Str
     })
 }
 
+/// What has changed about the list of notes, rather than the list again.
+///
+/// `None` when nothing has. The list is one line per note in the whole vault,
+/// derived from what each note says (its title, its first line, its headings),
+/// so writing a single word into a single note moves it. Correcting it by
+/// sending the whole thing again meant every note in the vault appearing twice
+/// in the same prompt, once at the front and once at the end, with the one
+/// line that actually differed buried among them.
+///
+/// The same trade the project text makes: say what moved. A vault of ten notes
+/// costs about a thousand characters to list and about eighty to correct.
+pub fn relisted(before: &str, after: &str) -> Option<String> {
+    // The path in backticks at the head of the line is what names the note;
+    // everything after it is derived and is exactly what moves.
+    let key = |line: &str| -> Option<String> { line.split('`').nth(1).map(|k| k.to_string()) };
+    let seen: Vec<(Option<String>, &str)> = before.lines().map(|l| (key(l), l)).collect();
+    let mut changed = String::new();
+    for line in after.lines() {
+        let named = key(line);
+        let known = named
+            .as_ref()
+            .and_then(|k| seen.iter().find(|(n, _)| n.as_ref() == Some(k)));
+        match known {
+            Some((_, was)) if *was == line => {}
+            _ => {
+                changed.push_str(line);
+                changed.push('\n');
+            }
+        }
+    }
+    let gone: Vec<&str> = seen
+        .iter()
+        .filter_map(|(n, _)| n.as_deref())
+        .filter(|k| !after.lines().any(|l| key(l).as_deref() == Some(k)))
+        .collect();
+    if changed.is_empty() && gone.is_empty() {
+        return None;
+    }
+    // Past the point where naming the differences is smaller than naming them
+    // all, which is where a project rewritten wholesale ends up.
+    if changed.len() + gone.len() * 16 >= after.len() {
+        return Some(format!(
+            "The list of notes at the top is out of date. It is now:\n\n{after}"
+        ));
+    }
+    let mut out = String::from("The list of notes at the top is out of date.");
+    if !changed.is_empty() {
+        out.push_str(&format!(
+            " These lines of it are different now:\n\n{}",
+            changed.trim_end()
+        ));
+    }
+    if !gone.is_empty() {
+        let named: Vec<String> = gone.iter().map(|k| format!("`{k}`")).collect();
+        out.push_str(&format!(
+            "\n\nThese notes are no longer in the vault: {}",
+            named.join(", ")
+        ));
+    }
+    Some(out)
+}
+
 /// The lines of a file that are not the same any more, with their numbers.
 ///
 /// Matched from both ends, because an edit is a contiguous stretch far more

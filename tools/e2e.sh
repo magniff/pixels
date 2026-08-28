@@ -16,11 +16,22 @@ cd "$(dirname "$0")/.."
 MODELS="${PIXUI_MODELS:-models}"
 want="${1:-}"
 model=""
-for f in "$MODELS"/*.gguf; do
-    [ -e "$f" ] || continue
-    base="$(basename "$f")"
-    if [ -z "$want" ] || [[ "$base" == *"$want"* ]]; then model="$base"; break; fi
-done
+# What the application ships with, taken from the catalogue itself so the two
+# cannot drift apart. Without this the run took whichever weights sorted first,
+# which is not a choice anybody made: a suite that scores the small model and
+# says nothing about which one it scored is a suite that reads as a regression
+# every time somebody puts another file in the folder.
+preferred="$(grep -o '"[A-Za-z0-9._-]*\.gguf"' src/settings.rs | tr -d '"' | head -1)"
+if [ -z "$want" ] && [ -n "$preferred" ] && [ -e "$MODELS/$preferred" ]; then
+    model="$preferred"
+fi
+if [ -z "$model" ]; then
+    for f in "$MODELS"/*.gguf; do
+        [ -e "$f" ] || continue
+        base="$(basename "$f")"
+        if [ -z "$want" ] || [[ "$base" == *"$want"* ]]; then model="$base"; break; fi
+    done
+fi
 if [ -z "$model" ]; then
     echo "no weights in $MODELS${want:+ matching \"$want\"} - the assistant would be the stub" >&2
     echo "put a .gguf there, or run the app and fetch one from settings" >&2

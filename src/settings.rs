@@ -79,9 +79,13 @@ pub struct Weights {
 /// not know is worth more here than a bigger one that does not know it does
 /// not.
 ///
-/// Ornith stays as the smaller one. It answers everything the 35B does at half
-/// the size and half the speed, which is the right trade on a machine with
-/// less to spare.
+/// Ornith was kept for a while as the smaller one - half the size, half the
+/// speed, and nearly as right on the battery above. It is not offered any
+/// more, because the scenes are where the difference shows: it parroted a
+/// bracketed note out of its own history back as an answer, and it gave up on
+/// a lifetime share it had all the numbers for. Offering a model that does
+/// that means offering two applications, and only one of them works.
+/// Anything on disk can still be chosen; this list is what is fetched.
 ///
 /// Four were tried and are not here for reasons of this application rather
 /// than of theirs. LFM2.5 8B writes at 70 tokens a second and scored nothing,
@@ -99,13 +103,6 @@ pub const CATALOGUE: &[Weights] = &[
         url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
         megabytes: 13200,
         note: "THE BEST OF THESE, AND THE FASTEST",
-    },
-    Weights {
-        label: "ORNITH 1.5 9B",
-        file: "Ornith-1.5-9B-Q4_K_M.gguf",
-        url: "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf",
-        megabytes: 5780,
-        note: "HALF THE SIZE, NEARLY AS RIGHT",
     },
 ];
 
