@@ -833,7 +833,13 @@ fn bodies_but(text: &str, keep: &[usize]) -> (String, Vec<String>) {
             .or_else(|| attr(head, "file"))
             .unwrap_or_else(|| "the note".into());
         let done = match state_attr(head) {
-            Some(true) => "accepted, and the file is as it left it",
+            // Only that it was taken, not what the file says now. A block
+            // that has lost its body is one a later block for the same file
+            // has superseded, and three notes in a row each saying the file
+            // was "as it left it" were three contradictions in front of a
+            // model about to rewrite that file - which it then did from a
+            // picture that matched none of them.
+            Some(true) => "accepted",
             Some(false) => "turned down, and the file is as it was",
             None => "not answered either way yet",
         };
