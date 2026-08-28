@@ -1537,9 +1537,12 @@ fn two_notes_folded_into_one(app: &mut App) -> Result<(), String> {
     if !week.contains("Swim") || !week.contains("Climb") {
         return Err(format!("{WRONG}week.md is missing a list: {week:?}"));
     }
+    // A write of the new note with the old ones left standing is half a
+    // merge, which the instructions name as the thing not to do. The model
+    // chose the verb; the application did as it was told.
     if a.exists() || b.exists() {
         return Err(format!(
-            "the parts are still there after the merge: monday {} tuesday {}",
+            "{WRONG}the parts are still there after the merge: monday {} tuesday {}",
             a.exists(),
             b.exists()
         ));
