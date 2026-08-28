@@ -5806,6 +5806,31 @@ fn the_panel_says_what_is_actually_happening() {
 }
 
 #[test]
+fn a_read_asked_for_in_every_shape_seen_is_a_read() {
+    use notes::llm::calls;
+    let one = |s: &str| calls(s);
+    // As a block, which is the shape it was first seen in.
+    assert_eq!(
+        one("<read file=\"bike.md\"></read>"),
+        vec![("read".into(), "bike.md".into())]
+    );
+    // As a call, the way the tools are declared.
+    assert_eq!(
+        one("<tool_call>\n<function=read>\n<parameter=file>\nbike.md\n</parameter>\n</function>\n</tool_call>"),
+        vec![("read".into(), "bike.md".into())]
+    );
+    // And the two fused: no name on the tag, the name as a parameter under
+    // it, a call's closing tags. Word for word from a run, where it came out
+    // as "it did not answer".
+    assert_eq!(
+        one("<read>\n<parameter=file>\nshop.md\n</parameter>\n</function>\n</tool_call>"),
+        vec![("read".into(), "shop.md".into())]
+    );
+    // A word that starts the same way is a word.
+    assert!(one("the <reader> was <ready>").is_empty());
+}
+
+#[test]
 fn a_call_with_the_argument_left_out_is_still_a_call() {
     use notes::llm::calls;
     // Word for word: asked for a number of days in weeks, it wrote the call

@@ -562,6 +562,12 @@ pub fn calls(reply: &str) -> Vec<(String, String)> {
 /// it went unanswered and the model fell back on what it already believed.
 ///
 /// Answered in the shape it asked, it gets it right. So both shapes are heard.
+///
+/// And a fourth shape, once the model has blocks and tools both well in mind:
+/// `<read>` with no name on it, the name as a call's parameter underneath,
+/// and a call's closing tags. Asked to add a line to a note it had just made,
+/// it wrote that to look at the note first - which was the right thing to
+/// want - and nothing understood it, so the reply came out as nothing.
 fn asked_to_read(reply: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut rest = reply;
@@ -570,11 +576,27 @@ fn asked_to_read(reply: &str) -> Vec<(String, String)> {
         let Some((head, tail)) = after.split_once('>') else {
             break;
         };
-        if let Some(named) = head.split('"').nth(1) {
-            let named = named.trim();
-            if !named.is_empty() {
-                out.push(("read".to_string(), named.to_string()));
-            }
+        // Only the tag itself: `<reader>` or `<ready` is a word, not a call.
+        if !head.is_empty() && !head.starts_with(char::is_whitespace) {
+            rest = tail;
+            continue;
+        }
+        let quoted = head
+            .split('"')
+            .nth(1)
+            .map(str::trim)
+            .filter(|n| !n.is_empty());
+        let named = quoted.map(str::to_string).or_else(|| {
+            // The name written as a parameter, up to the parameter's closing
+            // tag or the next tag of any kind, whichever comes first.
+            tail.split("<parameter=")
+                .nth(1)
+                .and_then(|p| p.split_once('>'))
+                .map(|(_, v)| v.split('<').next().unwrap_or("").trim().to_string())
+                .filter(|n| !n.is_empty())
+        });
+        if let Some(named) = named {
+            out.push(("read".to_string(), named));
         }
         rest = tail;
     }
