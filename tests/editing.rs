@@ -5873,6 +5873,98 @@ fn a_change_wrapped_in_a_call_survives_the_tags_coming_off() {
 }
 
 #[test]
+fn a_file_that_has_not_moved_is_not_sent_again() {
+    use notes::chat::Chat;
+    use notes::digest::fingerprint;
+    let big = |seed: &str| {
+        format!(
+            "# Big\n\n{}\n{seed}\n",
+            "a long line of prose\n".repeat(400)
+        )
+    };
+    let files = |tail: &str| {
+        vec![
+            ("one.md".to_string(), big("one")),
+            ("two.md".to_string(), big("two")),
+            ("three.md".to_string(), big(tail)),
+        ]
+    };
+    let index = "- `one.md`\n- `two.md`\n- `three.md`";
+    let mut chat = Chat::new("home".into(), "one.md".into());
+    chat.context(index, &files("three"));
+
+    // Asked again, ten turns running, with nothing touched. Not a word of any
+    // of the three may come back, and the project at the front must be the
+    // same bytes it was - that is what keeps it out of the reading.
+    let (_, first, _) = chat.context(index, &files("three"));
+    for _ in 0..10 {
+        let (_, project, moved) = chat.context(index, &files("three"));
+        assert_eq!(project, first, "the project moved on its own");
+        assert!(moved.is_none(), "an unmoved file was reported: {moved:?}");
+    }
+
+    // One of the three touched, and only that one is spoken about.
+    let (_, project, moved) = chat.context(index, &files("three, changed"));
+    assert_eq!(project, first, "the project must still not be rewritten");
+    let said = moved.expect("the one that moved is reported");
+    assert!(said.contains("three.md"), "{said}");
+    assert!(
+        !said.contains("one.md") && !said.contains("two.md"),
+        "{said}"
+    );
+    assert!(said.contains("+three, changed"), "{said}");
+    assert!(
+        !said.contains("a long line of prose\na long"),
+        "the file came: {said}"
+    );
+
+    // And the number that decides it is a number, not the file.
+    assert_eq!(fingerprint(&big("three")), fingerprint(&big("three")));
+    assert_ne!(fingerprint(&big("three")), fingerprint(&big("four")));
+}
+
+#[test]
+fn two_changes_far_apart_are_two_hunks_and_not_the_whole_file() {
+    use notes::chat::Chat;
+    let body = |a: &str, b: &str| {
+        let mut lines: Vec<String> = (1..=200).map(|n| format!("line {n}")).collect();
+        lines[4] = a.to_string();
+        lines[194] = b.to_string();
+        lines.join("\n") + "\n"
+    };
+    let before = body("line 5", "line 195");
+    let after = body("line 5 CHANGED", "line 195 CHANGED");
+    let file = |t: &str| vec![("notes.md".to_string(), t.to_string())];
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    chat.context("- `notes.md`", &file(&before));
+
+    let (_, _, moved) = chat.context("- `notes.md`", &file(&after));
+    let said = moved.expect("the change is reported");
+
+    // Both changes, both marked, both with the line they replaced.
+    assert!(said.contains("-line 5\n"), "{said}");
+    assert!(said.contains("+line 5 CHANGED"), "{said}");
+    assert!(said.contains("-line 195\n"), "{said}");
+    assert!(said.contains("+line 195 CHANGED"), "{said}");
+
+    // Two hunks, and the hundred and eighty lines between them left alone.
+    // This is the whole point: it used to send all of them, to say two.
+    assert_eq!(said.matches("@@ -").count(), 2, "{said}");
+    assert!(!said.contains("line 100"), "the middle came too: {said}");
+    // Ten lines of file travel - two changed, two removed and added, and the
+    // context around each - where the whole stretch between them used to.
+    let carried = said
+        .lines()
+        .filter(|l| l.starts_with(['+', '-', ' ']) && !l.starts_with("@@"))
+        .count();
+    assert!(carried <= 12, "{carried} lines of file came: {said}");
+
+    // Where in the file, in the numbers the margin shows and an edit takes.
+    assert!(said.contains("@@ -3,5 +3,5 @@"), "{said}");
+    assert!(said.contains("@@ -193,5 +193,5 @@"), "{said}");
+}
+
+#[test]
 fn a_list_is_corrected_by_the_lines_that_moved() {
     use notes::digest::relisted;
     let was = "- `a.md` \"A\": the first one\n- `b.md` \"B\": the second one\n\
@@ -6165,11 +6257,10 @@ fn the_project_is_written_out_once_and_corrected_after() {
     assert_eq!(still, first, "the project must still not be rewritten");
     let moved = moved.expect("the change is reported");
     assert!(moved.contains("notes.md"), "{moved}");
-    assert!(moved.contains("the tap was fixed"), "{moved}");
-    assert!(
-        !moved.contains("the tap drips"),
-        "the old line is not repeated"
-    );
+    assert!(moved.contains("+the tap was fixed"), "{moved}");
+    // The line that went is shown as gone rather than left to be inferred.
+    // That is what a diff is, and it is a line, not the file.
+    assert!(moved.contains("-the tap drips"), "{moved}");
     assert!(
         moved.len() < first.len() / 4,
         "a one line change should be small beside the project: {} vs {}",

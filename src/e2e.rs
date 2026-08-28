@@ -1033,6 +1033,57 @@ fn reading_a_note_when_asked(app: &mut App) -> Result<(), String> {
     Ok(())
 }
 
+/// A long note changed in two places at once, and read as a diff.
+///
+/// The case the diff exists for. Two words changed a hundred and ninety lines
+/// apart used to arrive as the hundred and ninety-one lines between them; they
+/// arrive now as two hunks of a unified diff, which is a shape these models
+/// have read more of than almost anything else. What is checked here is not
+/// the size of it but that the model can still answer from it - both ends of
+/// it, in one question, having been shown neither line in full.
+fn a_long_note_changed_in_two_places(app: &mut App) -> Result<(), String> {
+    let note = app.dir.join("house.md");
+    let write = |kettle: &str, tap: &str| {
+        let mut lines: Vec<String> = (1..=200)
+            .map(|n| format!("Room note number {n}."))
+            .collect();
+        lines[0] = "# House".to_string();
+        lines[4] = format!("The kettle is {kettle}.");
+        lines[194] = format!("The tap is {tap}.");
+        std::fs::write(&note, lines.join("\n") + "\n").map_err(|e| format!("{e}"))
+    };
+    write("BROKEN", "DRIPPING")?;
+    app.steps(90);
+    fresh_chat(app)?;
+    // Asked once, so the whole file is written out at the front and the model
+    // has been shown it. Everything after this is measured against that.
+    asking(app, "in house.md, what is wrong with the kettle? one word.")?;
+    let said = last_answer(app).to_lowercase();
+    if !said.contains("broken") {
+        return Err(format!("{WRONG}it should say broken: {said:?}"));
+    }
+    // Two lines, a hundred and ninety apart, changed by somebody else.
+    std::thread::sleep(Duration::from_millis(1100));
+    write("FIXED", "SEALED")?;
+    app.steps(90);
+    asking(
+        app,
+        "in house.md, what is the kettle and what is the tap now? two words.",
+    )?;
+    let said = last_answer(app).to_lowercase();
+    let missing: Vec<&str> = ["fixed", "sealed"]
+        .into_iter()
+        .filter(|want| !said.contains(want))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{WRONG}the diff was not read - missing {missing:?}: {said:?}"
+        ))
+    }
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -1085,6 +1136,10 @@ const SCENES: &[Scene] = &[
         a_note_in_a_project_changed_outside,
     ),
     ("reading a note when asked", reading_a_note_when_asked),
+    (
+        "a long note changed in two places",
+        a_long_note_changed_in_two_places,
+    ),
     ("the conversation is kept", the_conversation_is_kept),
 ];
 

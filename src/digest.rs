@@ -249,6 +249,20 @@ pub fn numbered(text: &str) -> String {
     out
 }
 
+/// A file's contents in eight bytes, for telling whether it is the one we saw.
+///
+/// Not a secure hash and not trying to be: the two things being compared are
+/// two versions of a note on one person's disk, minutes apart. What it buys is
+/// that "has this changed" is one number against one number, whatever the file
+/// weighs - so a project of long notes is walked without comparing a word of
+/// them, and a file that has not moved is not looked at twice.
+pub fn fingerprint(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
 /// What has changed in a project since the model was shown it.
 ///
 /// `None` when nothing has. Otherwise a note saying which files moved and what
@@ -270,16 +284,21 @@ pub fn since(shown: &[(String, String)], now: &[(String, String)]) -> Option<Str
     let mut out = String::new();
     for (name, text) in now {
         match shown.iter().find(|(n, _)| n == name) {
+            // Told about it already and it weighs the same to the byte: there
+            // is nothing to say, and nothing was read to find that out beyond
+            // the two numbers. This is the common case by a long way - most
+            // files in a project are untouched by any one edit - and it is the
+            // case that has to cost nothing.
+            Some((_, before)) if fingerprint(before) == fingerprint(text) => {}
             None => {
                 out.push_str(&format!(
                     "`{name}` now contains, in full:\n\n{}\n\n",
                     numbered(text)
                 ));
             }
-            Some((_, before)) if before != text => {
+            Some((_, before)) => {
                 out.push_str(&format!("In `{name}`, {}\n\n", replaced(before, text)));
             }
-            Some(_) => {}
         }
     }
     for (name, _) in shown {
@@ -361,14 +380,41 @@ pub fn relisted(before: &str, after: &str) -> Option<String> {
     Some(out)
 }
 
-/// The lines of a file that are not the same any more, with their numbers.
+/// How many unchanged lines to show either side of a change.
 ///
-/// Matched from both ends, because an edit is a contiguous stretch far more
-/// often than it is scattered: what is left in the middle is what moved. A
-/// scattered change collapses to one large middle, which is correct if not
-/// clever, and the caller has a budget for when that stops being worth it.
+/// Two rather than the three a unified diff usually carries. A note is not
+/// source code and the surrounding lines are usually prose, which is long: the
+/// third line of context costs more here than it does anywhere else, and two is
+/// enough to say where in the file this is.
+const CONTEXT: usize = 2;
+
+/// The most cells of comparison to do before giving up and showing the lot.
+///
+/// The table is one cell per pair of lines that might match, so it grows with
+/// the product of the two sides. Trimming the common ends first means the two
+/// sides are usually tiny, and this only ever comes up when a file has been
+/// rewritten wholesale - at which point showing what changed is showing the
+/// file anyway.
+const CELLS: usize = 4_000_000;
+
+/// The lines of a file that are not the same any more, as a diff.
+///
+/// The shape every diff has had since 1975, because it is the shape these
+/// models have read more of than any other: `@@` to say where, `-` for what
+/// went, `+` for what came. Line numbers count from one, as in the margin, so
+/// a model reading this can turn round and write an `<edit lines="...">`
+/// against the numbers it just read.
+///
+/// It says the *lines*, not the stretch containing them. What was here before
+/// matched the two files from their ends and sent everything in between, which
+/// is right when an edit is one contiguous thing and is what an edit usually
+/// is. When it is not, it was hopeless: two words changed a hundred and ninety
+/// lines apart in a two-hundred line note sent a hundred and ninety-one lines,
+/// to say two. That is the case this exists for - a one-line change in a large
+/// file - and it now sends two lines and their context.
 fn replaced(before: &str, after: &str) -> String {
-    let (old, new): (Vec<&str>, Vec<&str>) = (before.lines().collect(), after.lines().collect());
+    let old: Vec<&str> = before.lines().collect();
+    let new: Vec<&str> = after.lines().collect();
     let head = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
     let tail = old[head..]
         .iter()
@@ -376,23 +422,128 @@ fn replaced(before: &str, after: &str) -> String {
         .zip(new[head..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
-    let (from, to) = (head + 1, new.len() - tail);
-    if to < from {
-        // Only removals: nothing new stands where the old lines were.
-        return format!(
-            "lines {from} to {} are gone, and the file is now {} lines long.",
-            old.len() - tail,
-            new.len()
-        );
+    // Give back a little of each end, so a change at the very start or end of
+    // what moved still has a line or two either side of it saying where it is.
+    // Those lines are the same in both files, so they walk through as context
+    // and cost only themselves.
+    let room = old.len().min(new.len());
+    let head = head.saturating_sub(CONTEXT);
+    let tail = tail.saturating_sub(CONTEXT).min(room - head);
+    let (o, n) = (&old[head..old.len() - tail], &new[head..new.len() - tail]);
+    let ends = format!("The file is {} lines long.", new.len());
+    if o.is_empty() && n.is_empty() {
+        return format!("nothing changed after all. {ends}");
     }
-    let body: Vec<String> = new[head..new.len() - tail]
+    let steps = if o.len().saturating_mul(n.len()) > CELLS {
+        // Too much to line up, which means almost none of it lines up. One
+        // hunk saying "all of this, for all of that" is the honest answer.
+        o.iter()
+            .map(|line| ('-', *line))
+            .chain(n.iter().map(|line| ('+', *line)))
+            .collect()
+    } else {
+        walked(o, n)
+    };
+    let text = written(&steps, head);
+    // A diff longer than the thing it describes is not worth reading.
+    if text.len() >= after.len() {
+        return format!("it now reads, in full:\n\n{}\n\n{ends}", numbered(after));
+    }
+    format!("these lines changed:\n\n{text}\n{ends}")
+}
+
+/// The two sides walked together into keeps, removals and additions.
+fn walked<'a>(o: &[&'a str], n: &[&'a str]) -> Vec<(char, &'a str)> {
+    let (rows, cols) = (o.len(), n.len());
+    // Longest common subsequence, from the far corner back, so that walking
+    // forward through it takes the longest run of lines the two share.
+    let mut table = vec![0u32; (rows + 1) * (cols + 1)];
+    let at = |i: usize, j: usize| i * (cols + 1) + j;
+    for i in (0..rows).rev() {
+        for j in (0..cols).rev() {
+            table[at(i, j)] = if o[i] == n[j] {
+                table[at(i + 1, j + 1)] + 1
+            } else {
+                table[at(i + 1, j)].max(table[at(i, j + 1)])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < rows && j < cols {
+        if o[i] == n[j] {
+            out.push((' ', o[i]));
+            i += 1;
+            j += 1;
+        } else if table[at(i + 1, j)] >= table[at(i, j + 1)] {
+            out.push(('-', o[i]));
+            i += 1;
+        } else {
+            out.push(('+', n[j]));
+            j += 1;
+        }
+    }
+    out.extend(o[i..].iter().map(|line| ('-', *line)));
+    out.extend(n[j..].iter().map(|line| ('+', *line)));
+    out
+}
+
+/// The steps written out as hunks, with their line numbers.
+///
+/// `skip` is how many lines of the file were the same at the front and so were
+/// never walked; every number here is counted from one in the whole file.
+fn written(steps: &[(char, &str)], skip: usize) -> String {
+    // Where each step sits in the two files.
+    let mut placed: Vec<(char, &str, usize, usize)> = Vec::new();
+    let (mut o, mut n) = (skip, skip);
+    for (mark, line) in steps {
+        placed.push((*mark, line, o, n));
+        match mark {
+            '-' => o += 1,
+            '+' => n += 1,
+            _ => {
+                o += 1;
+                n += 1;
+            }
+        }
+    }
+    // Changed steps, grouped while they are near enough to share context.
+    let moved: Vec<usize> = placed
         .iter()
         .enumerate()
-        .map(|(i, line)| format!("{:>4} {line}", from + i))
+        .filter(|(_, (m, _, _, _))| *m != ' ')
+        .map(|(i, _)| i)
         .collect();
-    format!(
-        "lines {from} to {to} now read:\n\n{}\n\nThe file is {} lines long.",
-        body.join("\n"),
-        new.len()
-    )
+    let mut groups: Vec<(usize, usize)> = Vec::new();
+    for i in moved {
+        match groups.last_mut() {
+            Some((_, last)) if i <= *last + CONTEXT * 2 + 1 => *last = i,
+            _ => groups.push((i, i)),
+        }
+    }
+    let mut out = String::new();
+    for (first, last) in groups {
+        let from = first.saturating_sub(CONTEXT);
+        let to = (last + CONTEXT).min(placed.len() - 1);
+        let span = &placed[from..=to];
+        let count = |want: char| {
+            span.iter()
+                .filter(|(m, _, _, _)| *m == want || *m == ' ')
+                .count()
+        };
+        let start = |pick: fn(&(char, &str, usize, usize)) -> usize| {
+            span.first().map(pick).unwrap_or(0) + 1
+        };
+        out.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            start(|s| s.2),
+            count('-'),
+            start(|s| s.3),
+            count('+')
+        ));
+        for (mark, line, _, _) in span {
+            out.push_str(&format!("{mark}{line}\n"));
+        }
+    }
+    out
 }
