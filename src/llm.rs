@@ -273,7 +273,9 @@ was looking at.
 - Use write to lay down a whole file, whether or not it is there yet. Use merge to \
 fold files into one and take the rest away, in a single step - never a write plus \
 deletes, because those are accepted separately and half a merge loses a note.
-- One block per reply, with a sentence outside it saying what you changed.
+- One block per file. A change that reaches into several files is one block for each, \
+all in the same reply - a price that appears in two notes is changed in both at once, \
+not one now and one later. A sentence outside the blocks says what changed.
 - Nothing happens until they accept it. Propose the change; do not announce you have \
 made it.
 - Asked to change nothing, write no block.";
