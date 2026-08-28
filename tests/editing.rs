@@ -5563,6 +5563,81 @@ fn a_reply_cannot_decide_its_own_change_or_disguise_it_as_a_call() {
 }
 
 #[test]
+fn the_correction_stays_on_the_question_when_a_tool_is_used() {
+    use notes::llm::{Ask, Assistant, Backend, Reply, Tool, Turn, Watcher};
+    use std::sync::{Arc, Mutex};
+    /// Remembers every conversation it was handed, and reaches for a tool the
+    /// first time only.
+    struct Noting(Arc<Mutex<Vec<Ask>>>);
+    impl Backend for Noting {
+        fn name(&self) -> String {
+            "NOTING".into()
+        }
+        fn edit(&mut self, ask: &Ask, _w: &mut dyn Watcher) -> Reply {
+            let mut seen = self.0.lock().unwrap();
+            seen.push(ask.clone());
+            Ok(if seen.len() == 1 {
+                "<tool_call><function=date><parameter=when>today</parameter></function></tool_call>"
+                    .into()
+            } else {
+                "Green.".into()
+            })
+        }
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut a = Assistant::spawn(Box::new(Noting(seen.clone())));
+    a.ask(Ask {
+        turns: vec![Turn {
+            mine: true,
+            text: "what colour is the bike".into(),
+        }],
+        since: Some("STOP. bike.md now says green.".into()),
+        tools: vec![Tool {
+            name: "date",
+            about: "the day",
+            takes: ("when", "a date"),
+        }],
+        ..Default::default()
+    });
+    loop {
+        if let Some(r) = a.poll() {
+            r.expect("an answer");
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "one call, then the answer");
+
+    // The first pass: the correction is in front of the question.
+    let first = &seen[0].turns;
+    assert!(first[0].text.starts_with("STOP."), "{}", first[0].text);
+    assert!(first[0].text.ends_with("what colour is the bike"));
+
+    // The second: the question still carries it, and the tool's answer -
+    // which is now the last turn - does not. It used to move: "STOP, the
+    // files have changed" was stapled to a tool response, and the question
+    // it had been in front of a moment before had lost it, so the turn that
+    // had just been read from the cache no longer matched.
+    let second = &seen[1].turns;
+    assert_eq!(second[0].text, first[0].text, "the question turn changed");
+    let last = second.last().unwrap();
+    assert!(
+        last.mine && last.text.contains("<tool_response>"),
+        "{}",
+        last.text
+    );
+    assert!(
+        !last.text.contains("STOP."),
+        "moved onto the tool response: {}",
+        last.text
+    );
+
+    // And no backend is left to place it a second time.
+    assert!(seen.iter().all(|a| a.since.is_none()));
+}
+
+#[test]
 fn every_part_of_a_multi_step_answer_is_kept() {
     use notes::llm::{Ask, Assistant, Backend, Reply, Tool, Turn, Watcher};
     /// A model answering a three-part question the way they do: a part, then

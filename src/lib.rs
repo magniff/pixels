@@ -351,6 +351,22 @@ pub struct Notes {
 }
 
 /// Where the vault is: `./notes`, or wherever `PIXUI_NOTES_DIR` says.
+/// The status this process means to leave with.
+///
+/// Read by the handler that takes the process down before ggml's own teardown
+/// can - see `llm::local::leave_before_ggml_does`. That handler leaves through
+/// `_exit`, which takes a code of its own and knows nothing about the one
+/// `std::process::exit` was called with. So the suite that drives the real
+/// model said "3 of 12 scenes failed" and then exited 0, every time, and a
+/// shell script built on its status could never have noticed.
+pub static EXIT_CODE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Leave with this status, by whichever door the process leaves through.
+pub fn leave(code: i32) -> ! {
+    EXIT_CODE.store(code, std::sync::atomic::Ordering::SeqCst);
+    std::process::exit(code)
+}
+
 pub fn notes_dir() -> PathBuf {
     std::env::var_os("PIXUI_NOTES_DIR")
         .map(PathBuf::from)

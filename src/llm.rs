@@ -54,7 +54,9 @@ pub struct Ask {
     ///
     /// Goes at the end, just before the newest question, rather than being
     /// folded into the project at the front - which is the whole reason it
-    /// exists. See [`crate::digest::since`].
+    /// exists. See [`crate::digest::since`]. Folded into that question once,
+    /// by the answering loop, before any backend sees it; a backend is handed
+    /// this as `None` and the question already carrying it.
     pub since: Option<String>,
     /// Whether looking things up is switched off rather than absent.
     ///
@@ -667,6 +669,21 @@ fn answer(
     stop: &std::sync::atomic::AtomicBool,
 ) -> Reply {
     let mut turns = ask.turns.clone();
+    // What moved since the project was written out goes in front of the
+    // question, once, here - and not in the backend, where it went in front
+    // of whichever turn happened to be last. A question that reaches for a
+    // tool is asked again with the tool's answer as the last turn, and the
+    // correction was moving with it: the model was shown "STOP, the files
+    // below have changed" stapled to a tool response, and the question it had
+    // been in front of a moment earlier had lost it. Every question of that
+    // kind was also read from the cache twice over, because the turn it moved
+    // out of no longer matched the turn that had been read.
+    if let (Some(moved), Some(last)) = (&ask.since, turns.last_mut()) {
+        if last.mine {
+            last.text = format!("{moved}\n\n---\n\n{}", last.text);
+        }
+    }
+    let ask = Ask { since: None, ..ask };
     let mut used: Vec<Used> = Vec::new();
     let mut step = 0u8;
     // What it has said so far, across every pass.

@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // expects to be run in.
     if std::env::args().any(|a| a == "--e2e") {
         let failed = notes::e2e::run()?;
-        std::process::exit(i32::from(failed > 0));
+        notes::leave(i32::from(failed > 0));
     }
 
     // `--ask <instruction>` runs one edit against whatever is on stdin and
