@@ -175,6 +175,7 @@ To change the project - and only when asked to - write one block, at the top lev
 outside any code fence:
 
 <edit file=\"{note}\" lines=\"12-14\">the text those lines become</edit>
+<edit file=\"{note}\" after=\"14\">new lines to go in below line 14</edit>
 <write file=\"{note}\">everything the file says from now on</write>
 <delete file=\"old.md\"></delete>
 <merge into=\"kept.md\" from=\"one.md, two.md\">what the one file says</merge>
@@ -187,11 +188,11 @@ they are looking at.
 read with the read tool; to change one in another project, say they should open it.
 - Lines are inclusive and count from one, as in the margin. Write the replacement \
 without the numbers.
-- Change as few lines as the request needs. To add something, edit the line it goes \
-after and write that line again with the new one under it - or, to add at the end, \
-edit the line one past the last. Not the whole file: rewriting a file to make one \
-addition means copying out every line you were not asked to touch, and what gets \
-copied wrong is the part nobody was looking at.
+- Change as few lines as the request needs. To add something, use after: the new \
+lines go in below that line and nothing else moves, and after=\"0\" puts them at \
+the top. Not the whole file: rewriting a file to make one addition means copying out \
+every line you were not asked to touch, and what gets copied wrong is the part nobody \
+was looking at.
 - Use write to lay down a whole file, whether or not it is there yet. Use merge to \
 fold files into one and take the rest away, in a single step - never a write plus \
 deletes, because those are accepted separately and half a merge loses a note.

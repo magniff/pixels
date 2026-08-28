@@ -480,6 +480,15 @@ pub enum What {
         to: usize,
         text: String,
     },
+    /// Put this text in below this line, moving nothing. Zero is the top.
+    ///
+    /// Adding a line used to be an edit: replace the line it goes after with
+    /// that line and the new one. Which is the instruction models get wrong
+    /// most - asked to add eggs to a list, one rewrote the tail from the wrong
+    /// line and had the milk twice; told to edit the line it goes after,
+    /// another edited it and left the old line out. Both are the same
+    /// difficulty: saying "add" as "replace with more". This says add.
+    Insert { after: usize, text: String },
     /// What the file should contain from now on, whether or not it is there
     /// yet. One verb rather than create-and-append-and-replace: "here is what
     /// this file says now" covers all three, and a model that has been handed
@@ -527,6 +536,7 @@ impl Change {
             .unwrap_or(0);
         match &self.what {
             What::Edit { from, to, text } => (count(text), to.saturating_sub(*from) + 1),
+            What::Insert { text, .. } => (count(text), 0),
             What::Write { text } => (count(text), target),
             What::Delete => (0, target),
             // Everything folded in goes away as well as the target being
@@ -554,6 +564,12 @@ impl Change {
         }
         let lines = folder.lines(self.file.as_ref());
         match &self.what {
+            // Below a line that is there, or at the top, and nothing is
+            // replaced. Where the file is looked for is as for an edit.
+            What::Insert { after, .. } => {
+                let lines = lines.or_else(|| folder.lines(None))?;
+                (*after <= lines.len()).then(String::new)
+            }
             What::Edit { from, to, .. } => {
                 // A name that matches nothing in the project is no better than
                 // no name, and no name means the note in front of you - which
@@ -592,7 +608,9 @@ impl Change {
     /// What it would leave behind in place of that.
     pub fn becoming(&self, folder: &Folder) -> String {
         match &self.what {
-            What::Edit { text, .. } | What::Write { text } => text.clone(),
+            What::Edit { text, .. } | What::Insert { text, .. } | What::Write { text } => {
+                text.clone()
+            }
             What::Delete => String::new(),
             What::Merge { from, text } if text.is_empty() => from
                 .iter()
@@ -610,6 +628,8 @@ impl Change {
         match &self.what {
             What::Edit { from, to, .. } if from == to => format!("{named}  LINE {from}"),
             What::Edit { from, to, .. } => format!("{named}  LINES {from}-{to}"),
+            What::Insert { after: 0, .. } => format!("{named}  AT THE TOP"),
+            What::Insert { after, .. } => format!("{named}  AFTER LINE {after}"),
             What::Write { .. } => format!("WRITE  {named}"),
             What::Delete => format!("DELETE  {named}"),
             What::Merge { from, .. } => format!("MERGE  {}  INTO  {named}", from.join(", ")),
@@ -859,11 +879,18 @@ pub fn proposals(reply: &str) -> (String, Vec<Change>) {
         // the wrong one is still understood.
         let named = attr(head, "into").or_else(|| attr(head, "file"));
         let what = match kind {
-            "edit" => lines_attr(head)
-                .map(|(from, to)| What::Edit {
-                    from,
-                    to,
+            "edit" => attr(head, "after")
+                .and_then(|a| a.trim().parse().ok())
+                .map(|after| What::Insert {
+                    after,
                     text: body.clone(),
+                })
+                .or_else(|| {
+                    lines_attr(head).map(|(from, to)| What::Edit {
+                        from,
+                        to,
+                        text: body.clone(),
+                    })
                 })
                 // An edit of no particular lines, of a file it has named, is a
                 // write: here is what the file should say. Models reach for
@@ -2235,7 +2262,7 @@ impl Chat {
         let tint = match change.what {
             What::Delete => th.danger.face,
             What::Write { .. } | What::Merge { .. } => th.positive.face,
-            What::Edit { .. } => th.info.hi,
+            What::Edit { .. } | What::Insert { .. } => th.info.hi,
         };
         font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, tint, true);
         // Both answers, side by side and equally reachable. A change offered

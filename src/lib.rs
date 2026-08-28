@@ -1248,6 +1248,24 @@ impl Notes {
                 self.scroll = 0;
                 self.status = format!("DELETED {named}").to_uppercase();
             }
+            chat::What::Insert { after, text } => {
+                let Some(i) = found.or(Some(self.current).filter(|i| *i < self.notes.len())) else {
+                    self.status = "THAT FILE IS NOT THERE".into();
+                    return;
+                };
+                let buf = &mut self.notes[i].buffer;
+                if *after > buf.line_count() {
+                    self.status = "THAT LINE IS NOT THERE".into();
+                    return;
+                }
+                let fresh: Vec<String> = text.split('\n').map(str::to_string).collect();
+                buf.checkpoint();
+                buf.insert_lines(*after, &fresh);
+                buf.cursor = text::Cursor::new(*after, 0);
+                buf.clamp_cursor(false);
+                self.current = i;
+                self.status = "APPLIED".into();
+            }
             chat::What::Edit { from, to, text } => {
                 // Falling back to the note in front of you, which is what an
                 // edit with no name means and what one with a name nothing is

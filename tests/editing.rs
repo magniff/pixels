@@ -5846,6 +5846,69 @@ fn a_call_with_the_argument_left_out_is_still_a_call() {
 }
 
 #[test]
+fn a_line_is_added_below_another_without_replacing_it() {
+    use notes::chat::{proposals, Change, Folder, What};
+    let said = "<edit file=\"shop.md\" after=\"3\">- bread 1.80</edit>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(
+        changes[0].what,
+        What::Insert {
+            after: 3,
+            text: "- bread 1.80".into()
+        }
+    );
+
+    let lines: Vec<String> = vec!["# Shop".into(), String::new(), "- milk 2.50".into()];
+    let folder = Folder {
+        project: String::new(),
+        here: "shop.md".into(),
+        files: vec![("shop.md".to_string(), &lines[..])],
+    };
+    // Replaces nothing, and is offered - below the last line, or at the top.
+    assert_eq!(changes[0].replacing(&folder).as_deref(), Some(""));
+    let top = Change {
+        what: What::Insert {
+            after: 0,
+            text: "- first".into(),
+        },
+        ..changes[0].clone()
+    };
+    assert_eq!(top.replacing(&folder).as_deref(), Some(""));
+    assert!(top.headline("shop.md").contains("AT THE TOP"));
+    // Below a line that is not there is nowhere.
+    let past = Change {
+        what: What::Insert {
+            after: 9,
+            text: "- x".into(),
+        },
+        ..changes[0].clone()
+    };
+    assert!(past.replacing(&folder).is_none());
+
+    // Applied: the milk is still there, once, and the bread is under it.
+    let dir = std::env::temp_dir().join(format!("notes-insert-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a vault");
+    std::fs::write(dir.join("shop.md"), "# Shop\n\n- milk 2.50").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "shop.md")
+        .expect("there");
+    app.apply_change(&changes[0]);
+    app.apply_change(&top);
+    let text = app.notes[app.current].buffer.to_text();
+    assert_eq!(
+        text.trim_end(),
+        "- first\n# Shop\n\n- milk 2.50\n- bread 1.80",
+        "{text:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn an_edit_one_past_the_end_adds_a_line() {
     use notes::chat::{Change, Folder, What};
     let lines: Vec<String> = vec!["# Shop".into(), String::new(), "- Milk - 2.50".into()];
