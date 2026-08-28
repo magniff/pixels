@@ -58,9 +58,54 @@ fn calendar() -> Tool {
     }
 }
 
+/// Read a note as it is on disk now.
+///
+/// The one tool that reaches into the vault rather than out of the machine.
+/// It exists because of what a model does when it is told a file has changed:
+/// it tries to go and look, and until this it had nothing to look with, so it
+/// answered from the last thing it had been told - which was often its own.
+fn look_at(named: &str) -> Result<String, String> {
+    let wanted = named
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(named)
+        .trim()
+        .to_lowercase();
+    if wanted.is_empty() {
+        return Err("no note was named".into());
+    }
+    let dir = crate::notes_dir();
+    let found = crate::read_vault(&dir)
+        .into_iter()
+        .find(|note| note.filename().to_lowercase() == wanted);
+    match found {
+        Some(note) => Ok(format!(
+            "`{}` says, as of now:\n\n{}",
+            note.filename(),
+            crate::digest::numbered(&note.buffer.to_text())
+        )),
+        None => Err(format!(
+            "there is no note called {named} in the vault. The list of notes is above"
+        )),
+    }
+}
+
+/// Looking at a note, which is the only tool that is about the vault itself.
+fn reading() -> Tool {
+    Tool {
+        name: "read",
+        about: "Read a note and get back what it says now, with its lines numbered. Use it \
+                whenever you are told a file has changed, whenever you are asked to read one, \
+                and before answering about a note you have not been shown recently. What you \
+                were told earlier - including anything you wrote yourself - may be out of date; \
+                this is not.",
+        takes: ("file", "The note's name, without its folder: notes.md"),
+    }
+}
+
 /// Everything on offer, given whether the network has been allowed.
 pub fn available(web_allowed: bool) -> Vec<Tool> {
-    let mut out = vec![arithmetic(), calendar()];
+    let mut out = vec![arithmetic(), calendar(), reading()];
     if web_allowed {
         out.extend(web::tools());
     }
@@ -87,6 +132,7 @@ pub fn run(name: &str, arg: &str) -> String {
     let done = match name {
         "calc" => calc::evaluate(arg),
         "date" => clock::about(arg),
+        "read" => look_at(arg),
         "weather" => web::weather(arg),
         "wikipedia" => web::wikipedia(arg),
         "release" => web::release(arg),

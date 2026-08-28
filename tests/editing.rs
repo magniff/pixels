@@ -5205,7 +5205,13 @@ fn knowing_the_day_needs_no_permission_to_leave_the_machine() {
         "the clock is here, not out there: {offline:?}"
     );
     assert!(offline.contains(&"calc"));
-    assert_eq!(offline.len(), 2, "and those are the two that are always on");
+    // And reading a note, which is the vault rather than the network.
+    assert!(offline.contains(&"read"));
+    assert_eq!(
+        offline.len(),
+        3,
+        "these are the three that need nobody's permission: {offline:?}"
+    );
 }
 
 #[test]
@@ -6110,4 +6116,56 @@ fn a_one_line_change_stays_a_one_line_change() {
     // Nothing moving says nothing.
     let (_, _, moved) = chat.context("- `big.md`", &file(&twice));
     assert!(moved.is_none());
+}
+
+#[test]
+fn asking_to_read_a_note_is_heard_in_either_shape() {
+    use notes::llm::calls;
+    // Told a file had changed and given a tool to read it with, the model
+    // wrote `<read file="bike.md"></read>` - not a tool call, but the shape of
+    // the edit and write blocks it had been taught three paragraphs earlier,
+    // which is a reasonable thing to conclude from that prompt. Nothing
+    // understood it, so it went unanswered and the model fell back on what it
+    // already believed. Answered in the shape it asked, it gets it right.
+    let block = "I should check.\n<read file=\"bike.md\"></read>";
+    assert_eq!(calls(block), vec![("read".to_string(), "bike.md".to_string())]);
+
+    // The proper call still works, and so does one of each.
+    let proper = "<tool_call><function=read><parameter=file>bike.md</parameter></function></tool_call>";
+    assert_eq!(calls(proper), vec![("read".to_string(), "bike.md".to_string())]);
+    let both = format!("{proper}\n<read file=\"other.md\"></read>");
+    assert_eq!(calls(&both).len(), 2, "{both}");
+
+    // And the asking never reaches the panel as words.
+    assert_eq!(notes::llm::without_machinery(block), "I should check.");
+
+    // A note that is not there says so rather than saying nothing.
+    let missing = notes::tools::run("read", "nowhere-at-all.md");
+    assert!(missing.contains("no note called"), "{missing}");
+}
+
+#[test]
+fn a_block_whose_attributes_came_as_parameters_is_still_a_block() {
+    use notes::chat::{proposals, Chat};
+    // The third shape of the same confusion, and the one that turns up once
+    // the model has both blocks and tools well in mind: the name and the body
+    // are there, wearing a call's tags, and the closing tag has wandered into
+    // the middle. It was thrown away, so the change was never offered and
+    // nothing was written.
+    let said = "<write>\n<parameter=file>\nfacts.md\n</write>\n<parameter=content>\n384 * 517 = 198528\n\nChristmas this year is on a Friday.";
+    let mut chat = Chat::new("home".into(), "notes.md".into());
+    chat.answered(Ok(said.into()), std::path::Path::new("/tmp"));
+    let stored = &chat.turns.last().expect("a turn").text;
+    let (_, changes) = proposals(stored);
+    assert_eq!(changes.len(), 1, "still dropped: {stored:?}");
+    assert_eq!(changes[0].file.as_deref(), Some("facts.md"));
+    assert_eq!(changes[0].headline("notes.md"), "WRITE  facts.md");
+    match &changes[0].what {
+        notes::chat::What::Write { text } => {
+            assert!(text.contains("198528"), "{text:?}");
+            assert!(text.contains("Friday"), "{text:?}");
+            assert!(!text.contains("parameter"), "wiring in the body: {text:?}");
+        }
+        other => panic!("read as {other:?}"),
+    }
 }

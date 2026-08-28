@@ -320,14 +320,15 @@ pub fn without_machinery(said: &str) -> String {
 /// More than one spelling, because more than one family is spoken to here and
 /// each was trained on its own. The list is what has actually been seen coming
 /// out of a model in this application, not everything that exists.
-const OPENERS: &[&str] = &["<tool_call", "<function=", "<|tool_call_start|>", "[TOOL_CALL]"];
+const OPENERS: &[&str] = &["<tool_call", "<function=", "<|tool_call_start|>", "[TOOL_CALL]", "<read"];
 
 /// And what ends one.
-const CLOSERS: &[&str] = &["</tool_call>", "</function>", "<|tool_call_end|>", "[/TOOL_CALL]"];
+const CLOSERS: &[&str] = &["</tool_call>", "</function>", "<|tool_call_end|>", "[/TOOL_CALL]", "</read>"];
 
 /// Leftovers: a closing tag whose opening never came, and the parameter
 /// wrapping that sits inside a call and sometimes outlives it.
 const STRAYS: &[&str] = &[
+    "</read>",
     "</tool_call>",
     "</function>",
     "</parameter>",
@@ -336,6 +337,54 @@ const STRAYS: &[&str] = &[
     "[/TOOL_CALL]",
     "[TOOL_CALL]",
 ];
+
+/// A block whose attributes arrived as a call's parameters.
+///
+/// The third shape of the same confusion, and the one that turns up once the
+/// model has both blocks and tools well in mind:
+///
+/// ```text
+/// <write>
+/// <parameter=file>
+/// facts.md
+/// </write>
+/// <parameter=content>
+/// what the file should say
+/// ```
+///
+/// The name and the body are both there, wearing the wrong tags, and the
+/// closing one has wandered into the middle. Read for what it plainly means -
+/// a write of `facts.md` with that text - rather than thrown away, which is
+/// what happened: the change was never offered and nothing was written.
+fn with_parameters(reply: &str) -> String {
+    let mut out = reply.to_string();
+    for kind in ["edit", "write", "create", "delete", "merge"] {
+        let open = format!("<{kind}>");
+        if !out.contains(&open) || !out.contains("<parameter=file>") {
+            continue;
+        }
+        let Some(named) = out
+            .split("<parameter=file>")
+            .nth(1)
+            .and_then(|rest| rest.split('<').next())
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+        else {
+            continue;
+        };
+        let body = out
+            .split("<parameter=content>")
+            .nth(1)
+            .map(|rest| rest.split("</parameter>").next().unwrap_or(rest).trim())
+            .unwrap_or("")
+            .to_string();
+        // Everything from the opening tag onwards was the block; what came
+        // before it is whatever the model said first.
+        let before = out.split(&open).next().unwrap_or("").to_string();
+        out = format!("{before}<{kind} file=\"{named}\">\n{body}\n</{kind}>");
+    }
+    out
+}
 
 /// Put right a change block written as if it were a tool call.
 ///
@@ -367,6 +416,10 @@ const STRAYS: &[&str] = &[
 /// so a genuine call to a tool that happens to share a name is left alone.
 pub fn unfused(reply: &str) -> std::borrow::Cow<'_, str> {
     if !reply.contains("<function=") {
+        // The bare shape needs no unfusing, only its parameters read.
+        if reply.contains("<parameter=file>") {
+            return std::borrow::Cow::Owned(with_parameters(reply));
+        }
         return std::borrow::Cow::Borrowed(reply);
     }
     let mut out = reply.to_string();
@@ -393,6 +446,7 @@ pub fn unfused(reply: &str) -> std::borrow::Cow<'_, str> {
     if !mended {
         return std::borrow::Cow::Borrowed(reply);
     }
+    out = with_parameters(&out);
     for wrapper in ["<tool_call>", "</tool_call>", "</function>", "</parameter>"] {
         out = out.replace(wrapper, "");
     }
@@ -415,11 +469,41 @@ pub fn called(reply: &str) -> Option<(String, String)> {
 /// reply was then all machinery with the first call consumed, what the person
 /// waiting saw was the raw tags of the calls that never ran.
 pub fn calls(reply: &str) -> Vec<(String, String)> {
-    reply
+    let mut out: Vec<(String, String)> = reply
         .split("<function=")
         .skip(1)
         .filter_map(one_call)
-        .collect()
+        .collect();
+    out.extend(asked_to_read(reply));
+    out
+}
+
+/// Reading a note, asked for the way this application's own blocks are written.
+///
+/// Told a file had changed and given a tool to read it with, the model wrote
+/// `<read file="bike.md"></read>` - not a tool call, but the shape of the edit
+/// and write blocks it had just been taught three paragraphs earlier. Which is
+/// a reasonable thing to conclude from that prompt. Nothing understood it, so
+/// it went unanswered and the model fell back on what it already believed.
+///
+/// Answered in the shape it asked, it gets it right. So both shapes are heard.
+fn asked_to_read(reply: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = reply;
+    while let Some(at) = rest.find("<read") {
+        let after = &rest[at + 5..];
+        let Some((head, tail)) = after.split_once('>') else {
+            break;
+        };
+        if let Some(named) = head.split('"').nth(1) {
+            let named = named.trim();
+            if !named.is_empty() {
+                out.push(("read".to_string(), named.to_string()));
+            }
+        }
+        rest = tail;
+    }
+    out
 }
 
 /// One call, from the text just after its `<function=`.

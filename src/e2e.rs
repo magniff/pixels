@@ -959,6 +959,38 @@ fn a_note_in_a_project_changed_outside(app: &mut App) -> Result<(), String> {
     }
 }
 
+/// Asked to read a note, it reads the note.
+///
+/// Typed in a real conversation and answered from memory: "read the file" came
+/// back with the contents of a version that had stopped existing, three times
+/// over, and "are you sure, i just changed it" got the same answer again. It
+/// had nothing to read with.
+fn reading_a_note_when_asked(app: &mut App) -> Result<(), String> {
+    fresh_chat(app)?;
+    let note = app.dir.join("weather.md");
+    std::fs::write(&note, "# Weather\n\nIt is RAINING today.\n").map_err(|e| format!("{e}"))?;
+    app.steps(90);
+    asking(app, "read weather.md and tell me the weather in one word")?;
+    let said = last_answer(app).to_lowercase();
+    let looked = app
+        .app
+        .chat
+        .as_ref()
+        .and_then(|c| c.turns.last())
+        .map(|t| crate::chat::lookups(&t.text).1)
+        .unwrap_or_default();
+    if !looked.iter().any(|l| l.tool == "read") {
+        return Err(format!(
+            "{WRONG}it answered without reading: {:?}",
+            said.chars().take(90).collect::<String>()
+        ));
+    }
+    if !said.contains("rain") {
+        return Err(format!("{WRONG}it read the wrong thing: {said:?}"));
+    }
+    Ok(())
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -998,6 +1030,7 @@ const SCENES: &[Scene] = &[
     ("a passage the model rewrites", a_passage_the_model_rewrites),
     ("a note changed behind its back", a_note_changed_behind_its_back),
     ("a note in a project changed outside", a_note_in_a_project_changed_outside),
+    ("reading a note when asked", reading_a_note_when_asked),
     ("the conversation is kept", the_conversation_is_kept),
 ];
 
