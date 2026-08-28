@@ -1072,6 +1072,188 @@ fn a_thread_that_leans_on_earlier_answers(app: &mut App) -> Result<(), String> {
     }
 }
 
+/// Take the change on offer, or say what the model said instead.
+fn taken(app: &mut App) -> Result<(), String> {
+    if accept_all(app) == 0 {
+        return Err(format!(
+            "{WRONG}it proposed nothing: {:?}",
+            last_answer(app).chars().take(140).collect::<String>()
+        ));
+    }
+    app.saved();
+    Ok(())
+}
+
+/// The note by that name, wherever in the vault it landed, as it is on disk.
+fn on_disk(app: &App, name: &str) -> Result<(PathBuf, String), String> {
+    let Some(found) = app
+        .vault()
+        .into_iter()
+        .find(|p| p.ends_with(name) || p.ends_with(&format!("/{name}")))
+    else {
+        return Err(format!("no {name} on disk. vault: {:?}", app.vault()));
+    };
+    let path = app.dir.join(&found);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    Ok((path, text))
+}
+
+/// A list built up a line at a time, corrected, added up, changed behind the
+/// model's back, added up again, and put in order.
+///
+/// The long way round, which is how a note actually gets made: three things
+/// added one after another, one of them wrong and put right in the next
+/// breath, then questions about what is there, then somebody else changes the
+/// file, then more questions that are only right if that change was read.
+/// Every step depends on the ones before it having landed where they should.
+fn a_list_built_corrected_and_reckoned_up(app: &mut App) -> Result<(), String> {
+    looking_at(app, "", "spend")?;
+    fresh_chat(app)?;
+
+    // Built up, one line at a time.
+    asking(
+        app,
+        "make a note called shop.md with a shopping list. first item: milk, 2.50",
+    )?;
+    taken(app)?;
+    let (path, text) = on_disk(app, "shop.md")?;
+    if !text.to_lowercase().contains("milk") {
+        return Err(format!("{WRONG}milk is not in it: {text:?}"));
+    }
+    asking(app, "add bread, 1.80")?;
+    taken(app)?;
+    asking(app, "add eggs, 3.20")?;
+    taken(app)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    for want in ["milk", "bread", "eggs"] {
+        if !text.to_lowercase().contains(want) {
+            return Err(format!("{WRONG}{want} did not land: {text:?}"));
+        }
+    }
+
+    // Put right in the next breath. The edit has to find the line it just
+    // added, in a file it has now changed twice.
+    asking(app, "oh wait, not eggs - that should be tofu, same price")?;
+    taken(app)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    let low = text.to_lowercase();
+    if !low.contains("tofu") || low.contains("eggs") {
+        return Err(format!("{WRONG}the correction did not take: {text:?}"));
+    }
+    if !low.contains("milk") || !low.contains("bread") {
+        return Err(format!(
+            "the correction took something else with it: {text:?}"
+        ));
+    }
+
+    // Added up.
+    asking(app, "what does the list come to in total?")?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 7.5, 0.01) {
+        return Err(format!("{WRONG}7.50, it said: {answer:?}"));
+    }
+
+    // Changed by somebody else, in two places, with the conversation open.
+    std::thread::sleep(Duration::from_millis(1100));
+    let outside = text.replace("2.50", "2.20") + "- cheese, 4.00\n";
+    if outside == text {
+        return Err(format!(
+            "the list is not in a shape that can be edited: {text:?}"
+        ));
+    }
+    std::fs::write(&path, &outside).map_err(|e| format!("{e}"))?;
+    app.steps(90);
+
+    // Only right if the change was read: 2.20 + 1.80 + 3.20 + 4.00.
+    asking(app, "and what does it come to now?")?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 11.2, 0.01) {
+        return Err(format!(
+            "{WRONG}11.20 after the change outside, it said: {answer:?}"
+        ));
+    }
+
+    // Put in order, which is a change to every line at once.
+    asking(
+        app,
+        "sort the list from the most expensive item to the cheapest",
+    )?;
+    taken(app)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    let low = text.to_lowercase();
+    let at = |item: &str| {
+        low.find(item)
+            .ok_or_else(|| format!("{item} is gone: {text:?}"))
+    };
+    let (cheese, tofu, milk, bread) = (at("cheese")?, at("tofu")?, at("milk")?, at("bread")?);
+    if !(cheese < tofu && tofu < milk && milk < bread) {
+        return Err(format!("{WRONG}not in order: {text:?}"));
+    }
+    for price in ["4.00", "3.20", "2.20", "1.80"] {
+        if !text.contains(price) {
+            return Err(format!("a price was lost in the sorting: {text:?}"));
+        }
+    }
+
+    // And one more question that leans on all of it.
+    asking(
+        app,
+        "which item is the cheapest, and what share of the total is it, to one decimal place?",
+    )?;
+    let answer = last_answer(app);
+    if !answer.to_lowercase().contains("bread") || !number_near(&answer, 16.1, 0.1) {
+        return Err(format!("{WRONG}bread at 16.1%, it said: {answer:?}"));
+    }
+    Ok(())
+}
+
+/// Figures read out of another project and brought into this one.
+///
+/// Reading reaches the whole vault; changing reaches the project on screen.
+/// The two together are how a number gets from one note to another.
+fn figures_from_another_project_brought_here(app: &mut App) -> Result<(), String> {
+    let garden = app.dir.join("garden");
+    std::fs::create_dir_all(&garden).map_err(|e| format!("{e}"))?;
+    let harvest = "# Harvest\n\nThis year so far.\n\n- Tomatoes: 12\n- Beans: 7\n- Peppers: 4\n";
+    std::fs::write(garden.join("harvest.md"), harvest).map_err(|e| format!("{e}"))?;
+    looking_at(app, "new-one", "zzqqseed")?;
+    fresh_chat(app)?;
+
+    asking(
+        app,
+        "read garden/harvest.md and tell me how many things were harvested in all",
+    )?;
+    let answer = last_answer(app);
+    if !number_near(&answer, 23.0, 0.0) {
+        return Err(format!("{WRONG}23, it said: {answer:?}"));
+    }
+    asking(
+        app,
+        "make a note here called totals.md saying the harvest total is that number",
+    )?;
+    taken(app)?;
+    let totals = app.dir.join("new-one").join("totals.md");
+    if !totals.exists() {
+        return Err(format!(
+            "totals.md is not in this project. vault: {:?}",
+            app.vault()
+        ));
+    }
+    let text = std::fs::read_to_string(&totals).map_err(|e| format!("{e}"))?;
+    if !number_near(&text, 23.0, 0.0) {
+        return Err(format!(
+            "{WRONG}the total did not make it into the note: {text:?}"
+        ));
+    }
+    let still = std::fs::read_to_string(garden.join("harvest.md")).map_err(|e| format!("{e}"))?;
+    if still != harvest {
+        return Err(format!(
+            "the note in the other project was changed: {still:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// A note edited by something other than this, mid-conversation.
 ///
 /// The vault used to be read once at startup and never again, so this was
@@ -1342,6 +1524,14 @@ const SCENES: &[Scene] = &[
     (
         "a thread that leans on earlier answers",
         a_thread_that_leans_on_earlier_answers,
+    ),
+    (
+        "a list built, corrected and reckoned up",
+        a_list_built_corrected_and_reckoned_up,
+    ),
+    (
+        "figures from another project brought here",
+        figures_from_another_project_brought_here,
     ),
     ("the conversation is kept", the_conversation_is_kept),
 ];
