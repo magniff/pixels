@@ -1120,31 +1120,38 @@ fn a_list_built_corrected_and_reckoned_up(app: &mut App) -> Result<(), String> {
     if !text.to_lowercase().contains("milk") {
         return Err(format!("{WRONG}milk is not in it: {text:?}"));
     }
+    // Each one once. An edit that rewrites the tail of the list from the
+    // wrong line brings an item back a second time, and the sum three steps
+    // later is then right for the wrong list - so the check is here.
+    let once_each = |text: &str, items: &[&str]| -> Result<(), String> {
+        let low = text.to_lowercase();
+        for item in items {
+            match low.matches(item).count() {
+                1 => {}
+                0 => return Err(format!("{WRONG}{item} did not land: {text:?}")),
+                n => return Err(format!("{WRONG}{item} is in the list {n} times: {text:?}")),
+            }
+        }
+        Ok(())
+    };
     asking(app, "add bread, 1.80")?;
     taken(app)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    once_each(&text, &["milk", "bread"])?;
     asking(app, "add eggs, 3.20")?;
     taken(app)?;
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
-    for want in ["milk", "bread", "eggs"] {
-        if !text.to_lowercase().contains(want) {
-            return Err(format!("{WRONG}{want} did not land: {text:?}"));
-        }
-    }
+    once_each(&text, &["milk", "bread", "eggs"])?;
 
     // Put right in the next breath. The edit has to find the line it just
     // added, in a file it has now changed twice.
     asking(app, "oh wait, not eggs - that should be tofu, same price")?;
     taken(app)?;
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
-    let low = text.to_lowercase();
-    if !low.contains("tofu") || low.contains("eggs") {
+    if text.to_lowercase().contains("eggs") {
         return Err(format!("{WRONG}the correction did not take: {text:?}"));
     }
-    if !low.contains("milk") || !low.contains("bread") {
-        return Err(format!(
-            "{WRONG}the correction took something else with it: {text:?}"
-        ));
-    }
+    once_each(&text, &["milk", "bread", "tofu"])?;
 
     // Added up.
     asking(app, "what does the list come to in total?")?;

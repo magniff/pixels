@@ -188,9 +188,10 @@ read with the read tool; to change one in another project, say they should open 
 - Lines are inclusive and count from one, as in the margin. Write the replacement \
 without the numbers.
 - Change as few lines as the request needs. To add something, edit the line it goes \
-after, not the whole file: rewriting a file to make one addition means copying out \
-every line you were not asked to touch, and what gets copied wrong is the part nobody \
-was looking at.
+after and write that line again with the new one under it - or, to add at the end, \
+edit the line one past the last. Not the whole file: rewriting a file to make one \
+addition means copying out every line you were not asked to touch, and what gets \
+copied wrong is the part nobody was looking at.
 - Use write to lay down a whole file, whether or not it is there yet. Use merge to \
 fold files into one and take the rest away, in a single step - never a write plus \
 deletes, because those are accepted separately and half a merge loses a note.
