@@ -76,6 +76,25 @@ const MARGIN: usize = 64;
 /// project - with one spare.
 const MARKS: usize = 3;
 
+/// The last prompt written to `PIXUI_PROMPT`, so the next one can be written as
+/// what it added. Only ever touched when that variable is set.
+static LAST_PROMPT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// How much of the front of two prompts is the same, in bytes, cut back to a
+/// character boundary so what is written out is still a string.
+fn shared_prefix_chars(before: &str, now: &str) -> usize {
+    let mut same = before
+        .as_bytes()
+        .iter()
+        .zip(now.as_bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while same > 0 && !now.is_char_boundary(same) {
+        same -= 1;
+    }
+    same
+}
+
 /// Where the weights are, unless `PIXUI_MODEL` says otherwise.
 pub fn default_path() -> PathBuf {
     std::env::var_os("PIXUI_MODEL")
@@ -660,10 +679,17 @@ impl Local {
         // position to pick a better one.
         let ceiling = held.model.n_ctx_train();
         let text = render(&held.model, &system, ask, thinks)?;
-        // `PIXUI_PROMPT=<file>` writes out exactly what the model is given,
-        // every time it is given anything. For when the application and the
-        // answer disagree about what the notes say and there is no telling,
-        // from the outside, which of them is wrong.
+        // `PIXUI_PROMPT=<file>` writes out what the model is given, every time
+        // it is given anything. For when the application and the answer
+        // disagree about what the notes say and there is no telling, from the
+        // outside, which of them is wrong.
+        //
+        // Written once in full and after that only where it differs from the
+        // time before. A prompt is the whole conversation, so the one after it
+        // is the same thing with a turn on the end: writing each out entire
+        // meant four copies of one conversation to read four turns of it, and
+        // the part worth reading - what this turn added - was the part that
+        // took searching for.
         if let Some(where_to) = std::env::var_os("PIXUI_PROMPT") {
             use std::io::Write;
             if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -671,7 +697,24 @@ impl Local {
                 .append(true)
                 .open(where_to)
             {
-                let _ = writeln!(f, "\n===== PROMPT ({} chars) =====\n{text}", text.len());
+                let last = LAST_PROMPT.lock().ok().map(|l| l.clone());
+                let same = last
+                    .as_deref()
+                    .map(|before| shared_prefix_chars(before, &text))
+                    .unwrap_or(0);
+                let _ = if same > 0 {
+                    writeln!(
+                        f,
+                        "\n===== PROMPT ({} chars, first {same} the same as the last one) =====\n{}",
+                        text.len(),
+                        &text[same..]
+                    )
+                } else {
+                    writeln!(f, "\n===== PROMPT ({} chars) =====\n{text}", text.len())
+                };
+                if let Ok(mut l) = LAST_PROMPT.lock() {
+                    l.clone_from(&text);
+                }
             }
         }
         let tokens = held
