@@ -1518,22 +1518,10 @@ impl Notes {
             // What it said, without the bodies of the changes it proposed: a
             // block is a copy of a file, and the file itself is above, once
             // and current. See `chat::without_bodies`.
-            // Every question of theirs, with the same line on the end - every
-            // one and not only the newest, so the conversation reads the same
-            // from one prompt to the next and stays in the cache. Only what
-            // they typed gets it: a tool's answer is a user turn as well, and
-            // is not a question.
             turns: chat::as_sent(&talk.turns, &files)
                 .into_iter()
                 .zip(talk.turns.iter())
-                .map(|(text, t)| llm::Turn {
-                    mine: t.mine,
-                    text: if t.mine && !text.contains("<tool_response>") {
-                        format!("{text}\n\n{}", llm::THINK_FIRST)
-                    } else {
-                        text
-                    },
-                })
+                .map(|(text, t)| llm::Turn { mine: t.mine, text })
                 .collect(),
             vault,
             file: self.note().slug(),

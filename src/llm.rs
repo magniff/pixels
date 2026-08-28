@@ -314,14 +314,6 @@ pub fn fitted(turns: &[Turn], limit: usize, measure: impl Fn(&[Turn]) -> usize) 
     }
 }
 
-/// A line put on the end of every question.
-///
-/// An experiment. Asked to think first, a model that had just got a change
-/// wrong got it right - it worked out what it was about to do before doing
-/// it. This puts that ask on every question, to find out whether it holds
-/// across the scenes or was one good day.
-pub const THINK_FIRST: &str = "Think it through before you answer.";
-
 /// What came back, or why nothing did.
 pub type Reply = Result<String, String>;
 
