@@ -4549,7 +4549,7 @@ fn every_tool_says_when_it_is_for_and_not_only_what_it_is() {
 
 #[test]
 fn tools_are_declared_the_way_the_model_was_trained_to_read_them() {
-    let declared = notes::llm::declare(&notes::tools::available(true));
+    let declared = notes::llm::declare(&notes::tools::available(true), notes::llm::Dialect::Qwen);
     // Lifted from the chat template baked into the weights, not invented: the
     // model obeys this shape and argues with any other.
     assert!(declared.starts_with("# Tools\n\nYou have access to the following functions:"));
@@ -5828,6 +5828,50 @@ fn a_read_asked_for_in_every_shape_seen_is_a_read() {
     );
     // A word that starts the same way is a word.
     assert!(one("the <reader> was <ready>").is_empty());
+}
+
+#[test]
+fn a_tool_call_is_heard_in_every_dialect() {
+    use notes::llm::{calls, declare, Dialect, Tool};
+    // Gemma 4: call:name{arg:value}, quoted or not, one or several.
+    let gemma = "Let me check.\n<|tool_call>call:date{when:\"2024-12-23\"}<tool_call|><|tool_call>call:calc{expression:87 / 7}<tool_call|>";
+    assert_eq!(
+        calls(gemma),
+        vec![
+            ("date".to_string(), "2024-12-23".to_string()),
+            ("calc".to_string(), "87 / 7".to_string())
+        ]
+    );
+    // Liquid: a Python list of calls.
+    let liquid =
+        "<|tool_call_start|>[date(when=\"today\"), calc(expression='2 + 2')]<|tool_call_end|>";
+    assert_eq!(
+        calls(liquid),
+        vec![
+            ("date".to_string(), "today".to_string()),
+            ("calc".to_string(), "2 + 2".to_string())
+        ]
+    );
+    // And the machinery of both comes off what is shown.
+    assert_eq!(notes::llm::without_machinery(gemma), "Let me check.");
+    assert_eq!(notes::llm::without_machinery(liquid), "");
+
+    // Each family is told in its own words.
+    let tool = Tool {
+        name: "date",
+        about: "the day",
+        takes: ("when", "a date"),
+    };
+    let one = std::slice::from_ref(&tool);
+    assert!(declare(one, Dialect::Gemma).contains("<|tool>"));
+    assert!(declare(one, Dialect::Gemma).contains("<|tool_call>call:"));
+    assert!(declare(one, Dialect::Liquid).contains("<|tool_list_start|>"));
+    assert!(declare(one, Dialect::Qwen).contains("<tools>"));
+
+    // Told apart by the template.
+    assert_eq!(Dialect::of("{{ '<|turn>' }}..."), Dialect::Gemma);
+    assert_eq!(Dialect::of("...<|tool_list_start|>..."), Dialect::Liquid);
+    assert_eq!(Dialect::of("<|im_start|>..."), Dialect::Qwen);
 }
 
 #[test]

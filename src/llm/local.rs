@@ -390,6 +390,8 @@ pub struct Local {
     loaded: Option<Held>,
     /// Whether this model reasons out loud unless told the thinking is done.
     thinks: bool,
+    /// How this model spells a tool call, from its template.
+    dialect: super::Dialect,
 }
 
 impl Local {
@@ -399,6 +401,7 @@ impl Local {
             system,
             loaded: None,
             thinks: false,
+            dialect: super::Dialect::default(),
         }
     }
 
@@ -448,11 +451,13 @@ impl Local {
             // instruct-tuned builds share a tokeniser with the thinking ones,
             // and handing one an empty `<think>` block it was never trained on
             // is how a perfectly good model answers with nothing at all.
-            self.thinks = model
+            let template = model
                 .chat_template(None)
                 .ok()
                 .and_then(|t| t.to_string().ok())
-                .is_some_and(|t| t.contains("<think>"));
+                .unwrap_or_default();
+            self.thinks = template.contains("<think>");
+            self.dialect = super::Dialect::of(&template);
             leave_before_ggml_does();
             self.loaded = Some(Held::open(backend, model, START)?);
         }
@@ -501,7 +506,16 @@ fn starts_with_gguf(path: &Path) -> bool {
 /// loud, because a template has no way to be told the thinking is already
 /// done, and several hundred tokens of deliberation about a comma is not what
 /// anybody asked for.
-fn render(model: &LlamaModel, system: &str, ask: &Ask, thinks: bool) -> Result<String, String> {
+fn render(
+    model: &LlamaModel,
+    system: &str,
+    ask: &Ask,
+    thinks: bool,
+    dialect: super::Dialect,
+) -> Result<String, String> {
+    if dialect == super::Dialect::Gemma {
+        return Ok(gemma_turns(system, ask));
+    }
     let template = model
         .chat_template(None)
         .map_err(|e| format!("this model has no chat template: {e}"))?;
@@ -542,6 +556,41 @@ fn render(model: &LlamaModel, system: &str, ask: &Ask, thinks: bool) -> Result<S
         out.push_str("<think>\n\n</think>\n\n");
     }
     Ok(out)
+}
+
+/// Gemma 4's turns, written out by hand.
+///
+/// Its template is eighteen thousand characters of Jinja for images, thinking
+/// and tools, and the formatter this builds against runs none of it: it knows
+/// a dozen shapes by name and this is not one of them, so the model would not
+/// load at all. The shape underneath is plain. A turn is `<|turn>role` to
+/// `<turn|>`, the assistant is `model`, a tool's answer goes back inside a
+/// user turn between `<|tool_response>` and `<tool_response|>`, and a model
+/// that is not to think is handed an empty thought to continue from - the
+/// same trick as the empty `<think>` block, in this family's spelling.
+fn gemma_turns(system: &str, ask: &Ask) -> String {
+    let mut out = String::from("<bos>");
+    let turn = |out: &mut String, role: &str, text: &str| {
+        out.push_str(&format!("<|turn>{role}\n{}<turn|>\n", text.trim()));
+    };
+    turn(&mut out, "system", system);
+    if ask.talking() {
+        let context = surroundings(ask);
+        for (i, t) in ask.turns.iter().enumerate() {
+            let text = if i == 0 {
+                format!("{context}{}", t.text)
+            } else {
+                t.text
+                    .replace("<tool_response>", "<|tool_response>")
+                    .replace("</tool_response>", "<tool_response|>")
+            };
+            turn(&mut out, if t.mine { "user" } else { "model" }, &text);
+        }
+    } else {
+        turn(&mut out, "user", &instruction(ask));
+    }
+    out.push_str("<|turn>model\n<|channel>thought\n<channel|>");
+    out
 }
 
 /// What to ask the model to do, which is the same whichever model it is.
@@ -702,7 +751,7 @@ impl Local {
         // about handing a passage back and nothing else - makes a poor one for
         // it. The setting stays what it says on the tin; the question says what
         // else belongs in front of it.
-        let system = ask.system(&self.system);
+        let system = ask.system_in(&self.system, self.dialect);
         let held = self.loaded.as_ref().expect("loaded above");
         // How far this model was trained to read. Asked of the model rather
         // than set by hand: it is the model's own number, the same on every
@@ -721,7 +770,7 @@ impl Local {
                     turns: turns.to_vec(),
                     ..ask.clone()
                 };
-                render(model, &system, &asked, thinks)
+                render(model, &system, &asked, thinks, self.dialect)
                     .and_then(|t| {
                         model
                             .str_to_token(&t, AddBos::Never)
@@ -738,7 +787,7 @@ impl Local {
         } else {
             ask
         };
-        let text = render(&held.model, &system, ask, thinks)?;
+        let text = render(&held.model, &system, ask, thinks, self.dialect)?;
         // `PIXUI_PROMPT=<file>` writes out what the model is given, every time
         // it is given anything. For when the application and the answer
         // disagree about what the notes say and there is no telling, from the

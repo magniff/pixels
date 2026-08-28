@@ -82,6 +82,11 @@ impl Ask {
     /// the model was trained on is obeyed and one in another shape is argued
     /// with.
     pub fn system(&self, editing: &str) -> String {
+        self.system_in(editing, Dialect::Qwen)
+    }
+
+    /// The same, in the words this family of models uses for its tools.
+    pub fn system_in(&self, editing: &str, dialect: Dialect) -> String {
         if !self.talking() {
             return editing.to_string();
         }
@@ -101,7 +106,7 @@ impl Ask {
         let prompt = CHAT_PROMPT.replace("{note}", shown);
         let mut out = match self.tools.is_empty() {
             true => prompt,
-            false => format!("{}\n\n{}", declare(&self.tools), prompt),
+            false => format!("{}\n\n{}", declare(&self.tools, dialect), prompt),
         };
         if self.web_off {
             out.push_str(
@@ -112,6 +117,38 @@ impl Ask {
             );
         }
         out
+    }
+}
+
+/// How a family of models spells a tool call.
+///
+/// There is no one way. Qwen writes `<tool_call><function=x>`, Gemma 4
+/// writes `<|tool_call>call:x{a:b}<tool_call|>`, Liquid's models write a
+/// Python list between `<|tool_call_start|>` and `<|tool_call_end|>` - and
+/// each was trained on its own and argues with any other. Told from the chat
+/// template baked into the weights, which is the one place a model says how
+/// it wants to be spoken to. Everything a reply is parsed for is tried in
+/// every dialect regardless; this only decides what the model is *told*.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dialect {
+    #[default]
+    Qwen,
+    Gemma,
+    Liquid,
+}
+
+impl Dialect {
+    /// From the model's own chat template.
+    pub fn of(template: &str) -> Self {
+        if template.contains("<|turn>") {
+            Self::Gemma
+        } else if template.contains("<|tool_list_start|>")
+            || template.contains("<|tool_call_start|>")
+        {
+            Self::Liquid
+        } else {
+            Self::Qwen
+        }
     }
 }
 
@@ -136,26 +173,59 @@ pub struct Tool {
 /// that lives in a part of llama.cpp the bindings do not expose - but it merges
 /// the tool block and the system message into one turn, so writing the block
 /// out by hand renders exactly what passing tools would have.
-pub fn declare(tools: &[Tool]) -> String {
-    let mut out = String::from("# Tools\n\nYou have access to the following functions:\n\n<tools>");
-    for tool in tools {
-        out.push_str(&format!(
-            "\n{{\"type\": \"function\", \"function\": {{\"name\": \"{}\", \"description\": \"{}\", \
+pub fn declare(tools: &[Tool], dialect: Dialect) -> String {
+    let json = |tool: &Tool| {
+        format!(
+            "{{\"type\": \"function\", \"function\": {{\"name\": \"{}\", \"description\": \"{}\", \
              \"parameters\": {{\"type\": \"object\", \"properties\": {{\"{}\": {{\"type\": \"string\", \
              \"description\": \"{}\"}}}}, \"required\": [\"{}\"]}}}}}}",
             tool.name, tool.about, tool.takes.0, tool.takes.1, tool.takes.0
-        ));
+        )
+    };
+    match dialect {
+        Dialect::Qwen => {
+            let mut out =
+                String::from("# Tools\n\nYou have access to the following functions:\n\n<tools>");
+            for tool in tools {
+                out.push('\n');
+                out.push_str(&json(tool));
+            }
+            // The call format is the one baked into the weights, word for
+            // word: the model obeys this shape and argues with any other. The
+            // reminders that followed it there are not - four paragraphs of
+            // them, saying twice over what the example already shows.
+            out.push_str(
+                "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format \
+                 with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n         <parameter=example_parameter_1>\nvalue_1\n</parameter>\n</function>\n</tool_call>\n\n         Several calls at once means several such blocks. Reasoning may come before a call, \
+                 never after. If no function fits, answer normally and do not mention functions.",
+            );
+            out
+        }
+        // Gemma 4 declares each tool between `<|tool>` and `<tool|>` in the
+        // system turn, and calls one as `<|tool_call>call:name{arg:value}`.
+        Dialect::Gemma => {
+            let mut out = String::from("You have these tools:\n");
+            for tool in tools {
+                out.push_str(&format!("<|tool>{}<tool|>\n", json(tool)));
+            }
+            out.push_str(
+                "\nTo use one, write exactly: <|tool_call>call:example_function_name{example_parameter_1:the value}<tool_call|>\n\
+                 Several at once means several such calls. If no tool fits, answer normally.",
+            );
+            out
+        }
+        // Liquid's models list their tools between `<|tool_list_start|>` and
+        // `<|tool_list_end|>` and call them as a Python list.
+        Dialect::Liquid => {
+            let listed: Vec<String> = tools.iter().map(json).collect();
+            format!(
+                "List of tools: <|tool_list_start|>[{}]<|tool_list_end|>\n\n\
+                 To use one, write exactly: <|tool_call_start|>[example_function_name(example_parameter_1=\"the value\")]<|tool_call_end|>\n\
+                 Several at once means several entries in the list. If no tool fits, answer normally.",
+                listed.join(", ")
+            )
+        }
     }
-    // The call format is the one baked into the weights, word for word: the
-    // model obeys this shape and argues with any other. The reminders that
-    // followed it there are not - four paragraphs of them, saying twice over
-    // what the example already shows.
-    out.push_str(
-        "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format \
-         with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n         <parameter=example_parameter_1>\nvalue_1\n</parameter>\n</function>\n</tool_call>\n\n         Several calls at once means several such blocks. Reasoning may come before a call, \
-         never after. If no function fits, answer normally and do not mention functions.",
-    );
-    out
 }
 
 /// What the model is told it is doing when it is being talked to rather than
@@ -389,6 +459,7 @@ const OPENERS: &[&str] = &[
     "<tool_call",
     "<function=",
     "<|tool_call_start|>",
+    "<|tool_call>",
     "[TOOL_CALL]",
     "<read",
 ];
@@ -398,6 +469,7 @@ const CLOSERS: &[&str] = &[
     "</tool_call>",
     "</function>",
     "<|tool_call_end|>",
+    "<tool_call|>",
     "[/TOOL_CALL]",
     "</read>",
 ];
@@ -407,6 +479,8 @@ const CLOSERS: &[&str] = &[
 const STRAYS: &[&str] = &[
     "</read>",
     "</tool_call>",
+    "<tool_call|>",
+    "<|tool_call>",
     "</function>",
     "</parameter>",
     "<|tool_call_end|>",
@@ -551,7 +625,73 @@ pub fn calls(reply: &str) -> Vec<(String, String)> {
         .skip(1)
         .filter_map(one_call)
         .collect();
+    out.extend(gemma_calls(reply));
+    out.extend(liquid_calls(reply));
     out.extend(asked_to_read(reply));
+    out
+}
+
+/// Gemma 4's spelling: `<|tool_call>call:name{arg:value}<tool_call|>`.
+///
+/// One argument, so everything between the first brace and the last is the
+/// argument, and what follows its first colon is the value. Quoted or not -
+/// the model writes `{when:"2024-12-23"}` as readily as `{when:2024-12-23}`.
+fn gemma_calls(reply: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for piece in reply.split("<|tool_call>").skip(1) {
+        let body = piece.split("<tool_call|>").next().unwrap_or(piece).trim();
+        let body = body.strip_prefix("call:").unwrap_or(body);
+        let Some((name, rest)) = body.split_once('{') else {
+            continue;
+        };
+        let inner = rest.rsplit_once('}').map(|(i, _)| i).unwrap_or(rest);
+        let value = inner
+            .split_once(':')
+            .map(|(_, v)| v)
+            .unwrap_or("")
+            .trim()
+            .trim_matches(|c| c == '"' || c == '\'');
+        let name = name.trim();
+        if !name.is_empty() {
+            out.push((name.to_string(), value.to_string()));
+        }
+    }
+    out
+}
+
+/// Liquid's spelling: `<|tool_call_start|>[name(arg="value")]<|tool_call_end|>`.
+///
+/// A Python call. The value is whatever sits between the first `=` and the
+/// close of the call, unquoted; a list may hold several.
+fn liquid_calls(reply: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for piece in reply.split("<|tool_call_start|>").skip(1) {
+        let body = piece.split("<|tool_call_end|>").next().unwrap_or(piece);
+        let body = body.trim().trim_start_matches('[').trim_end_matches(']');
+        let mut rest = body;
+        while let Some(open) = rest.find('(') {
+            let name = rest[..open]
+                .trim()
+                .trim_start_matches(',')
+                .trim()
+                .to_string();
+            let after = &rest[open + 1..];
+            let Some(close) = after.find(')') else {
+                break;
+            };
+            let args = &after[..close];
+            let value = args
+                .split_once('=')
+                .map(|(_, v)| v)
+                .unwrap_or(args)
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'');
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                out.push((name, value.to_string()));
+            }
+            rest = &after[close + 1..];
+        }
+    }
     out
 }
 
@@ -1164,6 +1304,10 @@ pub fn without_thinking(text: &str) -> String {
     }
     if let Some(start) = out.rfind("</think>") {
         out = &out[start + "</think>".len()..];
+    }
+    // Gemma 4 thinks between `<|channel>thought` and `<channel|>`.
+    if let Some(start) = out.rfind("<channel|>") {
+        out = &out[start + "<channel|>".len()..];
     }
     out.trim().to_string()
 }
