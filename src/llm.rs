@@ -314,13 +314,29 @@ pub fn fitted(turns: &[Turn], limit: usize, measure: impl Fn(&[Turn]) -> usize) 
     }
 }
 
-/// A line put on the end of every question.
+/// A line put on the end of every question, for the models it helps.
 ///
-/// An experiment. Asked to think first, a model that had just got a change
-/// wrong got it right - it worked out what it was about to do before doing
-/// it. This puts that ask on every question, to find out whether it holds
-/// across the scenes or was one good day.
+/// Measured, twice, on twenty-seven scenes. Qwen3.6 with this line: twenty-six,
+/// from twenty-four, and the one scene it had never passed - a list sorted
+/// after somebody else changed it - passed both times. Gemma 4 with it:
+/// twenty-three, from twenty-five, reasoning its way to a year of 366 days
+/// and a wrong share it had both numbers for. The same line, opposite
+/// effects; so it goes on one family's questions and not the other's, and
+/// the backend that knows which family it is talking to is the one that puts
+/// it there. On every question, not only the newest, so the conversation
+/// reads the same from one prompt to the next and stays in the cache.
+///
+/// Its own thinking channel was tried as well and lost on both: Qwen
+/// overran the room it was given and came back twenty of twenty-seven;
+/// Gemma held its score and took two to four times as long.
 pub const THINK_FIRST: &str = "Carefully think through your answer before answering.";
+
+impl Dialect {
+    /// Whether this family answers better for being asked to think first.
+    pub fn thinks_first(self) -> bool {
+        matches!(self, Dialect::Qwen)
+    }
+}
 
 /// What came back, or why nothing did.
 pub type Reply = Result<String, String>;

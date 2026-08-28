@@ -535,11 +535,16 @@ fn render(
         let context = surroundings(ask);
         for (i, turn) in ask.turns.iter().enumerate() {
             let role = if turn.mine { "user" } else { "assistant" };
-            let text = if i == 0 {
+            let mut text = if i == 0 {
                 format!("{context}{}", turn.text)
             } else {
                 turn.text.clone()
             };
+            // Only what they typed gets the line: a tool's answer is a user
+            // turn as well, and is not a question. See `THINK_FIRST`.
+            if turn.mine && dialect.thinks_first() && !text.contains("<tool_response>") {
+                text = format!("{text}\n\n{}", super::THINK_FIRST);
+            }
             said(role, text, &mut chat)?;
         }
     } else {
