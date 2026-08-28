@@ -1398,7 +1398,13 @@ fn a_note_in_a_project_changed_outside(app: &mut App) -> Result<(), String> {
 /// had nothing to read with.
 fn reading_a_note_when_asked(app: &mut App) -> Result<(), String> {
     fresh_chat(app)?;
-    let note = app.dir.join("weather.md");
+    // In a project the editor is not looking at. A note in the open project
+    // is written out whole at the top of the conversation, so there was
+    // nothing to read: a model that answered from the page was marked wrong
+    // for not fetching what it had been handed.
+    let elsewhere = app.dir.join("outside");
+    std::fs::create_dir_all(&elsewhere).map_err(|e| format!("{e}"))?;
+    let note = elsewhere.join("weather.md");
     // The fact is kept off the note's first line, because the first line is
     // in the list at the top of every conversation and a model can answer
     // from that without reading anything - and one did.
