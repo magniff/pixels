@@ -128,6 +128,7 @@ outside any code fence:
 
 <edit file=\"{note}\" lines=\"12-14\">the text those lines become</edit>
 <edit file=\"{note}\" after=\"14\">new lines to go in below line 14</edit>
+<patch file=\"{note}\">a diff, in the shape of the ones you are shown</patch>
 <write file=\"{note}\">everything the file says from now on</write>
 <delete file=\"old.md\"></delete>
 <merge into=\"kept.md\" from=\"one.md, two.md\">what the one file says</merge>
@@ -146,6 +147,9 @@ lines go in below that line and nothing else moves, and after=\"0\" puts them at
 the top. Not the whole file: rewriting a file to make one addition means copying out \
 every line you were not asked to touch, and what gets copied wrong is the part nobody \
 was looking at.
+- For several changes to one note at once, a patch: hunks with a line or two of \
+context each, quoting the note as it is, - for a line that goes and + for one that \
+comes. Each hunk is found by the lines it quotes, so quote them exactly.
 - Use write to lay down a whole file, whether or not it is there yet. Use merge to \
 fold files into one and take the rest away, in a single step - never a write plus \
 deletes, because those are accepted separately and half a merge loses a note.

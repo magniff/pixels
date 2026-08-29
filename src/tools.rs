@@ -295,7 +295,7 @@ pub fn run(name: &str, arg: &str, here: &str) -> String {
     // contents as parameters. Answering "there is no tool called write" is
     // true and useless - it tried again, and again, and the conversation ended
     // with nothing said. So it is told the shape that does work.
-    if let "edit" | "write" | "create" | "delete" | "merge" = name {
+    if let "edit" | "write" | "create" | "delete" | "merge" | "patch" = name {
         return format!(
             "{name} is not a tool. Changing a file is not something you call: write a \
              <{name}> block in your reply instead, at the top level and outside any code \

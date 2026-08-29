@@ -118,6 +118,11 @@ pub enum What {
     /// this file says now" covers all three, and a model that has been handed
     /// the whole file reaches for it naturally.
     Write { text: String },
+    /// A unified diff, applied. For several changes to one note at once,
+    /// in the shape the model is shown changes in - and found by the lines
+    /// each hunk quotes rather than by the numbers it gives, because the
+    /// numbers are what a model gets wrong most.
+    Patch { text: String },
     /// A file that should not be there any more.
     Delete,
     /// Several files folded into one, and the ones folded in taken away.
@@ -160,6 +165,10 @@ impl Change {
             .unwrap_or(0);
         match &self.what {
             What::Edit { from, to, text } => (count(text), to.saturating_sub(*from) + 1),
+            What::Patch { text } => (
+                text.lines().filter(|l| l.starts_with('+')).count(),
+                text.lines().filter(|l| l.starts_with('-')).count(),
+            ),
             What::Insert { text, .. } => (count(text), 0),
             What::Write { text } => (count(text), target),
             What::Delete => (0, target),
@@ -218,6 +227,12 @@ impl Change {
             // A file being written replaces whatever it said before, which is
             // nothing at all when it is not there yet.
             What::Write { .. } => Some(lines.map(|l| l.join("\n")).unwrap_or_default()),
+            // A patch replaces the whole note with the note patched, and is
+            // only offered if every hunk fits.
+            What::Patch { text } => {
+                let whole = lines?.join("\n");
+                crate::patch::apply(&whole, text).ok().map(|_| whole)
+            }
             What::Delete => Some(lines?.join("\n")),
             // A merge that names a file which is not there has nothing to fold
             // in, and is a mistake rather than a change.
@@ -235,6 +250,10 @@ impl Change {
                 text.clone()
             }
             What::Delete => String::new(),
+            What::Patch { text } => folder
+                .lines(self.file.as_ref())
+                .and_then(|l| crate::patch::apply(&l.join("\n"), text).ok())
+                .unwrap_or_else(|| text.clone()),
             What::Merge { from, text } if text.is_empty() => from
                 .iter()
                 .filter_map(|name| folder.lines(Some(name)))
@@ -255,6 +274,7 @@ impl Change {
             What::Insert { after, .. } => format!("{named}  AFTER LINE {after}"),
             What::Write { .. } => format!("WRITE  {named}"),
             What::Delete => format!("DELETE  {named}"),
+            What::Patch { .. } => format!("PATCH  {named}"),
             What::Merge { from, .. } => format!("MERGE  {}  INTO  {named}", from.join(", ")),
         }
     }
@@ -427,6 +447,7 @@ fn every_proposal(reply: &str) -> (String, Vec<Change>) {
             // with a cost.
             "write" | "create" if named.is_some() => Some(What::Write { text: body }),
             "delete" if named.is_some() => Some(What::Delete),
+            "patch" if named.is_some() => Some(What::Patch { text: body }),
             "merge" if named.is_some() => {
                 let from = names(head);
                 (!from.is_empty()).then_some(What::Merge { from, text: body })
@@ -461,7 +482,7 @@ fn every_proposal(reply: &str) -> (String, Vec<Change>) {
 /// which. One walk, so the reader and the writer below cannot disagree about
 /// which block is the second one.
 pub(super) fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
-    const KINDS: &[&str] = &["edit", "write", "create", "delete", "merge"];
+    const KINDS: &[&str] = &["edit", "write", "create", "delete", "merge", "patch"];
     // What a tool answered is quoted whole, and quoting is not proposing. A
     // note read back that has `<write ...>` written in it, or an answer that
     // shows the shape of a block to a model that tried to call one, is text

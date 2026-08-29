@@ -177,7 +177,7 @@ const STRAYS: &[&str] = &[
 /// what happened: the change was never offered and nothing was written.
 fn with_parameters(reply: &str) -> String {
     let mut out = reply.to_string();
-    for kind in ["edit", "write", "create", "delete", "merge"] {
+    for kind in ["edit", "write", "create", "delete", "merge", "patch"] {
         let open = format!("<{kind}>");
         if !out.contains(&open) || !out.contains("<parameter=file>") {
             continue;
@@ -253,7 +253,7 @@ pub fn unfused(reply: &str) -> std::borrow::Cow<'_, str> {
     }
     let mut out = reply.to_string();
     let mut mended = false;
-    for kind in ["edit", "write", "create", "delete", "merge"] {
+    for kind in ["edit", "write", "create", "delete", "merge", "patch"] {
         let opened = format!("<function={kind}");
         if !out.contains(&opened) {
             continue;
