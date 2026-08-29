@@ -1048,6 +1048,38 @@ fn nothing_half_typed_is_shown_while_streaming() {
 }
 
 #[test]
+fn a_tool_named_as_a_bare_tag_with_its_parameter_as_a_line_is_a_call() {
+    use notes::llm::{calls, without_machinery};
+    // Word for word, forty questions into one conversation.
+    let said = "<calc>\nexpression: (420 / 1205) * 100\n</calc>";
+    assert_eq!(
+        calls(said),
+        vec![("calc".to_string(), "(420 / 1205) * 100".to_string())]
+    );
+    assert_eq!(without_machinery(said), "");
+    // With an equals sign, and something said around it.
+    let said = "Let me see.\n<date>\nwhen = 2026-10-14\n</date>\nOne moment.";
+    assert_eq!(
+        calls(said),
+        vec![("date".to_string(), "2026-10-14".to_string())]
+    );
+    assert_eq!(without_machinery(said), "Let me see.\n\nOne moment.");
+    // Not a call: a tag around prose with a colon in it, a block, a thought.
+    for said in [
+        "<b>Note: this is bold</b>",
+        "<write file=\"a.md\">key: value</write>",
+        "<thinking>\nexpression: 1 + 1\n</thinking>",
+        "<calc>1 + 1</calc>",
+    ] {
+        assert!(
+            calls(said).iter().all(|(n, _)| n != "calc" && n != "b"),
+            "{said:?}: {:?}",
+            calls(said)
+        );
+    }
+}
+
+#[test]
 fn a_tool_named_as_a_bare_tag_with_its_parameter_under_it_is_a_call() {
     use notes::llm::{calls, without_machinery};
     // Word for word: neither the wrapper nor <function=, and it was shown.

@@ -115,7 +115,7 @@ pub fn without_machinery(said: &str) -> String {
     for stray in STRAYS {
         out = out.replace(stray, "");
     }
-    without_thoughts(&without_bare_calls(&out))
+    without_thoughts(&without_keyed_calls(&without_bare_calls(&out)))
 }
 
 /// What a model writes to begin reaching for a tool.
@@ -323,6 +323,99 @@ fn bare_calls(reply: &str) -> Vec<(String, String)> {
     for (name, value) in bare_spans(reply) {
         out.push((name, value));
     }
+    for (name, value, _, _) in keyed_spans(reply) {
+        out.push((name, value));
+    }
+    out
+}
+
+/// The names a bare tag cannot be a call to: the wrapping, and the blocks.
+const NOT_A_TOOL: &[&str] = &[
+    "tool_call",
+    "function",
+    "edit",
+    "write",
+    "create",
+    "delete",
+    "merge",
+    "read",
+    "parameter",
+    "thinking",
+    "think",
+];
+
+/// A tag on its own, with the parameter written as a line under it -
+/// `<calc>\nexpression: (420 / 1205) * 100\n</calc>` - and where it starts
+/// and ends.
+///
+/// A sixth spelling, seen forty questions into one conversation: the name
+/// of the parameter and a colon, with the `<parameter=` dressing gone the way
+/// the `<function=` dressing went before it. Nothing heard it, the share was
+/// never worked out, and the tag was the answer. Only a bare tag with a
+/// closing one to match, and only a body that is one `name: value` or
+/// `name = value` - anything else in the same shape is a thing being said.
+fn keyed_spans(reply: &str) -> Vec<(String, String, usize, usize)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = reply[from..].find('<') {
+        let at = from + at;
+        from = at + 1;
+        let Some(close) = reply[at..].find('>') else {
+            break;
+        };
+        let name = &reply[at + 1..at + close];
+        if name.is_empty()
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || NOT_A_TOOL.contains(&name)
+        {
+            continue;
+        }
+        let body_at = at + close + 1;
+        let shut = format!("</{name}>");
+        let Some(len) = reply[body_at..].find(&shut) else {
+            continue;
+        };
+        let raw = &reply[body_at..body_at + len];
+        // On lines of its own under the tag, the way a call is laid out.
+        // `<b>Note: this is bold</b>` is a sentence with a colon in it.
+        if !raw.starts_with('\n') {
+            continue;
+        }
+        let body = raw.trim();
+        // One key, one value, on as many lines as the value takes.
+        let Some((key, value)) = body.split_once([':', '=']) else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty()
+            || key.contains(char::is_whitespace)
+            || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || value.is_empty()
+            || value.contains('<')
+        {
+            continue;
+        }
+        let end = body_at + len + shut.len();
+        out.push((name.to_string(), value.to_string(), at, end));
+        from = end;
+    }
+    out
+}
+
+/// A keyed call taken off what is shown, tag to closing tag.
+fn without_keyed_calls(text: &str) -> String {
+    let spans = keyed_spans(text);
+    if spans.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut from = 0;
+    for (_, _, at, end) in spans {
+        out.push_str(&text[from..at]);
+        from = end;
+    }
+    out.push_str(&text[from..]);
     out
 }
 

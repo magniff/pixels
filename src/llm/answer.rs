@@ -265,8 +265,14 @@ pub(super) fn answer(
 }
 
 /// Keep the part of a pass that is prose rather than machinery.
+///
+/// The machinery off and the thinking off, and not the thinking put back
+/// when that leaves nothing: that is for a reply that was nothing but a
+/// thought, and a pass that reached for a tool was not one. It thought, and
+/// then it called, and the thought was the working for the call - which came
+/// out in the chat and was kept in the conversation as if it had been said.
 fn keep(so_far: &mut Vec<String>, said: &str) {
-    let plain = shown(said);
+    let plain = without_machinery(said);
     // The same sentence twice is one sentence: a model that repeats its
     // working before each call would otherwise say everything n times.
     if !plain.is_empty() && !so_far.contains(&plain) {
