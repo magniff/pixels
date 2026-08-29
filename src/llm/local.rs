@@ -392,6 +392,12 @@ pub struct Local {
     thinks: bool,
     /// How this model spells a tool call, from its template.
     dialect: super::Dialect,
+    /// Added to the sampler's seed for a second try. The seed is fixed, so
+    /// that an answer can be re-read rather than re-rolled - and so that a
+    /// model that ended its turn before saying anything would, asked the
+    /// same thing again, end it the same way. Asked again with the dice
+    /// changed, it answers.
+    reroll: u32,
 }
 
 impl Local {
@@ -402,6 +408,7 @@ impl Local {
             loaded: None,
             thinks: false,
             dialect: super::Dialect::default(),
+            reroll: 0,
         }
     }
 
@@ -752,7 +759,15 @@ impl Backend for Local {
     }
 
     fn edit(&mut self, ask: &Ask, watch: &mut dyn super::Watcher) -> Reply {
-        let out = self.attempt(ask, watch);
+        let mut out = self.attempt(ask, watch);
+        // Nothing said at all - the turn ended on its first token, which
+        // happens - is asked once more with different dice. The prompt is
+        // still in the cache, so the second asking costs only the answer.
+        if matches!(&out, Err(why) if why == "it did not answer") && watch.carry_on() {
+            self.reroll = 1;
+            out = self.attempt(ask, watch);
+            self.reroll = 0;
+        }
         if out.is_err() {
             // A decode that failed leaves the cache holding something nobody
             // can describe, and a record of it that says otherwise is worse
@@ -1025,7 +1040,7 @@ impl Local {
             LlamaSampler::top_k(20),
             LlamaSampler::top_p(0.8, 1),
             LlamaSampler::temp(0.7),
-            LlamaSampler::dist(0x5EED),
+            LlamaSampler::dist(0x5EED + self.reroll),
         ]);
         // Begun with whatever was begun for it: see `render`.
         let mut out: Vec<u8> = begun(ask, &text)
