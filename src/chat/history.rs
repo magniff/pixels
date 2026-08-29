@@ -48,7 +48,14 @@ use crate::llm::Turn;
 /// So none of it goes back as a tag. The answers still do - a sum and a date
 /// are a line each and cannot go stale - but written as something that was
 /// told to it, which is what it was.
-fn without_lookups(text: &str) -> (String, Vec<String>) {
+///
+/// A grep's answer is line numbers, and line numbers go stale: told that
+/// `budget.md:8` was the museum tickets, a model put a row in above them,
+/// was shown the file with the tickets on line 9, and fifteen questions
+/// later renamed line 8 - the food - from the grep. So a grep whose lines no
+/// longer say what they said is a note that it was asked, and that the notes
+/// have moved since; the numbers do not go back.
+fn without_lookups(text: &str, now: &[(String, String)]) -> (String, Vec<String>) {
     let mut out = String::new();
     let mut notes = Vec::new();
     let mut at = 0usize;
@@ -69,6 +76,11 @@ fn without_lookups(text: &str) -> (String, Vec<String>) {
         out.push_str(&text[at..from]);
         notes.push(if tool == "read" {
             format!("You read `{arg}` at that point.")
+        } else if tool == "grep" && !still_says(body, now) {
+            format!(
+                "The grep tool was asked about {arg} at that point. The notes have changed \
+                 since, so its line numbers are out of date; ask it again if they matter."
+            )
         } else {
             format!("The {tool} tool was asked about {arg}, and answered: {body}")
         });
@@ -78,8 +90,29 @@ fn without_lookups(text: &str) -> (String, Vec<String>) {
     (out, notes)
 }
 
+/// Whether every `file:N: text` line of a grep's answer is still so, for the
+/// files in front of us. A file not in the project cannot be checked and is
+/// taken as unchanged.
+fn still_says(body: &str, now: &[(String, String)]) -> bool {
+    body.lines().all(|line| {
+        let Some((path, rest)) = line.split_once(':') else {
+            return true;
+        };
+        let Some((n, said)) = rest.split_once(':') else {
+            return true;
+        };
+        let Ok(n) = n.trim().parse::<usize>() else {
+            return true;
+        };
+        let Some((_, text)) = now.iter().find(|(f, _)| own_name(f) == own_name(path)) else {
+            return true;
+        };
+        text.lines().nth(n.wrapping_sub(1)).map(str::trim) == Some(said.trim())
+    })
+}
+
 pub fn without_bodies(text: &str) -> String {
-    let (said, notes) = bodies_but(text, &[], &[]);
+    let (said, notes) = bodies_but(text, &[], &[], &[]);
     // On its own this is one turn with nowhere to carry to, so what would have
     // gone into the next question is put on the end of this one. `as_sent` is
     // what the conversation actually goes through, and it has somewhere.
@@ -183,7 +216,7 @@ pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
             .filter(|(at, _)| *at == t)
             .map(|(_, b)| *b)
             .collect();
-        let (said, notes) = bodies_but(&turn.text, &keep, &moved_on);
+        let (said, notes) = bodies_but(&turn.text, &keep, &moved_on, now);
         carry.extend(notes);
         out.push(said);
     }
@@ -198,7 +231,12 @@ pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
 }
 
 /// Every block replaced by a label, save the ones named by position.
-fn bodies_but(text: &str, keep: &[usize], moved_on: &[usize]) -> (String, Vec<String>) {
+fn bodies_but(
+    text: &str,
+    keep: &[usize],
+    moved_on: &[usize],
+    now: &[(String, String)],
+) -> (String, Vec<String>) {
     let mut out = String::new();
     let mut notes = Vec::new();
     let mut at = 0;
@@ -241,7 +279,7 @@ fn bodies_but(text: &str, keep: &[usize], moved_on: &[usize]) -> (String, Vec<St
     // scan for blocks knows to leave a quoted answer alone. Unwrap the answer
     // first and that protection is gone: the quote is loose in the turn, and
     // it comes back as a change nobody proposed.
-    let (said, looked) = without_lookups(&out);
+    let (said, looked) = without_lookups(&out, now);
     notes.extend(looked);
     (said.trim().to_string(), notes)
 }

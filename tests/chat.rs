@@ -1948,6 +1948,58 @@ fn a_lookup_goes_back_as_something_it_was_told() {
 }
 
 #[test]
+fn a_grep_whose_lines_have_moved_loses_its_numbers() {
+    use notes::chat::as_sent;
+    use notes::llm::Turn;
+    let turns = vec![
+        Turn {
+            mine: true,
+            text: "which notes mention the museum?".into(),
+        },
+        Turn {
+            mine: false,
+            text: "<used tool=\"grep\" arg=\"museum\">\n2 lines say that:\ntrip/budget.md:8: | museum tickets | 45 |\ntrip/days.md:4: Day 3: museum.\n</used>\n\nTwo notes do.".into(),
+        },
+        Turn {
+            mine: true,
+            text: "thanks".into(),
+        },
+    ];
+    let budget = |rows: &str| format!("# Budget\n\n| Item | Cost |\n|---|---|\n{rows}");
+    let days =
+        "Dates: 14 to 16 October 2026\nDay 1: fly.\nDay 2: hike.\nDay 3: museum.\n".to_string();
+    // As it was: line 8 is the tickets, and the answer goes back whole.
+    let then = vec![
+        (
+            "budget.md".to_string(),
+            budget("| food | 150 |\n| flights | 420 |\n| hotel | 600 |\n| museum tickets | 45 |\n"),
+        ),
+        ("days.md".to_string(), days.clone()),
+    ];
+    let sent = as_sent(&turns, &then);
+    assert!(
+        sent[2].contains("trip/budget.md:8: | museum tickets | 45 |"),
+        "{}",
+        sent[2]
+    );
+    // A row put in above them: line 8 is something else now, and the
+    // numbers do not go back - a model renamed the food from them.
+    let now = vec![
+        ("budget.md".to_string(), budget("| food | 150 |\n| souvenirs | 60 |\n| flights | 420 |\n| hotel | 600 |\n| museum tickets | 45 |\n")),
+        ("days.md".to_string(), days),
+    ];
+    let sent = as_sent(&turns, &now);
+    assert!(!sent[2].contains("budget.md:8"), "{}", sent[2]);
+    assert!(
+        sent[2].contains("was asked about museum at that point"),
+        "{}",
+        sent[2]
+    );
+    assert!(sent[2].contains("out of date"), "{}", sent[2]);
+    assert!(sent[1].contains("Two notes do."), "{}", sent[1]);
+}
+
+#[test]
 fn a_note_read_is_remembered_as_read_and_not_as_its_contents() {
     use notes::chat::without_bodies;
     let long = (1..=40)

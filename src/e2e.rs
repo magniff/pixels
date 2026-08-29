@@ -2230,7 +2230,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
         step("no, leave flights as they are. what is the total again?", Then::Nothing, number(1275.0, 0.0)),
         step("make a note called ideas.md saying: book the museum early", Then::Accept, file_has("ideas.md", &["museum early"])),
         step("add to ideas.md: buy a hat before the trip", Then::Accept, file_has("ideas.md", &["hat", "museum early"])),
-        step("how many notes are in the trip project now?", Then::Nothing, number(4.0, 0.0)),
+        step("how many notes are in the trip project now?", Then::Nothing, number(5.0, 0.0)),
         step("what happens on day 3?", Then::Nothing, says(&["museum"])),
         step("how many days are planned now?", Then::Nothing, number(4.0, 0.0)),
         step("the trip is four days now - update the dates line to 14 to 17 October 2026", Then::Accept, file_has("days.md", &["17 october"])),
