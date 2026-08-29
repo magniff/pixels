@@ -54,8 +54,8 @@ pub struct Weights {
 ///
 /// | model | on disk | right | writing | cold | scenes |
 /// | --- | --- | --- | --- | --- | --- |
-/// | Qwen3.6 35B-A3B (IQ3_XXS) | 13.2 GB | 7/7 | 37.5 tok/s | 12 s | 9/9, 29/31 |
-/// | Gemma 4 26B-A4B (Q3_K_XL) | 12.9 GB | - | - | 10 s | 25/31 |
+/// | Qwen3.6 35B-A3B (IQ3_XXS) | 13.2 GB | 7/7 | 37.5 tok/s | 12 s | 9/9, 33/34 |
+/// | Gemma 4 26B-A4B (Q3_K_XL) | 12.9 GB | - | - | 10 s | 27/34 |
 /// | LFM2 24B-A2B (IQ4_XS) | 12.7 GB | - | - | 12 s | 11/18 |
 /// | Trinity Mini 26B-A3B (Q3_K_M) | 12.1 GB | - | - | 13 s | 4/18 |
 /// | Qwen3.5 35B-A3B (IQ3_XXS) | 13.1 GB | 7/7 | 36.6 tok/s | 15 s | 7/9 |

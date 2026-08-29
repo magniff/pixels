@@ -1176,6 +1176,24 @@ fn gemma_may_write_the_argument_as_an_attribute_after_the_name() {
 }
 
 #[test]
+fn a_block_that_is_nothing_but_parameters_is_taken_away() {
+    use notes::chat::proposals;
+    use notes::llm::without_machinery;
+    // Word for word: a call to nothing, then the edit written properly.
+    let said = "<edit>\n         <parameter=after>\n6\n</edit>\n\n<edit file=\"trip/budget.md\" after=\"6\">| food | 150 |</edit>";
+    let shown = without_machinery(said);
+    assert!(!shown.contains("<parameter="), "{shown:?}");
+    assert!(!shown.contains("<edit>"), "{shown:?}");
+    let (prose, changes) = proposals(&shown);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(prose.trim().is_empty(), "{prose:?}");
+    // A bare block with its text as a parameter is still mended, not lost.
+    let said = "<write>\n<parameter=file>\nfacts.md\n</parameter>\n<parameter=content>\nhello\n</parameter>\n</write>";
+    let (_, changes) = proposals(&without_machinery(said));
+    assert_eq!(changes.len(), 1, "{changes:?}");
+}
+
+#[test]
 fn a_closing_mark_after_the_thought_is_done_is_not_shown() {
     use notes::llm::without_thoughts;
     // Word for word: the thought, the answer, the mark again, the answer again.

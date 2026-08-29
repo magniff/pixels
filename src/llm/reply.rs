@@ -227,6 +227,41 @@ fn with_parameters(reply: &str) -> String {
     out
 }
 
+/// A bare block tag with nothing in it but parameters, and no text among
+/// them, taken away: `<edit>\n<parameter=after>\n6\n</edit>`, written and
+/// abandoned in front of the edit written properly. It was no change - a
+/// block with no lines and no file is nothing - and it was shown as prose.
+fn without_botched_blocks(text: &str) -> String {
+    let mut out = text.to_string();
+    for kind in ["edit", "write", "create", "delete", "merge"] {
+        let open = format!("<{kind}>");
+        let shut = format!("</{kind}>");
+        while let Some(at) = out.find(&open) {
+            let after = &out[at + open.len()..];
+            let end = after
+                .find(&shut)
+                .map(|i| i + shut.len())
+                .unwrap_or(after.len());
+            let body = &after[..end];
+            // With a file or a text among them it is a block dressed as a
+            // call, and `with_parameters` puts that right.
+            let botched = body.contains("<parameter=")
+                && !body.contains("<parameter=file>")
+                && !body.contains("<parameter=content>")
+                && !body.contains("<parameter=text>")
+                && body
+                    .split("<parameter=")
+                    .next()
+                    .is_some_and(|before| before.trim().is_empty());
+            if !botched {
+                break;
+            }
+            out.replace_range(at..at + open.len() + end, "");
+        }
+    }
+    out
+}
+
 /// Put right a change block written as if it were a tool call.
 ///
 /// Applied before the machinery is taken off, and again as a reply is stored.
@@ -257,9 +292,11 @@ fn with_parameters(reply: &str) -> String {
 /// so a genuine call to a tool that happens to share a name is left alone.
 pub fn unfused(reply: &str) -> std::borrow::Cow<'_, str> {
     if !reply.contains("<function=") {
-        // The bare shape needs no unfusing, only its parameters read.
-        if reply.contains("<parameter=file>") {
-            return std::borrow::Cow::Owned(with_parameters(reply));
+        // The bare shape needs no unfusing, only its parameters read - and
+        // a block that is nothing but parameters, none of them the text,
+        // is a call that came to nothing and is taken away.
+        if reply.contains("<parameter=") {
+            return std::borrow::Cow::Owned(with_parameters(&without_botched_blocks(reply)));
         }
         return std::borrow::Cow::Borrowed(reply);
     }
