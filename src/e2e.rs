@@ -2094,6 +2094,281 @@ fn where_a_word_is_said(app: &mut App) -> Result<(), String> {
     Ok(())
 }
 
+/// One conversation, fifty questions long.
+///
+/// The way a note is actually made: a table started and added to and put
+/// right, questions about it, another note, a list, things changed outside
+/// the app in the middle, a change turned down, the conversation closed and
+/// opened again, and questions that lean on what was said thirty questions
+/// earlier. Every step checks the one thing it changed or asked, so the
+/// first thing to go wrong is the thing reported - and at the end the
+/// transcript itself is read: nothing of the machinery in it, every turn
+/// there, and the notes on disk what fifty steps should have left.
+///
+/// The one scene long enough for the conversation to outgrow the room the
+/// model is given, which is otherwise only known to work from a unit test.
+fn a_long_session(app: &mut App) -> Result<(), String> {
+    let trip = app.dir.join("trip");
+    std::fs::create_dir_all(&trip).map_err(|e| format!("{e}"))?;
+    looking_at(app, "trip", "zzqqtrip")?;
+    fresh_chat(app)?;
+    let read =
+        |name: &str| -> String { std::fs::read_to_string(trip.join(name)).unwrap_or_default() };
+    let (days_to, _) = day_count("2026-10-14").unwrap_or_default();
+
+    // What to do after asking, and what to check.
+    enum Then {
+        Nothing,
+        Accept,
+        Reject,
+    }
+    struct Step {
+        ask: &'static str,
+        then: Then,
+        before: Option<Box<dyn Fn(&std::path::Path)>>,
+        check: Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>,
+    }
+    let step = |ask: &'static str,
+                then: Then,
+                check: Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>|
+     -> Step {
+        Step {
+            ask,
+            then,
+            before: None,
+            check,
+        }
+    };
+    let file_has = |name: &'static str, wants: &'static [&'static str]| {
+        Box::new(move |_: &str, read: &dyn Fn(&str) -> String| {
+            let text = read(name);
+            let low = text.to_lowercase();
+            for w in wants {
+                if !low.contains(&w.to_lowercase()) {
+                    return Err(format!("{WRONG}{name} is missing {w:?}: {text:?}"));
+                }
+            }
+            Ok(())
+        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+    };
+    let file_lacks = |name: &'static str, gone: &'static str| {
+        Box::new(move |_: &str, read: &dyn Fn(&str) -> String| {
+            let text = read(name);
+            if text.to_lowercase().contains(&gone.to_lowercase()) {
+                Err(format!("{WRONG}{name} still has {gone:?}: {text:?}"))
+            } else {
+                Ok(())
+            }
+        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+    };
+    let number = |want: f64, tol: f64| {
+        Box::new(move |said: &str, _: &dyn Fn(&str) -> String| {
+            if number_near(said, want, tol) {
+                Ok(())
+            } else {
+                Err(format!("{WRONG}{want}, it said: {said:?}"))
+            }
+        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+    };
+    let says = |wants: &'static [&'static str]| {
+        Box::new(move |said: &str, _: &dyn Fn(&str) -> String| {
+            let low = said.to_lowercase();
+            for w in wants {
+                if !low.contains(&w.to_lowercase()) {
+                    return Err(format!("{WRONG}expected {w:?}: {said:?}"));
+                }
+            }
+            Ok(())
+        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+    };
+    let ok = || {
+        Box::new(|_: &str, _: &dyn Fn(&str) -> String| Ok(()))
+            as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+    };
+    let days_to_n: f64 = days_to.parse().unwrap_or(0.0);
+
+    let mut steps: Vec<Step> = vec![
+        step("make a note called budget.md with a table of Item and Cost: flights 420, hotel 610", Then::Accept, file_has("budget.md", &["flights", "420", "hotel", "610"])),
+        step("add a row: food 150", Then::Accept, file_has("budget.md", &["food", "150", "flights"])),
+        step("add a row: museum tickets 45", Then::Accept, file_has("budget.md", &["museum", "45", "food"])),
+        step("oh, the hotel is 590, not 610", Then::Accept, Box::new(|_, read| {
+            let t = read("budget.md");
+            if t.contains("590") && !t.contains("610") && t.contains("420") { Ok(()) } else { Err(format!("{WRONG}the correction did not take: {t:?}")) }
+        })),
+        step("what is the total cost?", Then::Nothing, number(1205.0, 0.0)),
+        step("what share of the total is flights, to one decimal place?", Then::Nothing, number(34.9, 0.1)),
+        step("make a note called packing.md with a list: passport, charger, boots", Then::Accept, file_has("packing.md", &["passport", "charger", "boots"])),
+        step("add sunscreen to the packing list", Then::Accept, file_has("packing.md", &["sunscreen", "passport"])),
+        step("and a hat", Then::Accept, file_has("packing.md", &["hat", "sunscreen"])),
+        step("take the boots off the packing list", Then::Accept, file_lacks("packing.md", "boots")),
+        step("how many items are on the packing list now?", Then::Nothing, number(4.0, 0.0)),
+        step("make a note called days.md with three lines: Day 1: fly. Day 2: museum. Day 3: hike.", Then::Accept, file_has("days.md", &["day 1", "fly", "day 2", "museum", "day 3", "hike"])),
+        step("swap what happens on day 2 and day 3", Then::Accept, Box::new(|_, read| {
+            let t = read("days.md").to_lowercase();
+            let (d2, d3) = (t.find("day 2").unwrap_or(0), t.find("day 3").unwrap_or(0));
+            let after2 = &t[d2..d3.max(d2)];
+            if after2.contains("hike") && t[d3..].contains("museum") { Ok(()) } else { Err(format!("{WRONG}not swapped: {t:?}")) }
+        })),
+        step("what day of the week is 14 October 2026?", Then::Nothing, says(&["wednesday"])),
+        step("how many days from today until then?", Then::Nothing, number(days_to_n, 0.0)),
+        step("the trip is three days starting then - what is the last day?", Then::Nothing, says(&["16"])),
+        step("add a line at the top of days.md: Dates: 14 to 16 October 2026", Then::Accept, file_has("days.md", &["14", "16 october"])),
+        step("which notes mention the museum? name them.", Then::Nothing, says(&["budget.md", "days.md"])),
+        step("which notes are in the trip project? list their names.", Then::Nothing, says(&["budget.md", "packing.md", "days.md"])),
+        step("what does the hotel cost now?", Then::Nothing, number(600.0, 0.0)),
+        step("and the total now?", Then::Nothing, number(1215.0, 0.0)),
+        step("add a row: souvenirs 60", Then::Accept, file_has("budget.md", &["souvenirs", "60", "hotel"])),
+        step("total?", Then::Nothing, number(1275.0, 0.0)),
+        step("which item costs the most?", Then::Nothing, says(&["hotel"])),
+        step("and the least?", Then::Nothing, says(&["museum"])),
+        step("over three days, how much is that per day?", Then::Nothing, number(425.0, 0.0)),
+        step("change flights to 999", Then::Reject, Box::new(|_, read| {
+            let t = read("budget.md");
+            if t.contains("420") && !t.contains("999") { Ok(()) } else { Err(format!("a change that was turned down was made: {t:?}")) }
+        })),
+        step("no, leave flights as they are. what is the total again?", Then::Nothing, number(1275.0, 0.0)),
+        step("make a note called ideas.md saying: book the museum early", Then::Accept, file_has("ideas.md", &["museum early"])),
+        step("add to ideas.md: buy a hat before the trip", Then::Accept, file_has("ideas.md", &["hat", "museum early"])),
+        step("how many notes are in the trip project now?", Then::Nothing, number(4.0, 0.0)),
+        step("what happens on day 3?", Then::Nothing, says(&["museum"])),
+        step("how many days are planned now?", Then::Nothing, number(4.0, 0.0)),
+        step("the trip is four days now - update the dates line to 14 to 17 October 2026", Then::Accept, file_has("days.md", &["17 october"])),
+        step("what is the cost per day over four days, to two decimal places?", Then::Nothing, number(318.75, 0.01)),
+        step("delete ideas.md", Then::Accept, Box::new(|_, read| {
+            if read("ideas.md").is_empty() { Ok(()) } else { Err("ideas.md is still there after the delete was taken".into()) }
+        })),
+        step("is ideas.md still in the project? yes or no.", Then::Nothing, says(&["no"])),
+        step("what do the two cheapest items add up to?", Then::Nothing, number(105.0, 0.0)),
+        step("in budget.md, rename 'museum tickets' to just 'museum'", Then::Accept, Box::new(|_, read| {
+            let t = read("budget.md").to_lowercase();
+            if t.contains("museum") && !t.contains("museum tickets") { Ok(()) } else { Err(format!("{WRONG}not renamed: {t:?}")) }
+        })),
+        step("what did the hotel cost before I changed it, earlier in this conversation?", Then::Nothing, number(590.0, 0.0)),
+        step("how many rows does the budget table have, not counting the header?", Then::Nothing, number(5.0, 0.0)),
+        step("add a row: train 80", Then::Accept, file_has("budget.md", &["train", "80"])),
+        step("total?", Then::Nothing, number(1355.0, 0.0)),
+        step("what fraction of the total is the hotel, as a percentage to one decimal?", Then::Nothing, number(44.3, 0.1)),
+        step("write a note called summary.md with the total, the cost per day over four days, and the dates", Then::Accept, file_has("summary.md", &["1355", "338.75", "october"])),
+        step("what changed in the budget?", Then::Nothing, says(&["flights", "400"])),
+        step("and the total now?", Then::Nothing, number(1335.0, 0.0)),
+        step("update the total in summary.md to match", Then::Accept, file_has("summary.md", &["1335"])),
+        step("list every note in the trip project with how many lines each has", Then::Nothing, says(&["budget.md", "packing.md", "days.md", "summary.md"])),
+        step("thanks. in one sentence, what did we do today?", Then::Nothing, ok()),
+    ];
+    assert_eq!(steps.len(), 50, "fifty steps, not {}", steps.len());
+    // Things that happen outside the app, before certain steps.
+    let outside = |name: &'static str, from: &'static str, to: &'static str| {
+        Box::new(move |dir: &std::path::Path| {
+            let path = dir.join(name);
+            if let Ok(t) = std::fs::read_to_string(&path) {
+                let _ = std::fs::write(&path, t.replace(from, to));
+            }
+        }) as Box<dyn Fn(&std::path::Path)>
+    };
+    steps[19].before = Some(outside("budget.md", "590", "600"));
+    steps[32].before = Some(Box::new(|dir| {
+        let path = dir.join("days.md");
+        if let Ok(t) = std::fs::read_to_string(&path) {
+            let mut t = t;
+            if !t.ends_with('\n') {
+                t.push('\n');
+            }
+            t.push_str("Day 4: rest.\n");
+            let _ = std::fs::write(&path, t);
+        }
+    }));
+    steps[45].before = Some(outside("budget.md", "420", "400"));
+
+    let began = Instant::now();
+    let mut times = Vec::new();
+    for (i, s) in steps.iter().enumerate() {
+        if i == 39 {
+            // Closed and opened again, in the middle of it all.
+            reopened(app)?;
+        }
+        if let Some(before) = &s.before {
+            std::thread::sleep(Duration::from_millis(1100));
+            before(&trip);
+            app.steps(90);
+        }
+        let at = Instant::now();
+        asking(app, s.ask).map_err(|e| format!("step {}: {e}", i + 1))?;
+        match s.then {
+            Then::Nothing => {}
+            Then::Accept => taken(app).map_err(|e| format!("step {}: {e}", i + 1))?,
+            Then::Reject => {
+                app.scroll_to_end();
+                if app.click("REJECT").is_err() {
+                    return Err(format!(
+                        "{WRONG}step {}: nothing was proposed to turn down",
+                        i + 1
+                    ));
+                }
+                app.steps(6);
+                app.saved();
+            }
+        }
+        times.push(at.elapsed().as_secs_f32());
+        let answer = last_answer(app);
+        (s.check)(&answer, &read).map_err(|e| format!("step {}: {e}", i + 1))?;
+    }
+    println!(
+        "\n      fifty steps in {:.0}s; slowest {:.1}s, median {:.1}s, first ten {:.1}s, last ten {:.1}s",
+        began.elapsed().as_secs_f32(),
+        times.iter().cloned().fold(0.0, f32::max),
+        {
+            let mut t = times.clone();
+            t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            t[t.len() / 2]
+        },
+        times[..10].iter().sum::<f32>() / 10.0,
+        times[40..].iter().sum::<f32>() / 10.0
+    );
+
+    // The transcript: every turn there, nothing of the machinery in what is
+    // shown, and the conversation on disk reads back the same.
+    let chat = app.app.chat.as_ref().ok_or("the conversation is gone")?;
+    let turns = chat.turns.len();
+    if turns < 100 {
+        return Err(format!(
+            "fifty questions should be a hundred turns; there are {turns}"
+        ));
+    }
+    for (i, turn) in chat.turns.iter().enumerate() {
+        let shown = crate::chat::copyable(turn);
+        for mark in [
+            "<thinking",
+            "</thinking",
+            "<tool_call",
+            "<function=",
+            "<parameter=",
+            "<|channel",
+            "<|tool_call",
+            "<used ",
+        ] {
+            if shown.contains(mark) {
+                return Err(format!("turn {i} shows the machinery ({mark}): {shown:?}"));
+            }
+        }
+        if !turn.mine && shown.trim().is_empty() {
+            return Err(format!("turn {i} is empty"));
+        }
+    }
+    let path = chat
+        .path
+        .clone()
+        .ok_or("the conversation was never saved")?;
+    let saved = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
+    let back = crate::chat::parse(&saved);
+    if back.len() != turns {
+        return Err(format!(
+            "{turns} turns in memory, {} read back from disk",
+            back.len()
+        ));
+    }
+    Ok(())
+}
+
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -2221,6 +2496,7 @@ const SCENES: &[Scene] = &[
         a_note_found_by_part_of_its_name,
     ),
     ("where a word is said", where_a_word_is_said),
+    ("a long session", a_long_session),
     ("the conversation is kept", the_conversation_is_kept),
 ];
 
