@@ -1121,7 +1121,14 @@ fn blocks(text: &str) -> Vec<(&'static str, usize, usize, usize)> {
             at = end;
             continue;
         }
-        let Some(open) = text[start..].find('>').map(|i| start + i + 1) else {
+        // The tag ends at its `>`, or at the end of its line when the `>`
+        // was left off: `<write file="shop.md"` and the body on the next
+        // line is what one model wrote, and the first `>` after that was
+        // the one in `</write>`, which made the block its own closing tag.
+        let Some(open) = text[start..]
+            .find(['>', '\n'])
+            .map(|i| start + i + usize::from(text.as_bytes()[start + i] == b'>'))
+        else {
             break;
         };
         let shut = format!("</{kind}>");

@@ -6156,6 +6156,19 @@ fn a_delete_a_merge_already_covers_is_dropped() {
 }
 
 #[test]
+fn a_tag_that_forgot_its_closing_bracket_still_opens_a_block() {
+    use notes::chat::{proposals, What};
+    let said = "<write file=\"shop.md\"\n# Shop\n\n- milk: 2.50\n</write>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].file.as_deref(), Some("shop.md"));
+    match &changes[0].what {
+        What::Write { text } => assert_eq!(text, "# Shop\n\n- milk: 2.50"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn a_delete_written_as_a_lone_tag_is_a_delete() {
     use notes::chat::{proposals, What};
     for said in [
