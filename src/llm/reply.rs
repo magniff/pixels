@@ -443,7 +443,20 @@ fn keyed_spans(reply: &str) -> Vec<(String, String, usize, usize)> {
             continue;
         }
         let body = raw.trim();
-        // One key, one value, on as many lines as the value takes - or, for
+        // Or the parameter as a tag of its own inside the tool's:
+        // `<grep>\n<text>\nCedar\n</text>\n</grep>`. The seventh spelling.
+        let body = match body.strip_prefix('<').and_then(|b| b.split_once('>')) {
+            Some((key, rest))
+                if !key.is_empty()
+                    && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && rest.trim_end().ends_with(&format!("</{key}>")) =>
+            {
+                let inner = rest.trim_end();
+                &inner[..inner.len() - key.len() - 3]
+            }
+            _ => body,
+        };
+        let body = body.trim();
         // a tag that is the name of a tool there is, the value on its own:
         // `<date>2026-10-14</date>`, which is how the same conversation put
         // it ten questions later, dressed like a block.
@@ -459,6 +472,12 @@ fn keyed_spans(reply: &str) -> Vec<(String, String, usize, usize)> {
             Some((_, value)) => value,
             None if is_tool(name) => body,
             None => continue,
+        };
+        // A body that was a tag of its own is a value, keyed or not.
+        let value = if raw.trim().starts_with('<') && is_tool(name) {
+            body
+        } else {
+            value
         };
         if value.is_empty() || value.contains('<') {
             continue;

@@ -1069,6 +1069,10 @@ fn a_tool_named_as_a_bare_tag_with_its_parameter_as_a_line_is_a_call() {
         vec![("date".to_string(), "2026-10-14".to_string())]
     );
     assert_eq!(without_machinery(said), "Let me see.\n\nOne moment.");
+    // The parameter as a tag of its own inside the tool's.
+    let said = "<grep>\n    <text>\nCedar\n</text>\n</grep>";
+    assert_eq!(calls(said), vec![("grep".to_string(), "Cedar".to_string())]);
+    assert_eq!(without_machinery(said), "");
     // The value on its own, for a tag that names a tool there is.
     let said = "<date>2026-10-14</date>";
     assert_eq!(
