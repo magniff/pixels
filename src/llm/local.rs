@@ -560,7 +560,31 @@ fn render(
     if thinks && !out.contains("</think>") {
         out.push_str("<think>\n\n</think>\n\n");
     }
+    // The thought begun for it, for the family that is asked to think. Asked
+    // to, it did - for a few turns. Then its own earlier replies, which are
+    // kept without their thinking, were in front of it as the shape of an
+    // answer, and it stopped: two replies in fifty-five had a thought in
+    // them, and the sums it did in its head were wrong. A turn that starts
+    // with the mark open is one it has to finish, and the mark is put back
+    // on the front of what it says so the thought is read as one.
+    if ask.talking()
+        && dialect.thinks_first()
+        && ask
+            .turns
+            .last()
+            .is_some_and(|t| t.mine && !t.text.contains("<tool_response>"))
+    {
+        out.push_str(super::reply::THOUGHT_OPEN);
+        out.push('\n');
+    }
     Ok(out)
+}
+
+/// What a prompt ends with when the thought has been begun for the model.
+fn begun(prompt: &str) -> Option<&'static str> {
+    prompt
+        .ends_with(&format!("{}\n", super::reply::THOUGHT_OPEN))
+        .then_some(super::reply::THOUGHT_OPEN)
 }
 
 /// Gemma 4's turns, written out by hand.
@@ -994,7 +1018,10 @@ impl Local {
             LlamaSampler::temp(0.7),
             LlamaSampler::dist(0x5EED),
         ]);
-        let mut out = Vec::new();
+        // Begun with whatever was begun for it: see `render`.
+        let mut out: Vec<u8> = begun(&text)
+            .map(|open| format!("{open}\n").into_bytes())
+            .unwrap_or_default();
         let mut pos = tokens.len() as i32;
         let ceiling = pos + RESERVE as i32;
         while pos < ceiling {
