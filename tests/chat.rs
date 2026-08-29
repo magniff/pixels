@@ -2396,7 +2396,9 @@ fn a_patch_is_applied_by_the_lines_it_quotes_not_the_numbers_it_gives() {
     // begins with a dash, cannot be told from a removal without its space;
     // that one the model has to get right.)
     let bare = "@@ @@\n# Shop\n-\n+\n+A list.";
-    assert!(apply(note, bare).unwrap().starts_with("# Shop\n\nA list.\n"));
+    assert!(apply(note, bare)
+        .unwrap()
+        .starts_with("# Shop\n\nA list.\n"));
     // Lines the note does not have are refused, saying which hunk.
     let wrong = "@@ -3,1 +3,1 @@\n-- oat milk 2.50\n+- milk 2.20";
     let err = apply(note, wrong).unwrap_err();
