@@ -1842,10 +1842,7 @@ impl Picker {
 
         let rows = (chats.len() + 1).min(ROWS);
         let rect = screen.centered(440, rows as i32 * line_h + 4 * line_h + 26);
-        let picker = ui.id("chat-picker");
-        let inner = ui
-            .floating(picker, rect, &format!("CHATS IN {}", called(project)))
-            .inner;
+        let inner = ui.panel(rect, &format!("CHATS IN {}", called(project)));
         ui.capture_keyboard();
 
         let count = chats.len() + 1;

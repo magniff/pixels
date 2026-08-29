@@ -91,8 +91,7 @@ impl Finder {
         // that resizes under every keystroke is a panel that is hard to read
         // while typing into it.
         let rect = screen.centered(420, ROWS as i32 * line_h + 4 * line_h + 26);
-        let finder = ui.id("finder-panel");
-        let inner = ui.floating(finder, rect, "FIND A NOTE").inner;
+        let inner = ui.panel(rect, "FIND A NOTE");
         ui.capture_keyboard();
 
         let mut found = Found::None;
