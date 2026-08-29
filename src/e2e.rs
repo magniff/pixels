@@ -750,14 +750,15 @@ fn day_count(date: &str) -> Option<(String, String)> {
         .zip(said.split_whitespace().skip(1))
         .find(|(_, next)| next.starts_with("days"))
         .map(|(n, _)| n.to_string())?;
-    // "612 days ago - 1 year and 8 months." -> "1 year and 8 months"
+    // "612 days ago - 1 year and 8 months." -> "1 year and 8 months". A day
+    // still to come has no age, and is still a count: without this a date
+    // ahead was counted as nothing at all, and a right answer marked wrong.
     let age = said
         .split(" ago - ")
-        .nth(1)?
-        .split('.')
-        .next()?
-        .trim()
-        .to_string();
+        .nth(1)
+        .and_then(|s| s.split('.').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     Some((days, age))
 }
 
