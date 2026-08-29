@@ -1155,6 +1155,20 @@ fn a_call_with_a_name_and_no_body_is_not_an_empty_block() {
 }
 
 #[test]
+fn a_closing_mark_after_the_thought_is_done_is_not_shown() {
+    use notes::llm::without_thoughts;
+    // Word for word: the thought, the answer, the mark again, the answer again.
+    let said = "<thinking>\nIt was 590.\n</thinking>\n\nThe hotel cost 590.\n</thinking>\n\nThe hotel cost 590.";
+    assert_eq!(without_thoughts(said), "The hotel cost 590.");
+    // Said twice with a difference is said twice.
+    let said = "<thinking>\nIt was 590.\n</thinking>\n\nThe hotel cost 590.\n</thinking>\n\nBefore that, 610.";
+    assert_eq!(
+        without_thoughts(said),
+        "The hotel cost 590.\n\nBefore that, 610."
+    );
+}
+
+#[test]
 fn a_reply_that_stopped_after_its_thought_is_carried_on_from_it() {
     use notes::llm::{Ask, Assistant, Backend, Reply, Turn, Watcher};
     /// A model that closed its thought and ended the turn - which happens -

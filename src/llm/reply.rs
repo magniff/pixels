@@ -49,7 +49,19 @@ pub fn without_thoughts(text: &str) -> String {
         }
     }
     out.push_str(rest);
-    out.trim().to_string()
+    // A close with nothing opened before it, after the thought was done: the
+    // model answered, wrote `</thinking>` again, and answered again. The
+    // mark is not language, and the answer said twice is the answer.
+    let out = out
+        .replace(&format!("\n{THOUGHT_CLOSE}"), "")
+        .replace(THOUGHT_CLOSE, "");
+    let out = out.trim();
+    if let Some((first, second)) = out.split_once("\n\n") {
+        if first.trim() == second.trim() {
+            return first.trim().to_string();
+        }
+    }
+    out.to_string()
 }
 
 /// What of a reply is shown: the machinery off, the thinking off - unless
