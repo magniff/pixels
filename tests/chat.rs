@@ -22,38 +22,6 @@ fn vault_with(dir: &std::path::Path, files: &[(&str, &str)]) {
     }
 }
 
-/// A backend that writes slowly and does as it is told, so the plumbing around
-/// one can be tested without twelve gigabytes of weights.
-struct Dawdler;
-
-impl notes::llm::Backend for Dawdler {
-    fn name(&self) -> String {
-        "DAWDLER".into()
-    }
-    fn edit(
-        &mut self,
-        _ask: &notes::llm::Ask,
-        watch: &mut dyn notes::llm::Watcher,
-    ) -> notes::llm::Reply {
-        let mut said = String::new();
-        for i in 0..200 {
-            if !watch.carry_on() {
-                break;
-            }
-            said.push_str(&format!("word{i} "));
-            watch.tick(
-                notes::llm::Progress {
-                    written: i + 1,
-                    ..Default::default()
-                },
-                said.trim(),
-            );
-            std::thread::sleep(std::time::Duration::from_millis(4));
-        }
-        Ok(said.trim().to_string())
-    }
-}
-
 #[test]
 fn a_conversation_survives_being_written_down_and_read_back() {
     let mut talk = chat::Chat::new("reading".into(), "welcome.md".into());
