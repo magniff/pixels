@@ -2116,6 +2116,12 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
         |name: &str| -> String { std::fs::read_to_string(trip.join(name)).unwrap_or_default() };
     let (days_to, _) = day_count("2026-10-14").unwrap_or_default();
 
+    /// A note's text, read from disk by name.
+    type Read<'a> = &'a dyn Fn(&str) -> String;
+    /// What a step checks, given the answer and a way to read a note.
+    type Check = Box<dyn Fn(&str, Read) -> Result<(), String>>;
+    /// Something done to the vault from outside before a step.
+    type Outside = Box<dyn Fn(&std::path::Path)>;
     // What to do after asking, and what to check.
     enum Then {
         Nothing,
@@ -2125,13 +2131,10 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
     struct Step {
         ask: &'static str,
         then: Then,
-        before: Option<Box<dyn Fn(&std::path::Path)>>,
-        check: Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>,
+        before: Option<Outside>,
+        check: Check,
     }
-    let step = |ask: &'static str,
-                then: Then,
-                check: Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>|
-     -> Step {
+    let step = |ask: &'static str, then: Then, check: Check| -> Step {
         Step {
             ask,
             then,
@@ -2149,7 +2152,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
                 }
             }
             Ok(())
-        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+        }) as Check
     };
     let file_lacks = |name: &'static str, gone: &'static str| {
         Box::new(move |_: &str, read: &dyn Fn(&str) -> String| {
@@ -2159,7 +2162,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
             } else {
                 Ok(())
             }
-        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+        }) as Check
     };
     let number = |want: f64, tol: f64| {
         Box::new(move |said: &str, _: &dyn Fn(&str) -> String| {
@@ -2168,7 +2171,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
             } else {
                 Err(format!("{WRONG}{want}, it said: {said:?}"))
             }
-        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+        }) as Check
     };
     let says = |wants: &'static [&'static str]| {
         Box::new(move |said: &str, _: &dyn Fn(&str) -> String| {
@@ -2179,12 +2182,9 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
                 }
             }
             Ok(())
-        }) as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
+        }) as Check
     };
-    let ok = || {
-        Box::new(|_: &str, _: &dyn Fn(&str) -> String| Ok(()))
-            as Box<dyn Fn(&str, &dyn Fn(&str) -> String) -> Result<(), String>>
-    };
+    let ok = || Box::new(|_: &str, _: Read| Ok(())) as Check;
     let days_to_n: f64 = days_to.parse().unwrap_or(0.0);
 
     let mut steps: Vec<Step> = vec![
@@ -2263,7 +2263,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
             if let Ok(t) = std::fs::read_to_string(&path) {
                 let _ = std::fs::write(&path, t.replace(from, to));
             }
-        }) as Box<dyn Fn(&std::path::Path)>
+        }) as Outside
     };
     steps[19].before = Some(outside("budget.md", "590", "600"));
     steps[32].before = Some(Box::new(|dir| {
