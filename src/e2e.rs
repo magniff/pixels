@@ -114,7 +114,19 @@ impl App {
 
     /// Click the middle of the widget with this label.
     fn click(&mut self, name: &str) -> Result<(), String> {
-        let Some(rect) = self.ui.find(name) else {
+        // Where it is once everything has stopped moving. A pane scrolling
+        // smoothly towards where it was sent carries its buttons with it,
+        // and a button found mid-scroll was clicked where it had been.
+        let mut rect = self.ui.find(name);
+        for _ in 0..30 {
+            self.step();
+            let now = self.ui.find(name);
+            if now == rect {
+                break;
+            }
+            rect = now;
+        }
+        let Some(rect) = rect else {
             return Err(format!(
                 "nothing called {name:?} on screen. what is: {:?}",
                 self.ui.names()
@@ -1091,6 +1103,16 @@ fn a_thread_that_leans_on_earlier_answers(app: &mut App) -> Result<(), String> {
 /// Take the change on offer, or say what the model said instead.
 fn taken(app: &mut App) -> Result<(), String> {
     if accept_all(app) == 0 {
+        // Offered and not found is the harness's fault, not the model's,
+        // and the two want looking into in different places.
+        let folder = app.app.folder();
+        let held = app.app.chat.as_ref().is_some_and(|c| c.pending(&folder));
+        if held {
+            return Err(format!(
+                "a change is waiting but no ACCEPT could be clicked. on screen: {:?}",
+                app.on_screen()
+            ));
+        }
         return Err(format!(
             "{WRONG}it proposed nothing: {:?}",
             last_answer(app).chars().take(140).collect::<String>()
@@ -2737,7 +2759,7 @@ fn a_long_session_of_bookkeeping(app: &mut App) -> Result<(), String> {
         step("who was added?", Then::Nothing, says(&["elm"])),
         // Order and sections.
         step("what is 15% of the total, to the nearest whole number?", Then::Nothing, number(393.0, 0.0)),
-        step("sort the ledger by amount, largest first", Then::Accept, Box::new(|_: &str, read: Read| {
+        step("sort the ledger by amount, largest first", Then::AcceptOr("the file is unchanged. write ledger.md sorted that way"), Box::new(|_: &str, read: Read| {
             let t = read("ledger.md");
             let rows: Vec<&str> = t.lines().filter(|l| l.starts_with("| 2026")).collect();
             let amounts: Vec<f64> = rows.iter().filter_map(|r| r.trim_end_matches('|').rsplit('|').next()?.trim().parse().ok()).collect();

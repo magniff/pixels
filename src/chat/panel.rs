@@ -328,7 +328,12 @@ impl Default for Picker {
 // ---------------------------------------------------------- the conversation
 
 /// How many rows of a diff to draw before saying how many are left.
-const WHOLE: usize = 14;
+///
+/// Ten, so that a box and its buttons fit a short pane. The buttons are at
+/// the head of the box, and a conversation that has just been answered is
+/// scrolled to its end: a box taller than the pane showed the tail of its
+/// diff and no way to answer it, and the panel said a change was waiting.
+const WHOLE: usize = 10;
 
 /// How much room the field and its hint take at the foot of the panel.
 const FOOT: i32 = 34;

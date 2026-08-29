@@ -182,7 +182,7 @@ pub struct Chat {
     retype: bool,
     /// Set by `/web`, and spent by the application on the same frame.
     flip_web: bool,
-    scroll: ScrollState,
+    pub(crate) scroll: ScrollState,
     /// True when the view should be pinned to the newest turn.
     follow: bool,
     /// Roughly how many tokens the context around the conversation comes to -

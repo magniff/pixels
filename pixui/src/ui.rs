@@ -638,13 +638,16 @@ impl<'a> Ui<'a> {
             // works - but it is not on the screen, and a harness that clicks
             // the middle of it clicks the pane it is hidden behind. Eight
             // buttons went unanswered that way, all of them above the fold.
+            //
+            // And only the part of it that can: the visible part, not the
+            // whole. A button whose top was scrolled off a pane was placed
+            // whole, and clicking the middle of the whole clicked above the
+            // pane, forty times, on a change that stayed waiting. What is
+            // placed is what shows, and the middle of that is on the screen.
             let clip = self.canvas.clip_rect();
-            let seen = rect.x < clip.right()
-                && clip.x < rect.right()
-                && rect.y < clip.bottom()
-                && clip.y < rect.bottom();
-            if seen {
-                self.state.placed.insert(id, rect);
+            let shown = rect.intersect(clip);
+            if shown.w >= 2 && shown.h >= 2 {
+                self.state.placed.insert(id, shown);
             } else {
                 self.state.placed.remove(&id);
             }
