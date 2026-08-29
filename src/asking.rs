@@ -288,27 +288,6 @@ impl Notes {
                 self.scroll = 0;
                 self.status = format!("DELETED {named}").to_uppercase();
             }
-            chat::What::Patch { text } => {
-                let Some(i) = found else {
-                    self.status = "THAT FILE IS NOT THERE".into();
-                    return;
-                };
-                let whole = self.notes[i].buffer.to_text();
-                match crate::patch::apply(&whole, text) {
-                    Ok(patched) => self.apply_change(&chat::Change {
-                        file: change.file.clone(),
-                        what: chat::What::Write { text: patched },
-                        state: None,
-                    }),
-                    Err(why) => {
-                        self.status = format!("THE PATCH DOES NOT FIT: {why}")
-                            .lines()
-                            .next()
-                            .unwrap_or("THE PATCH DOES NOT FIT")
-                            .to_uppercase();
-                    }
-                }
-            }
             chat::What::Insert { after, text } => {
                 let Some(i) = found else {
                     self.status = "THAT FILE IS NOT THERE".into();

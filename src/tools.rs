@@ -145,21 +145,6 @@ fn searching() -> Tool {
     }
 }
 
-/// Comparing two notes.
-fn comparing() -> Tool {
-    Tool {
-        name: "diff",
-        about: "Compare two notes. Give both names - draft.md final.md - and get the lines that \
-                differ, as a diff: what the first has that the second does not marked with -, \
-                and the other way round with +. Use it when asked what changed between two \
-                notes, or which of two versions says what.",
-        takes: (
-            "files",
-            "The two notes to compare, first then second: draft.md final.md",
-        ),
-    }
-}
-
 /// Every note in the vault, read from disk now.
 fn vault(dir: &Path) -> Vec<crate::Note> {
     crate::read_vault(dir)
@@ -232,51 +217,9 @@ pub fn grep_in(dir: &Path, text: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// The lines that differ between two notes.
-pub fn diff_in(dir: &Path, files: &str) -> Result<String, String> {
-    let names: Vec<&str> = files
-        .split(|c: char| c.is_whitespace() || c == ',')
-        .filter(|s| !s.is_empty())
-        .collect();
-    let [first, second] = names[..] else {
-        return Err("two notes are needed, first then second: draft.md final.md".into());
-    };
-    let notes = vault(dir);
-    let pick = |named: &str| -> Result<(String, String), String> {
-        let want = named
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(named)
-            .to_lowercase();
-        let by_slug = notes
-            .iter()
-            .find(|n| n.slug().to_lowercase() == named.to_lowercase());
-        by_slug
-            .or_else(|| notes.iter().find(|n| n.filename().to_lowercase() == want))
-            .map(|n| (n.slug(), n.buffer.to_text()))
-            .ok_or_else(|| format!("there is no note called {named} in the vault"))
-    };
-    let (a, before) = pick(first)?;
-    let (b, after) = pick(second)?;
-    if before == after {
-        return Ok(format!("`{a}` and `{b}` say the same thing."));
-    }
-    Ok(format!(
-        "From `{a}` to `{b}`, {}",
-        crate::digest::changed(&before, &after)
-    ))
-}
-
 /// Everything on offer, given whether the network has been allowed.
 pub fn available(web_allowed: bool) -> Vec<Tool> {
-    let mut out = vec![
-        arithmetic(),
-        calendar(),
-        reading(),
-        finding(),
-        searching(),
-        comparing(),
-    ];
+    let mut out = vec![arithmetic(), calendar(), reading(), finding(), searching()];
     if web_allowed {
         out.extend(web::tools());
     }
@@ -295,7 +238,7 @@ pub fn run(name: &str, arg: &str, here: &str) -> String {
     // contents as parameters. Answering "there is no tool called write" is
     // true and useless - it tried again, and again, and the conversation ended
     // with nothing said. So it is told the shape that does work.
-    if let "edit" | "write" | "create" | "delete" | "merge" | "patch" = name {
+    if let "edit" | "write" | "create" | "delete" | "merge" = name {
         return format!(
             "{name} is not a tool. Changing a file is not something you call: write a \
              <{name}> block in your reply instead, at the top level and outside any code \
@@ -309,7 +252,6 @@ pub fn run(name: &str, arg: &str, here: &str) -> String {
         "read" => look_at(arg, here),
         "find" => find_in(&crate::notes_dir(), arg),
         "grep" => grep_in(&crate::notes_dir(), arg),
-        "diff" => diff_in(&crate::notes_dir(), arg),
         "weather" => web::weather(arg),
         "wikipedia" => web::wikipedia(arg),
         "release" => web::release(arg),

@@ -121,7 +121,7 @@ pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
             continue;
         }
         for (b, (kind, tag, open, close)) in blocks(&turn.text).into_iter().enumerate() {
-            if kind == "delete" || kind == "patch" {
+            if kind == "delete" {
                 continue;
             }
             let head = &turn.text[tag..open];

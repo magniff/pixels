@@ -317,13 +317,13 @@ fn knowing_the_day_needs_no_permission_to_leave_the_machine() {
     // And reading a note, which is the vault rather than the network.
     assert!(offline.contains(&"read"));
     // And the three that look through the vault without changing it.
-    for want in ["find", "grep", "diff"] {
+    for want in ["find", "grep"] {
         assert!(offline.contains(&want), "{offline:?}");
     }
     assert_eq!(
         offline.len(),
-        6,
-        "these are the six that need nobody's permission: {offline:?}"
+        5,
+        "these are the five that need nobody's permission: {offline:?}"
     );
 }
 
@@ -501,7 +501,7 @@ fn a_list_is_corrected_by_the_lines_that_moved() {
 
 #[test]
 fn the_vault_can_be_searched_read_only() {
-    use notes::tools::{diff_in, find_in, grep_in};
+    use notes::tools::{find_in, grep_in};
     let dir = std::env::temp_dir().join(format!("notes-vaulttools-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("aquarium")).expect("a project");
@@ -554,24 +554,12 @@ fn the_vault_can_be_searched_read_only() {
         .starts_with("nothing in the vault"));
     assert!(grep_in(&dir, "  ").is_err());
 
-    // diff: the lines that differ, as a diff, first to second.
-    let d = diff_in(&dir, "draft.md final.md").unwrap();
-    assert!(
-        d.contains("-Feed them.") && d.contains("+Feed them twice."),
-        "{d}"
-    );
-    assert!(!d.contains("# Plan"), "the whole note came: {d}");
-    let same = diff_in(&dir, "draft.md, draft.md").unwrap();
-    assert!(same.contains("say the same thing"), "{same}");
-    assert!(diff_in(&dir, "draft.md").is_err());
-    assert!(diff_in(&dir, "draft.md missing.md").is_err());
-
     // And they are on offer, always: nothing here leaves the machine.
     let names: Vec<&str> = notes::tools::available(false)
         .iter()
         .map(|t| t.name)
         .collect();
-    for want in ["find", "grep", "diff"] {
+    for want in ["find", "grep"] {
         assert!(names.contains(&want), "{names:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);

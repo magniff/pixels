@@ -42,7 +42,6 @@ pub mod llm;
 pub mod markdown;
 
 pub mod panels;
-pub mod patch;
 
 pub mod render;
 

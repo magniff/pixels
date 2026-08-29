@@ -791,7 +791,7 @@ impl Chat {
         let tint = match change.what {
             What::Delete => th.danger.face,
             What::Write { .. } | What::Merge { .. } => th.positive.face,
-            What::Edit { .. } | What::Insert { .. } | What::Patch { .. } => th.info.hi,
+            What::Edit { .. } | What::Insert { .. } => th.info.hi,
         };
         font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, tint, true);
         // Both answers, side by side and equally reachable. A change offered

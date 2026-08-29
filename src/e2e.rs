@@ -2094,75 +2094,6 @@ fn where_a_word_is_said(app: &mut App) -> Result<(), String> {
     Ok(())
 }
 
-/// Two notes compared, with the diff tool.
-fn two_notes_compared(app: &mut App) -> Result<(), String> {
-    let room = "A paragraph that is the same in both.\n".repeat(12);
-    std::fs::write(
-        app.dir.join("draft.md"),
-        format!("# Plan\n\n{room}Paint the fence BLUE.\n"),
-    )
-    .map_err(|e| format!("{e}"))?;
-    std::fs::write(
-        app.dir.join("final.md"),
-        format!("# Plan\n\n{room}Paint the fence GREEN.\n"),
-    )
-    .map_err(|e| format!("{e}"))?;
-    looking_at(app, "new-one", "zzqqseed")?;
-    fresh_chat(app)?;
-    asking(
-        app,
-        "what is different between draft.md and final.md? one line.",
-    )?;
-    let used = looked_with(app, "diff");
-    let answer = last_answer(app).to_lowercase();
-    if !answer.contains("blue") || !answer.contains("green") {
-        return Err(format!("{WRONG}blue became green, it said: {answer:?}"));
-    }
-    if !used {
-        return Err(format!("{WRONG}it answered without the diff tool"));
-    }
-    Ok(())
-}
-
-/// Several changes to one note, as one patch.
-fn several_changes_as_one_patch(app: &mut App) -> Result<(), String> {
-    let path = app.dir.join("rota.md");
-    let mut lines: Vec<String> = (1..=12).map(|n| format!("Week {n}: nobody.")).collect();
-    lines.insert(0, "# Rota".to_string());
-    lines.insert(1, String::new());
-    std::fs::write(&path, lines.join("\n") + "\n").map_err(|e| format!("{e}"))?;
-    looking_at(app, "", "rota")?;
-    fresh_chat(app)?;
-    asking(
-        app,
-        "as a single patch: put Alice on week 2 and Bob on week 11, leaving everything else as it is",
-    )?;
-    let wrote_patch = app
-        .app
-        .chat
-        .as_ref()
-        .and_then(|c| c.turns.last())
-        .is_some_and(|t| t.text.contains("<patch"));
-    taken(app)?;
-    let now = std::fs::read_to_string(&path).map_err(|e| format!("{e}"))?;
-    let has = |s: &str| now.lines().any(|l| l.to_lowercase().contains(s));
-    if !has("week 2: alice") || !has("week 11: bob") {
-        return Err(format!("{WRONG}the two changes did not land: {now:?}"));
-    }
-    let untouched = (1..=12)
-        .filter(|n| *n != 2 && *n != 11)
-        .all(|n| now.contains(&format!("Week {n}: nobody.")));
-    if !untouched || now.lines().count() < 14 {
-        return Err(format!("{WRONG}something else was changed: {now:?}"));
-    }
-    if !wrote_patch {
-        return Err(format!(
-            "{WRONG}it was asked for a patch and wrote something else"
-        ));
-    }
-    Ok(())
-}
-
 /// The conversation is on disk afterwards, and it is the conversation.
 fn the_conversation_is_kept(app: &mut App) -> Result<(), String> {
     app.steps(6);
@@ -2290,8 +2221,6 @@ const SCENES: &[Scene] = &[
         a_note_found_by_part_of_its_name,
     ),
     ("where a word is said", where_a_word_is_said),
-    ("two notes compared", two_notes_compared),
-    ("several changes as one patch", several_changes_as_one_patch),
     ("the conversation is kept", the_conversation_is_kept),
 ];
 
