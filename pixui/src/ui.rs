@@ -128,6 +128,23 @@ pub struct TextState {
 /// In immediate mode this is the *only* retained thing: which widget is hot,
 /// which captured the pointer, which has focus, and a small animation table
 /// keyed by widget id.
+/// Where a floating panel has been put, and how big it has been made.
+///
+/// Nothing until somebody moves or resizes it, and then that, for as long as
+/// the state lives - a panel closed and opened again comes back where it was
+/// left. The drag in progress is here too, because a drag is a fact about the
+/// pointer that outlives any one frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Floated {
+    pub(crate) at: Option<Point>,
+    pub(crate) size: Option<(i32, i32)>,
+    /// Where the pointer went down and where the panel was, while it is held
+    /// by its title.
+    pub(crate) drag: Option<(Point, Rect)>,
+    /// The same, while it is held by its corner.
+    pub(crate) grip: Option<(Point, Rect)>,
+}
+
 #[derive(Default)]
 pub struct UiState {
     hot: Option<Id>,
@@ -151,6 +168,8 @@ pub struct UiState {
     /// on screen long enough to be clicked is the same answer.
     layers: Vec<(u32, Rect)>,
     layers_before: Vec<(u32, Rect)>,
+    /// Floating panels, by id: where they have been put.
+    pub(crate) floats: HashMap<Id, Floated>,
     frame: u64,
     /// Whether to keep a note of where each named widget ended up.
     ///
@@ -243,7 +262,7 @@ pub struct Ui<'a> {
     pub canvas: &'a mut Canvas,
     pub input: &'a Input,
     pub theme: &'a Theme,
-    state: &'a mut UiState,
+    pub(crate) state: &'a mut UiState,
     layouts: Vec<Layout>,
     id_stack: Vec<Id>,
     label_counts: HashMap<Id, u32>,

@@ -173,7 +173,8 @@ impl FileDialog {
             DialogKind::Open => "OPEN NOTE",
             DialogKind::Save => "SAVE NOTE AS",
         };
-        let inner = ui.panel(rect, title);
+        let dialog = ui.id("file-dialog");
+        let inner = ui.floating(dialog, rect, title).inner;
 
         // The dialog owns the keyboard while it is up.
         ui.capture_keyboard();

@@ -14,7 +14,7 @@ use crate::icon;
 use crate::input::{Cursor, Key};
 use crate::layout::Align;
 use crate::theme::{Ramp, Tone};
-use crate::ui::{Response, ScrollState, Ui};
+use crate::ui::{Floated, Id, Response, ScrollState, Ui};
 
 const WHITE: Color = Color::hex(0xFFFFFF);
 
@@ -86,6 +86,13 @@ const CHECK: [u8; 7] = [
     0b0111000,
     0b0010000,
 ];
+
+/// A floating panel as drawn: where it is, and where its content goes.
+#[derive(Clone, Copy, Debug)]
+pub struct Floating {
+    pub rect: Rect,
+    pub inner: Rect,
+}
 
 impl Ui<'_> {
     /// A row of dots rising and falling in turn, for as long as it is drawn.
@@ -287,6 +294,100 @@ impl Ui<'_> {
             }
         }
         inner.inset(m.pad)
+    }
+
+    /// A titled panel that can be dragged by its title and resized by its
+    /// corner. Returns the panel's rect and the content rect inside it.
+    ///
+    /// `wanted` is where it goes and how big it is until somebody moves or
+    /// resizes it; after that, where they put it and the size they made it,
+    /// for as long as the [`UiState`] lives - so a panel closed and opened
+    /// again comes back where it was left. A double click on the title puts
+    /// it back where the application wanted it. It is kept on screen: a panel
+    /// dragged off the edge stops at the edge, title showing.
+    pub fn floating(&mut self, id: Id, wanted: Rect, title: &str) -> Floating {
+        let th = *self.theme;
+        let m = th.metrics;
+        let bounds = self.canvas.bounds();
+        let least = (60, m.title_h + 24);
+        let mut f = self.state.floats.get(&id).copied().unwrap_or_default();
+
+        let mut rect = wanted;
+        if let Some((w, h)) = f.size {
+            rect.w = w.max(least.0);
+            rect.h = h.max(least.1);
+        }
+        if let Some(at) = f.at {
+            rect.x = at.x;
+            rect.y = at.y;
+        }
+        let fit = |mut r: Rect| {
+            r.w = r.w.min(bounds.w);
+            r.h = r.h.min(bounds.h);
+            r.x = r.x.clamp(bounds.x, (bounds.right() - r.w).max(bounds.x));
+            r.y = r.y.clamp(bounds.y, (bounds.bottom() - r.h).max(bounds.y));
+            r
+        };
+        rect = fit(rect);
+
+        // The corner asks first: it sits inside the panel and would otherwise
+        // be taken for the panel.
+        const GRIP: i32 = 9;
+        let mouse = self.input.mouse;
+        let grip = Rect::new(rect.right() - GRIP, rect.bottom() - GRIP, GRIP, GRIP);
+        let g = self.interact(id ^ 0x6772_6970, grip);
+        if g.held {
+            match f.grip {
+                Some((from, start)) => {
+                    rect.w = (start.w + mouse.x - from.x).max(least.0);
+                    rect.h = (start.h + mouse.y - from.y).max(least.1);
+                    rect = fit(rect);
+                    f.size = Some((rect.w, rect.h));
+                }
+                None => f.grip = Some((mouse, rect)),
+            }
+            self.request_repaint();
+        } else {
+            f.grip = None;
+        }
+
+        let strip = if title.is_empty() {
+            Rect::new(rect.x, rect.y, rect.w - GRIP, 6)
+        } else {
+            Rect::new(rect.x + 1, rect.y + 1, rect.w - 2, m.title_h)
+        };
+        let s = self.interact(id ^ 0x7374_7269, strip);
+        if s.double_clicked {
+            f = Floated::default();
+            rect = fit(wanted);
+        } else if s.held {
+            match f.drag {
+                Some((from, start)) => {
+                    rect.x = start.x + mouse.x - from.x;
+                    rect.y = start.y + mouse.y - from.y;
+                    rect = fit(rect);
+                    f.at = Some(Point::new(rect.x, rect.y));
+                }
+                None => f.drag = Some((mouse, rect)),
+            }
+            self.request_repaint();
+        } else {
+            f.drag = None;
+        }
+        self.state.floats.insert(id, f);
+
+        let inner = self.panel(rect, title);
+        // The corner it can be taken by: three short diagonals, the way
+        // window corners have been marked since there were windows.
+        let ink = th.panel_border;
+        for k in 0..3 {
+            let n = 2 + k * 2;
+            for i in 0..n {
+                self.canvas
+                    .set_px(rect.right() - 2 - i, rect.bottom() - 2 - (n - 1 - i), ink);
+            }
+        }
+        Floating { rect, inner }
     }
 
     /// A flat inset region, for grouping without the weight of a full panel.

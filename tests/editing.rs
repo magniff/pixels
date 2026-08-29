@@ -5763,6 +5763,111 @@ fn reading_a_note_by_name_prefers_the_project_in_question() {
 }
 
 #[test]
+fn a_floating_panel_is_dragged_by_its_title_and_resized_by_its_corner() {
+    use pixui::{Canvas, Input, Point, Rect, Ui, UiState};
+    let theme = notes::theme();
+    let mut state = UiState::new();
+    let wanted = Rect::new(100, 60, 200, 120);
+    // One frame of the panel, with the pointer where the test says.
+    let frame =
+        |state: &mut UiState, mouse: Point, down: bool, pressed: bool, released: bool, t: f32| {
+            let mut canvas = Canvas::new(420, 260);
+            canvas.clear(theme.background);
+            let input = Input {
+                mouse,
+                mouse_down: down,
+                mouse_pressed: pressed,
+                mouse_released: released,
+                mouse_in_window: true,
+                time: t,
+                dt: 1.0 / 60.0,
+                ..Default::default()
+            };
+            let mut ui = Ui::begin(&mut canvas, &input, &theme, state);
+            let id = ui.id("floating-under-test");
+            let got = ui.floating(id, wanted, "PANEL");
+            let _ = ui.finish();
+            got
+        };
+    // Where it was asked to be, untouched.
+    assert_eq!(
+        frame(&mut state, Point::new(0, 0), false, false, false, 0.0).rect,
+        wanted
+    );
+
+    // Taken by the title and moved thirty right, twenty down.
+    let on_title = Point::new(150, 66);
+    frame(&mut state, on_title, false, false, false, 0.1);
+    frame(&mut state, on_title, true, true, false, 0.2);
+    frame(&mut state, Point::new(180, 86), true, false, false, 0.3);
+    let moved = frame(&mut state, Point::new(180, 86), false, false, true, 0.4).rect;
+    assert_eq!((moved.x, moved.y), (130, 80), "{moved:?}");
+    assert_eq!((moved.w, moved.h), (200, 120), "dragging changed the size");
+    // And it stays there on the next frame, pointer gone.
+    assert_eq!(
+        frame(&mut state, Point::new(0, 0), false, false, false, 0.5).rect,
+        moved
+    );
+
+    // Taken by the corner and made forty wider, ten taller.
+    let corner = Point::new(moved.right() - 3, moved.bottom() - 3);
+    frame(&mut state, corner, false, false, false, 1.0);
+    frame(&mut state, corner, true, true, false, 1.1);
+    frame(
+        &mut state,
+        Point::new(corner.x + 40, corner.y + 10),
+        true,
+        false,
+        false,
+        1.2,
+    );
+    let grown = frame(
+        &mut state,
+        Point::new(corner.x + 40, corner.y + 10),
+        false,
+        false,
+        true,
+        1.3,
+    )
+    .rect;
+    assert_eq!((grown.w, grown.h), (240, 130), "{grown:?}");
+    assert_eq!((grown.x, grown.y), (130, 80), "resizing moved it");
+
+    // Dragged off the edge, it stops at the edge.
+    let title2 = Point::new(grown.x + 40, grown.y + 6);
+    frame(&mut state, title2, false, false, false, 2.0);
+    frame(&mut state, title2, true, true, false, 2.1);
+    frame(
+        &mut state,
+        Point::new(title2.x + 900, title2.y + 900),
+        true,
+        false,
+        false,
+        2.2,
+    );
+    let held = frame(
+        &mut state,
+        Point::new(title2.x + 900, title2.y + 900),
+        false,
+        false,
+        true,
+        2.3,
+    )
+    .rect;
+    assert_eq!(held.right(), 420, "{held:?}");
+    assert_eq!(held.bottom(), 260, "{held:?}");
+
+    // A double click on the title puts it back where it was asked to be.
+    let title3 = Point::new(held.x + 40, held.y + 6);
+    frame(&mut state, title3, false, false, false, 3.0);
+    frame(&mut state, title3, true, true, false, 3.02);
+    frame(&mut state, title3, false, false, true, 3.04);
+    frame(&mut state, title3, true, true, false, 3.10);
+    let back = frame(&mut state, title3, false, false, true, 3.12).rect;
+    assert_eq!(back, wanted, "{back:?}");
+}
+
+#[test]
 fn the_panel_says_what_is_actually_happening() {
     use notes::chat::doing;
     use notes::llm::Progress;

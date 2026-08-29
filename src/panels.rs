@@ -275,7 +275,8 @@ pub fn about(ui: &mut Ui) -> bool {
     ui.canvas
         .fill_rect_blend(screen, pixui::palette::VOID, 0.55);
     let rect = screen.centered(ABOUT_W, 150);
-    let inner = ui.panel(rect, "ABOUT");
+    let about = ui.id("about-panel");
+    let inner = ui.floating(about, rect, "ABOUT").inner;
     ui.capture_keyboard();
 
     let mut closed = ui.input.key_pressed(Key::Escape);
@@ -327,7 +328,8 @@ pub fn settings(ui: &mut Ui, config: &mut Settings, chrome: &mut Chrome) -> Acti
         .fill_rect_blend(screen, pixui::palette::VOID, 0.55);
     let height = chrome.panel_h.clamp(72, screen.h - 20);
     let rect = screen.centered(WIDTH, height);
-    let inner = ui.panel(rect, "SETTINGS");
+    let settings_id = ui.id("settings-panel");
+    let inner = ui.floating(settings_id, rect, "SETTINGS").inner;
     ui.capture_keyboard();
 
     // Escape is vim's while vim is in a mode that means something by it, and
