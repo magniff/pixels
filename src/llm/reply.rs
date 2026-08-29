@@ -115,7 +115,7 @@ pub fn without_machinery(said: &str) -> String {
     for stray in STRAYS {
         out = out.replace(stray, "");
     }
-    without_thoughts(&out)
+    without_thoughts(&without_bare_calls(&out))
 }
 
 /// What a model writes to begin reaching for a tool.
@@ -305,7 +305,117 @@ pub fn calls(reply: &str) -> Vec<(String, String)> {
         .collect();
     out.extend(gemma_calls(reply));
     out.extend(liquid_calls(reply));
+    out.extend(bare_calls(reply));
     out.extend(asked_to_read(reply));
+    out
+}
+
+/// A fifth spelling: the tool's name as a tag of its own, with the parameter
+/// under it and nothing around it - `<calc>\n<parameter=expression>1 + 1`.
+///
+/// Neither the call wrapper nor `<function=`, so nothing heard it; the sum
+/// was never worked out, and the tag was shown in the chat as the answer.
+/// A tag immediately followed by a parameter is a call to whatever the tag
+/// names. Only a bare tag: `<function=x>` and the block kinds are heard
+/// elsewhere, and a tag with attributes is a block.
+fn bare_calls(reply: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (name, value) in bare_spans(reply) {
+        out.push((name, value));
+    }
+    out
+}
+
+/// Every bare call in a reply: its name, its value, and where it starts and
+/// ends, so it can be run and taken off what is shown.
+fn bare_spans(reply: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = reply;
+    while let Some(at) = rest.find("<parameter=") {
+        let before = rest[..at].trim_end();
+        let tag = before.rsplit('<').next().unwrap_or("");
+        let name = tag.trim_end_matches('>').trim();
+        let bare = before.ends_with('>')
+            && !name.is_empty()
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && ![
+                "tool_call",
+                "function",
+                "edit",
+                "write",
+                "create",
+                "delete",
+                "merge",
+                "read",
+                "parameter",
+            ]
+            .contains(&name);
+        let after = &rest[at..];
+        let value = after
+            .split_once('>')
+            .map(|(_, v)| v)
+            .unwrap_or("")
+            .split("</parameter>")
+            .next()
+            .unwrap_or("")
+            .split(&format!("</{name}>"))
+            .next()
+            .unwrap_or("")
+            .trim();
+        if bare && !value.is_empty() {
+            out.push((name.to_string(), value.to_string()));
+        }
+        rest = &after["<parameter=".len()..];
+    }
+    out
+}
+
+/// A bare call taken off what is shown: from its tag to the end of its
+/// parameter, and the closing tag after that if there is one.
+fn without_bare_calls(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("<parameter=") {
+        let before = rest[..at].trim_end();
+        let Some(tag_at) = before.rfind('<') else {
+            out.push_str(&rest[..at + "<parameter=".len()]);
+            rest = &rest[at + "<parameter=".len()..];
+            continue;
+        };
+        let name = before[tag_at + 1..].trim_end_matches('>').trim();
+        let bare = before.ends_with('>')
+            && !name.is_empty()
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && ![
+                "tool_call",
+                "function",
+                "edit",
+                "write",
+                "create",
+                "delete",
+                "merge",
+                "read",
+                "parameter",
+            ]
+            .contains(&name);
+        if !bare {
+            out.push_str(&rest[..at + "<parameter=".len()]);
+            rest = &rest[at + "<parameter=".len()..];
+            continue;
+        }
+        out.push_str(&rest[..tag_at]);
+        let after = &rest[at..];
+        let mut end = after
+            .find("</parameter>")
+            .map(|i| i + "</parameter>".len())
+            .unwrap_or(after.len());
+        let shut = format!("</{name}>");
+        if after[end..].trim_start().starts_with(&shut) {
+            end += after[end..].find(&shut).unwrap_or(0) + shut.len();
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
     out
 }
 

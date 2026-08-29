@@ -1048,6 +1048,31 @@ fn nothing_half_typed_is_shown_while_streaming() {
 }
 
 #[test]
+fn a_tool_named_as_a_bare_tag_with_its_parameter_under_it_is_a_call() {
+    use notes::llm::{calls, without_machinery};
+    // Word for word: neither the wrapper nor <function=, and it was shown.
+    let said = "The share is:\n<calc>\n<parameter=expression>\n1.80 / (4.00 + 3.20 + 2.20 + 1.80) * 100\n</parameter>\n</calc>";
+    assert_eq!(
+        calls(said),
+        vec![(
+            "calc".to_string(),
+            "1.80 / (4.00 + 3.20 + 2.20 + 1.80) * 100".to_string()
+        )]
+    );
+    assert_eq!(without_machinery(said), "The share is:");
+    // Without the closing tags either.
+    let open = "<date>\n<parameter=when>today";
+    assert_eq!(calls(open), vec![("date".to_string(), "today".to_string())]);
+    // A block with a parameter is still a block, not a call to "write".
+    let block = "<write>\n<parameter=file>\nfacts.md\n</parameter>\n<parameter=content>\nhello\n</parameter>";
+    assert!(
+        calls(block).iter().all(|(n, _)| n != "write"),
+        "{:?}",
+        calls(block)
+    );
+}
+
+#[test]
 fn a_call_with_the_argument_left_out_is_still_a_call() {
     use notes::llm::calls;
     // Word for word: asked for a number of days in weeks, it wrote the call
