@@ -2245,7 +2245,12 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
             if t.contains("museum") && !t.contains("museum tickets") { Ok(()) } else { Err(format!("{WRONG}not renamed: {t:?}")) }
         })),
         step("what did the hotel cost before it was changed to 600?", Then::Nothing, number(590.0, 0.0)),
-        step("how many rows does the budget table have, not counting the header?", Then::Nothing, number(5.0, 0.0)),
+        step("how many rows does the budget table have, not counting the header?", Then::Nothing, Box::new(|said: &str, read: Read| {
+            // Counted from the file: a model that added a Total row of its
+            // own accord, and had it accepted, is right to count it.
+            let rows = read("budget.md").lines().filter(|l| l.trim_start().starts_with('|')).count().saturating_sub(2);
+            if number_near(said, rows as f64, 0.0) { Ok(()) } else { Err(format!("{WRONG}{rows}, it said: {said:?}")) }
+        }) as Check),
         step("add a row: train 80", Then::Accept, file_has("budget.md", &["train", "80"])),
         step("total?", Then::Nothing, number(1355.0, 0.0)),
         step("what fraction of the total is the hotel, as a percentage to one decimal?", Then::Nothing, number(44.3, 0.1)),

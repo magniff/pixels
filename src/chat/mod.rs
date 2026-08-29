@@ -527,7 +527,7 @@ impl Chat {
     /// the hotel, which had been line 6 when it wrote the file and was line 7
     /// now. The flights went instead. A file it made is small and new, and the
     /// whole of it, numbered, costs less than one wrong line.
-    pub fn did(&mut self, file: &str, before: &str, after: &str) {
+    pub fn did(&mut self, kind: &str, file: &str, before: &str, after: &str) {
         if before == after {
             return;
         }
@@ -541,7 +541,21 @@ impl Chat {
             )
         };
         self.done
-            .push(format!("Your edit to `{file}` was applied. {what}"));
+            .push(format!("Your {kind} to `{file}` was applied. {what}"));
+    }
+
+    /// Say, once, what a file the model has just made says - numbered.
+    ///
+    /// Its own write is the only copy it has of such a file, and a write has
+    /// no numbers in the margin: having written a summary with the total on
+    /// the third line, it changed the fourth. The block it wrote does not go
+    /// back in the conversation; this does, in the shape every other file
+    /// has, and the block is a label saying it was accepted.
+    pub fn made(&mut self, kind: &str, file: &str, text: &str) {
+        self.done.push(format!(
+            "Your {kind} to `{file}` was accepted. It now says, in full:\n\n{}",
+            crate::digest::numbered(text)
+        ));
     }
 
     /// Run a `/` command, and say whether it was one.

@@ -94,16 +94,6 @@ impl Notes {
         self.took_up(change, talk);
     }
 
-    /// Whether two versions of a file say the same thing.
-    ///
-    /// A trailing newline apart, because a block written by a model has one or
-    /// has not depending on how it felt, and the buffer settles that either
-    /// way. Nothing else is forgiven: this decides whether the model can be
-    /// left believing its own copy.
-    pub(crate) fn same_text(a: &str, b: &str) -> bool {
-        a.trim_end_matches('\n') == b.trim_end_matches('\n')
-    }
-
     /// Tell the conversation what the files say now that it has been applied.
     ///
     /// Only the files this change touched, and only what they say here: the
@@ -142,38 +132,30 @@ impl Notes {
             talk.wrote(&named, None);
             return;
         }
-        // Only silent when what the file says is what the model wrote.
-        //
-        // A whole-file write it knows: the block it sent is the file. An edit
-        // it does not, because an edit is line numbers, and if the numbers were
-        // wrong the file is not what it meant and it is the only one who cannot
-        // tell. That happened: asked to change a line that was fifth, it wrote
-        // `lines="3-3"`, the third line was somebody else's, and it went on
-        // answering about a file that had stopped existing when the change it
-        // asked for was made. What it is not told, it cannot notice.
-        //
-        // So the file is left measured against what it was before, and the
-        // next question carries the diff - which says, in two lines, exactly
-        // what the change did.
         let Some(now) = now else {
             return;
         };
-        let told = match &change.what {
-            chat::What::Write { text } => Self::same_text(text, &now),
-            chat::What::Merge { text, .. } if !text.trim().is_empty() => {
-                Self::same_text(text, &now)
-            }
-            _ => false,
+        // Told what the file says now, every time - as a diff for a file at
+        // the front, and whole, numbered, for one the model made itself.
+        //
+        // An edit is line numbers, and if the numbers were wrong the file is
+        // not what the model meant and it is the only one who cannot tell.
+        // That happened: asked to change a line that was fifth, it wrote
+        // `lines="3-3"`, the third line was somebody else's, and it went on
+        // answering about a file that had stopped existing when the change it
+        // asked for was made. A write it knows - the block is the file - but
+        // the block has no numbers in the margin, and the next edit is made
+        // against numbers it counted itself: a summary with the total on the
+        // third line had its fourth line changed. So the block does not go
+        // back, and this does. What it is not told, it cannot notice.
+        let kind = match &change.what {
+            chat::What::Write { .. } => "write",
+            chat::What::Merge { .. } => "merge",
+            _ => "edit",
         };
-        if !told {
-            // Said once, as its own doing, and then the file is known as it
-            // is - so that an undo by hand afterwards reads as the change it
-            // is. With the file left known as it was before the edit, undoing
-            // the edit made it look as though nothing had ever happened, and
-            // the model went on believing its change stood.
-            if let Some(before) = talk.knows(&named).map(str::to_string) {
-                talk.did(&named, &before, &now);
-            }
+        match talk.knows(&named).map(str::to_string) {
+            Some(before) => talk.did(kind, &named, &before, &now),
+            None => talk.made(kind, &named, &now),
         }
         talk.wrote(&named, Some(&now));
     }

@@ -1445,13 +1445,16 @@ fn an_accepted_block_the_file_has_moved_on_from_loses_its_body() {
         ),
         turn(true, "what colour is it"),
     ];
-    // While the file says what the edit said, the edit keeps its body.
+    // While the file says what the edit said, the edit is a label saying it
+    // was accepted: what the file says was told with the next question.
     let green = vec![(
         "door.md".to_string(),
         "# Door\n\nThe door is GREEN.\n".to_string(),
     )];
     let sent = as_sent(&turns, &green);
-    assert!(sent[1].contains("The door is GREEN."), "{}", sent[1]);
+    assert!(!sent[1].contains("GREEN"), "{}", sent[1]);
+    assert!(sent[2].contains("was accepted."), "{}", sent[2]);
+    assert!(!sent[2].contains("has changed since"), "{}", sent[2]);
 
     // Undone by hand: the file says blue, and the edit is a note saying the
     // file has moved on - not a body the model will trust over the page,
@@ -1466,11 +1469,12 @@ fn an_accepted_block_the_file_has_moved_on_from_loses_its_body() {
 
     // With nothing known about the files, nothing is second-guessed.
     let sent = as_sent(&turns, &[]);
-    assert!(sent[1].contains("The door is GREEN."), "{}", sent[1]);
+    assert!(sent[2].contains("was accepted."), "{}", sent[2]);
+    assert!(!sent[2].contains("has changed since"), "{}", sent[2]);
 }
 
 #[test]
-fn the_newest_accepted_change_keeps_what_it_said() {
+fn an_accepted_change_is_a_label_and_the_file_is_told_elsewhere() {
     use notes::chat::as_sent;
     use notes::llm::Turn;
     let turn = |mine: bool, text: &str| Turn {
@@ -1488,13 +1492,14 @@ fn the_newest_accepted_change_keeps_what_it_said() {
     ];
     let sent = as_sent(&turns, &[]);
 
-    // The file the model made is not in the project written out at the top of
-    // the conversation - that was written before it existed - so the block it
-    // wrote is the only copy of what the file says. It stays.
-    assert!(sent[1].contains("the bike is red"), "{}", sent[1]);
+    // The block it wrote does not go back: what the file says was told with
+    // the next question, numbered, and a second copy with no numbers in the
+    // margin is the one it would count lines in. What it said around the
+    // block stays.
+    assert!(!sent[1].contains("the bike is red"), "{}", sent[1]);
     assert!(sent[1].contains("Made it."), "{}", sent[1]);
 
-    // Changed again, and now only the newest one carries the text.
+    // Changed again, and neither carries the text.
     let mut later = turns.clone();
     later.push(turn(true, "make it green"));
     later.push(turn(
@@ -1519,7 +1524,7 @@ fn the_newest_accepted_change_keeps_what_it_said() {
         "{}",
         sent[2]
     );
-    assert!(sent[5].contains("the bike is green"), "{}", sent[5]);
+    assert!(!sent[5].contains("the bike is green"), "{}", sent[5]);
 
     // A change turned down is a label, whatever else happened. It never became
     // what the file says, so keeping its text would be keeping a file that has

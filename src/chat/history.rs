@@ -125,19 +125,13 @@ pub fn without_bodies(text: &str) -> String {
 
 /// The conversation as the model should be shown it.
 ///
-/// Every change block becomes a label, except the newest accepted one for each
-/// file, which keeps what it said. That body is not a duplicate of anything -
-/// it is the only copy of what the file holds, because a file the model has
-/// just made is not in the project written out at the top of the conversation,
-/// which was written before it existed.
-///
-/// Stripping it and then sending the same text back at the end as a file that
-/// had "changed on disk since anything you have been told" was two wrongs: it
-/// cost the text twice over the two turns it took to do it, and it announced a
-/// change nobody had made, in the strongest words this application has, about
-/// a file the model had written itself and been told was accepted.
+/// Every change block becomes a label. What the file says after a change is
+/// accepted is told in the next turn of ours - a diff for a file at the
+/// front, the whole file numbered for one the model made - so the block's
+/// body is a second copy, and one with no numbers in the margin. It used to
+/// be kept for a file the model had made, as the only copy of what that file
+/// said; then the model counted lines in it, and counted wrong.
 pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
-    let mut newest: Vec<(String, usize, usize)> = Vec::new();
     // Blocks that were accepted and whose text the file no longer holds.
     //
     // A conversation opened again is shown the project afresh, so the front
@@ -173,10 +167,7 @@ pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
                     });
                 if holds == Some(false) {
                     stale.push((t, b));
-                    continue;
                 }
-                newest.retain(|(n, _, _)| *n != named);
-                newest.push((named, t, b));
             }
         }
     }
@@ -206,17 +197,12 @@ pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
             out.push(text);
             continue;
         }
-        let keep: Vec<usize> = newest
-            .iter()
-            .filter(|(_, at, _)| *at == t)
-            .map(|(_, _, b)| *b)
-            .collect();
         let moved_on: Vec<usize> = stale
             .iter()
             .filter(|(at, _)| *at == t)
             .map(|(_, b)| *b)
             .collect();
-        let (said, notes) = bodies_but(&turn.text, &keep, &moved_on, now);
+        let (said, notes) = bodies_but(&turn.text, &[], &moved_on, now);
         carry.extend(notes);
         out.push(said);
     }

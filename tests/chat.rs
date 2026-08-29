@@ -1299,7 +1299,7 @@ fn an_edit_to_a_file_the_model_made_is_answered_with_the_whole_file() {
     let wrote = "# Budget\n\n| Item | Cost |\n|---|---|\n| flights | 420 |\n| hotel | 610 |\n";
     chat.wrote("budget.md", Some(wrote));
     let edited = "# Budget\n\n| Item | Cost |\n|---|---|\n| food | 150 |\n| flights | 420 |\n| hotel | 610 |\n";
-    chat.did("budget.md", wrote, edited);
+    chat.did("edit", "budget.md", wrote, edited);
     chat.wrote("budget.md", Some(edited));
     let mut now = front.clone();
     now.push(("budget.md".to_string(), edited.to_string()));
@@ -1321,7 +1321,7 @@ fn an_edit_to_a_file_the_model_made_is_answered_with_the_whole_file() {
         format!("# Trip\n\n{room}Off we go.\n"),
     );
     chat.wrote("zzqqtrip.md", Some(&was));
-    chat.did("zzqqtrip.md", &was, &is);
+    chat.did("edit", "zzqqtrip.md", &was, &is);
     now[0].1 = is;
     chat.wrote("zzqqtrip.md", Some(&now[0].1));
     let (_, _, moved) = chat.context("- `zzqqtrip.md`\n- `budget.md`", &now);
@@ -1345,6 +1345,10 @@ fn a_note_made_with_the_name_of_one_in_another_project_is_known_as_itself() {
         .position(|n| n.filename() == "plan.md")
         .expect("there");
     let mut chat = Chat::new("trip".into(), "plan.md".into());
+    chat.context(
+        "- `plan.md`",
+        &[("plan.md".to_string(), "# Plan\n".to_string())],
+    );
     let write = Change {
         file: Some("ideas.md".into()),
         what: What::Write {
@@ -1356,6 +1360,20 @@ fn a_note_made_with_the_name_of_one_in_another_project_is_known_as_itself() {
     app.took_up_for_test(&write, &mut chat);
     // Known as what was written into trip/, not as the checklist at the top.
     assert_eq!(chat.knows("ideas.md"), Some("book the museum early"));
+    // And told, numbered, with the next question: the block it wrote has no
+    // numbers in the margin and does not go back.
+    let now = vec![
+        ("plan.md".to_string(), "# Plan\n".to_string()),
+        ("ideas.md".to_string(), "book the museum early".to_string()),
+    ];
+    let (_, _, moved) = chat.context("- `plan.md`\n- `ideas.md`", &now);
+    let said = moved.expect("the new file is told");
+    assert!(
+        said.contains("Your write to `ideas.md` was accepted"),
+        "{said}"
+    );
+    assert!(said.contains("   1 | book the museum early"), "{said}");
+    assert!(!said.contains("STOP"), "its own file is not news: {said}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1372,7 +1390,7 @@ fn an_edit_undone_by_hand_is_seen_as_a_change() {
 
     // The model's edit, applied: what it did is said once, as its own doing.
     let before = chat.knows("door.md").unwrap().to_string();
-    chat.did("door.md", &before, green);
+    chat.did("edit", "door.md", &before, green);
     chat.wrote("door.md", Some(green));
     let (_, _, moved) = chat.context("- `door.md`", &file(green));
     let said = moved.expect("what the edit did is said");
@@ -1810,7 +1828,9 @@ fn an_edit_that_landed_somewhere_else_is_reported_back() {
     assert!(said.contains("-- Alice's bike is green."), "{said}");
     assert!(said.contains("+- Magniff's bike is black."), "{said}");
 
-    // A whole file it wrote itself is not read back to it - it knows that one.
+    // A whole file it wrote itself is read back to it as well, as its own
+    // doing and not as news: the block it wrote has no numbers in the
+    // margin, and the next edit is made against numbers it counted itself.
     let wrote = Change {
         file: Some("bike.md".into()),
         what: What::Write {
@@ -1820,13 +1840,18 @@ fn an_edit_that_landed_somewhere_else_is_reported_back() {
     };
     app.apply_change(&wrote);
     app.took_up_for_test(&wrote, &mut chat);
+    let (_, _, moved) = chat.context(index, &now(&app));
+    let said = moved.expect("what it wrote is read back, numbered");
+    assert!(
+        said.contains("Your write to `bike.md` was applied"),
+        "{said}"
+    );
+    assert!(!said.contains("STOP"), "its own write is not news: {said}");
+    // Once: asked again with nothing moved, nothing is said.
     app.notes[i].buffer = Buffer::from_text("# Bikes\n\n- one bike.\n");
     app.took_up_for_test(&wrote, &mut chat);
     let (_, _, moved) = chat.context(index, &now(&app));
-    assert!(
-        moved.is_none(),
-        "it was told what it already wrote: {moved:?}"
-    );
+    assert!(moved.is_none(), "told twice: {moved:?}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
