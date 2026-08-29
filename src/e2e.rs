@@ -2222,7 +2222,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
         step("total?", Then::Nothing, number(1275.0, 0.0)),
         step("which item costs the most?", Then::Nothing, says(&["hotel"])),
         step("and the least?", Then::Nothing, says(&["museum"])),
-        step("over three days, how much is that per day?", Then::Nothing, number(425.0, 0.0)),
+        step("over three days, how much is the total per day?", Then::Nothing, number(425.0, 0.0)),
         step("change flights to 999", Then::Reject, Box::new(|_, read| {
             let t = read("budget.md");
             if t.contains("420") && !t.contains("999") { Ok(()) } else { Err(format!("a change that was turned down was made: {t:?}")) }
@@ -2244,7 +2244,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
             let t = read("budget.md").to_lowercase();
             if t.contains("museum") && !t.contains("museum tickets") { Ok(()) } else { Err(format!("{WRONG}not renamed: {t:?}")) }
         })),
-        step("what did the hotel cost before I changed it, earlier in this conversation?", Then::Nothing, number(590.0, 0.0)),
+        step("what did the hotel cost before it was changed to 600?", Then::Nothing, number(590.0, 0.0)),
         step("how many rows does the budget table have, not counting the header?", Then::Nothing, number(5.0, 0.0)),
         step("add a row: train 80", Then::Accept, file_has("budget.md", &["train", "80"])),
         step("total?", Then::Nothing, number(1355.0, 0.0)),

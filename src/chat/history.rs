@@ -215,7 +215,7 @@ fn bodies_but(text: &str, keep: &[usize], moved_on: &[usize]) -> (String, Vec<St
             // model about to rewrite that file - which it then did from a
             // picture that matched none of them.
             Some(true) if moved_on.contains(&nth) => {
-                "accepted, but the file has been changed by hand since and no longer says that"
+                "accepted, but the file has changed since and no longer says that"
             }
             Some(true) => "accepted",
             Some(false) => "turned down, and the file is as it was",

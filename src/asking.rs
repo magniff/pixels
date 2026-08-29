@@ -116,10 +116,16 @@ impl Notes {
             .clone()
             .unwrap_or_else(|| self.note().filename());
         let named = bare(&named);
+        // In this project. A note is known by its name within its folder,
+        // and the same name can be in two: the vault has an `ideas.md` at the
+        // top, and a model that made `trip/ideas.md` was told its new note
+        // said what the old one did - a checklist about preview panes - and
+        // then, at the next question, that the note had changed on disk.
+        let here = self.note().project.clone();
         let says = |app: &Self, want: &str| {
             app.notes
                 .iter()
-                .find(|n| n.filename() == want)
+                .find(|n| n.project == here && n.filename() == want)
                 .map(|n| n.buffer.to_text())
         };
         // Files that are simply gone, which the model does know about.

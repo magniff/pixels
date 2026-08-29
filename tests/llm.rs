@@ -1462,7 +1462,7 @@ fn an_accepted_block_the_file_has_moved_on_from_loses_its_body() {
     )];
     let sent = as_sent(&turns, &blue);
     assert!(!sent[1].contains("GREEN"), "{}", sent[1]);
-    assert!(sent[2].contains("changed by hand since"), "{}", sent[2]);
+    assert!(sent[2].contains("has changed since"), "{}", sent[2]);
 
     // With nothing known about the files, nothing is second-guessed.
     let sent = as_sent(&turns, &[]);

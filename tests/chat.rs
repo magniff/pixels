@@ -1331,6 +1331,35 @@ fn an_edit_to_a_file_the_model_made_is_answered_with_the_whole_file() {
 }
 
 #[test]
+fn a_note_made_with_the_name_of_one_in_another_project_is_known_as_itself() {
+    use notes::chat::{Change, Chat, What};
+    let dir = std::env::temp_dir().join(format!("notes-twin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("trip")).expect("a vault");
+    std::fs::write(dir.join("ideas.md"), "# Ideas\n\n- [ ] a preview pane\n").expect("a note");
+    std::fs::write(dir.join("trip").join("plan.md"), "# Plan\n").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "plan.md")
+        .expect("there");
+    let mut chat = Chat::new("trip".into(), "plan.md".into());
+    let write = Change {
+        file: Some("ideas.md".into()),
+        what: What::Write {
+            text: "book the museum early".into(),
+        },
+        state: None,
+    };
+    app.apply_change(&write);
+    app.took_up_for_test(&write, &mut chat);
+    // Known as what was written into trip/, not as the checklist at the top.
+    assert_eq!(chat.knows("ideas.md"), Some("book the museum early"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn an_edit_undone_by_hand_is_seen_as_a_change() {
     use notes::chat::Chat;
     let file = |t: &str| vec![("door.md".to_string(), t.to_string())];
