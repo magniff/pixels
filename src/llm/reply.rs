@@ -378,22 +378,28 @@ fn keyed_spans(reply: &str) -> Vec<(String, String, usize, usize)> {
         let raw = &reply[body_at..body_at + len];
         // On lines of its own under the tag, the way a call is laid out.
         // `<b>Note: this is bold</b>` is a sentence with a colon in it.
-        if !raw.starts_with('\n') {
+        if !raw.starts_with('\n') && !is_tool(name) {
             continue;
         }
         let body = raw.trim();
-        // One key, one value, on as many lines as the value takes.
-        let Some((key, value)) = body.split_once([':', '=']) else {
-            continue;
+        // One key, one value, on as many lines as the value takes - or, for
+        // a tag that is the name of a tool there is, the value on its own:
+        // `<date>2026-10-14</date>`, which is how the same conversation put
+        // it ten questions later, dressed like a block.
+        let keyed = body
+            .split_once([':', '='])
+            .map(|(k, v)| (k.trim(), v.trim()))
+            .filter(|(k, _)| {
+                !k.is_empty()
+                    && !k.contains(char::is_whitespace)
+                    && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+        let value = match keyed {
+            Some((_, value)) => value,
+            None if is_tool(name) => body,
+            None => continue,
         };
-        let key = key.trim();
-        let value = value.trim();
-        if key.is_empty()
-            || key.contains(char::is_whitespace)
-            || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            || value.is_empty()
-            || value.contains('<')
-        {
+        if value.is_empty() || value.contains('<') {
             continue;
         }
         let end = body_at + len + shut.len();
@@ -401,6 +407,11 @@ fn keyed_spans(reply: &str) -> Vec<(String, String, usize, usize)> {
         from = end;
     }
     out
+}
+
+/// Whether a tag is the name of a tool that exists.
+fn is_tool(name: &str) -> bool {
+    crate::tools::available(true).iter().any(|t| t.name == name)
 }
 
 /// A keyed call taken off what is shown, tag to closing tag.

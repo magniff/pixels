@@ -1064,12 +1064,20 @@ fn a_tool_named_as_a_bare_tag_with_its_parameter_as_a_line_is_a_call() {
         vec![("date".to_string(), "2026-10-14".to_string())]
     );
     assert_eq!(without_machinery(said), "Let me see.\n\nOne moment.");
-    // Not a call: a tag around prose with a colon in it, a block, a thought.
+    // The value on its own, for a tag that names a tool there is.
+    let said = "<date>2026-10-14</date>";
+    assert_eq!(
+        calls(said),
+        vec![("date".to_string(), "2026-10-14".to_string())]
+    );
+    assert_eq!(without_machinery(said), "");
+    // Not a call: a tag around prose with a colon in it, a block, a thought,
+    // a value on its own under a name that is no tool.
     for said in [
         "<b>Note: this is bold</b>",
         "<write file=\"a.md\">key: value</write>",
         "<thinking>\nexpression: 1 + 1\n</thinking>",
-        "<calc>1 + 1</calc>",
+        "<b>1 + 1</b>",
     ] {
         assert!(
             calls(said).iter().all(|(n, _)| n != "calc" && n != "b"),
