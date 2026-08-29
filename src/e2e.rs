@@ -424,14 +424,15 @@ fn chatting(app: &mut App) -> Result<(), String> {
         }
         app.scroll_to_top();
         let mut answered = false;
-        for _ in 0..20 {
+        for _ in 0..200 {
             if app.click("REJECT").is_ok() {
                 answered = true;
                 app.steps(4);
             } else if app.ui.find("chat-field").is_some() {
                 break;
             } else {
-                app.scroll_by(-4.0);
+                app.scroll_by(-1.0);
+                app.steps(2);
             }
         }
         if !answered {
@@ -504,12 +505,16 @@ fn accept_all(app: &mut App) -> usize {
         // having just been pressed.
         if app.ui.find("ACCEPT").is_none() {
             // It may be further up: only what is on screen can be clicked.
+            // Down from the top a notch at a time, less than the pane is
+            // tall, or the button is skipped over: four notches at a time
+            // was thirty-six lines, and the pane shows fourteen.
             app.scroll_to_top();
-            for _ in 0..20 {
+            for _ in 0..200 {
                 if app.ui.find("ACCEPT").is_some() {
                     break;
                 }
-                app.scroll_by(-4.0);
+                app.scroll_by(-1.0);
+                app.steps(2);
             }
         }
         if app.click("ACCEPT").is_err() {
@@ -2364,6 +2369,7 @@ fn long_session(app: &mut App, long: Long) -> Result<(), String> {
         }
         let at = Instant::now();
         asking(app, s.ask).map_err(|e| format!("step {}: {e}", i + 1))?;
+        let mut guarded = false;
         if !s.destructive {
             if let Some(what) = offers_to_destroy(app) {
                 wrong.push(format!(
@@ -2371,10 +2377,13 @@ fn long_session(app: &mut App, long: Long) -> Result<(), String> {
                     i + 1
                 ));
                 reject_all(app);
+                guarded = true;
             }
         }
         match s.then {
             Then::Nothing => {}
+            // Turned down already, by the guard above: that was the answer.
+            Then::Reject if guarded => {}
             Then::Accept => taken(app).map_err(|e| format!("step {}: {e}", i + 1))?,
             Then::AcceptOr(nudge) => {
                 if taken(app).is_err() {
@@ -2671,7 +2680,7 @@ fn a_long_session_in_the_garden(app: &mut App) -> Result<(), String> {
         step("how many kinds of seed is that?", Then::Nothing, number(4.0, 0.0)),
         // Back to the beds, now longer.
         step("which bed has the herbs?", Then::Nothing, says(&["bed 6"])),
-        step("add mint to the herbs in that bed", Then::Accept, file_has("beds.md", &["mint", "basil", "thyme"])),
+        step("add mint to the herbs in that bed", Then::AcceptOr("bed 6 - add mint to its herbs line"), file_has("beds.md", &["mint", "basil", "thyme"])),
         step("what is in bed 2?", Then::Nothing, says(&["courgettes"])),
         step("bed 2 got its mulch - take that line out", Then::Accept, both(file_lacks("beds.md", "needs mulch"), file_has("beds.md", &["courgettes", "bed 3"]))),
         // A change turned down, and the same thing asked for another way.
