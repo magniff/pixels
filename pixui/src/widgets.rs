@@ -88,6 +88,32 @@ const CHECK: [u8; 7] = [
 ];
 
 impl Ui<'_> {
+    /// A row of dots rising and falling in turn, for as long as it is drawn.
+    ///
+    /// For waiting on something that is working rather than stalled: a
+    /// model thinking, a file being read. Five two-pixel dots a column
+    /// apart, each a little behind the one before it, so a wave runs along
+    /// the row about once a second. Asks for the next frame itself, since
+    /// nothing else about a wait changes with time.
+    pub fn wave(&mut self, rect: Rect, ink: Color) {
+        const DOTS: i32 = 5;
+        const SIZE: i32 = 2;
+        let pitch = (rect.w / DOTS).max(SIZE + 1);
+        let travel = (rect.h - SIZE).max(1) as f32 / 2.0;
+        let t = self.input.time * 6.0;
+        for i in 0..DOTS {
+            let phase = t - i as f32 * 0.7;
+            let k = phase.sin() * 0.5 + 0.5;
+            let y = rect.y + rect.h - SIZE - (k * travel).round() as i32;
+            // Brightest at the crest and dimmed in the trough, so the wave
+            // reads as light moving along the row and not only as height.
+            let tint = ink.shade(-0.5 * (1.0 - k));
+            self.canvas
+                .fill_rect(Rect::new(rect.x + i * pitch, y, SIZE, SIZE), tint);
+        }
+        self.request_repaint();
+    }
+
     // ------------------------------------------------------------------ chrome
 
     /// Draw the raised face of a control and return the rect it actually

@@ -336,7 +336,16 @@ pub fn doing(p: &crate::llm::Progress) -> String {
         return format!("THINKING... {} TOKENS", p.written);
     }
     if p.written > 0 {
-        return format!("WRITING... {} TOKENS, {:.0}/S", p.written, p.rate());
+        return if p.thought > 0 {
+            format!(
+                "WRITING... {} TOKENS, {:.0}/S - THOUGHT FOR {}",
+                p.written,
+                p.rate(),
+                p.thought
+            )
+        } else {
+            format!("WRITING... {} TOKENS, {:.0}/S", p.written, p.rate())
+        };
     }
     if p.prompt == 0 {
         return "ASKING...".to_string();
@@ -2254,7 +2263,16 @@ impl Chat {
                 ui.space(3);
                 let row = ui.alloc(line_h);
                 let said = doing(&self.progress);
-                font::draw_text_styled(ui.canvas, row.x + 4, row.y, &said, th.info.hi, true);
+                // Something to watch while it thinks. A number going up says
+                // the machine is busy; a wave says it is alive, which is a
+                // different thing to be told over twenty seconds.
+                let mut at_x = row.x + 4;
+                if self.progress.deliberating {
+                    let wave = Rect::new(row.x + 4, row.y, 5 * 4, row.h);
+                    ui.wave(wave, th.accent.hi);
+                    at_x += wave.w + 6;
+                }
+                font::draw_text_styled(ui.canvas, at_x, row.y, &said, th.info.hi, true);
                 // The answer as it arrives, in the ink it will keep. A counter
                 // going up says the machine is busy; the words say what it is
                 // saying, and twenty seconds of the first one is twenty

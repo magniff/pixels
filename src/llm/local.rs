@@ -1054,8 +1054,11 @@ impl Local {
                     || tail.contains(super::THOUGHT_CLOSE))
             {
                 report.deliberating = false;
+                report.thought = report.written;
                 report.written = 0;
                 writing_since = std::time::Instant::now();
+            } else if report.deliberating {
+                report.thought = report.written;
             }
             // What it has said so far, so somebody watching sees the answer
             // arrive rather than a number going up. The markers the reply is

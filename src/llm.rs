@@ -402,6 +402,9 @@ pub struct Progress {
     pub generating: std::time::Duration,
     /// Whether those tokens are the model thinking rather than answering.
     pub deliberating: bool,
+    /// Tokens spent thinking, kept once the thinking is over: what the
+    /// deliberation cost is worth seeing beside what it produced.
+    pub thought: usize,
     /// Whether the wait is a tool being run rather than the model writing.
     /// Somebody watching a panel should be told which of the two it is: one is
     /// the machine working and the other is the network.

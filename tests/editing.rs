@@ -5810,6 +5810,23 @@ fn the_panel_says_what_is_actually_happening() {
         ..p()
     };
     assert!(doing(&writing).starts_with("WRITING... 12 TOKENS"));
+    // With what the thinking cost beside it, once there has been any.
+    assert!(!doing(&writing).contains("THOUGHT"));
+    let thought = Progress {
+        thought: 340,
+        ..writing
+    };
+    assert!(
+        doing(&thought).ends_with("THOUGHT FOR 340"),
+        "{}",
+        doing(&thought)
+    );
+    let thinking = Progress {
+        deliberating: true,
+        written: 120,
+        ..p()
+    };
+    assert_eq!(doing(&thinking), "THINKING... 120 TOKENS");
 }
 
 #[test]
