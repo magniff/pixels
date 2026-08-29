@@ -2127,6 +2127,11 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
     enum Then {
         Nothing,
         Accept,
+        /// Accepted - and if nothing was offered, said again with the nudge a
+        /// person would give, and accepted then. Counted as a wrong answer
+        /// either way; a step that needs the nudge is a step the model got
+        /// wrong the first time.
+        AcceptOr(&'static str),
         Reject,
     }
     struct Step {
@@ -2240,7 +2245,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
         })),
         step("is ideas.md still in the project? yes or no.", Then::Nothing, says(&["no"])),
         step("what do the two cheapest items add up to?", Then::Nothing, number(105.0, 0.0)),
-        step("in budget.md, rename 'museum tickets' to just 'museum'", Then::Accept, Box::new(|_, read| {
+        step("in budget.md, rename 'museum tickets' to just 'museum'", Then::AcceptOr("nothing changed. read budget.md, then rename that row"), Box::new(|_, read| {
             let t = read("budget.md").to_lowercase();
             if t.contains("museum") && !t.contains("museum tickets") { Ok(()) } else { Err(format!("{WRONG}not renamed: {t:?}")) }
         })),
@@ -2303,6 +2308,17 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
         match s.then {
             Then::Nothing => {}
             Then::Accept => taken(app).map_err(|e| format!("step {}: {e}", i + 1))?,
+            Then::AcceptOr(nudge) => {
+                if taken(app).is_err() {
+                    wrong.push(format!(
+                        "step {}: nothing was offered until nudged: {:?}",
+                        i + 1,
+                        last_answer(app).chars().take(140).collect::<String>()
+                    ));
+                    asking(app, nudge).map_err(|e| format!("step {}: {e}", i + 1))?;
+                    taken(app).map_err(|e| format!("step {}, nudged: {e}", i + 1))?;
+                }
+            }
             Then::Reject => {
                 app.scroll_to_end();
                 if app.click("REJECT").is_err() {

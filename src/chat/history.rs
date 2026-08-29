@@ -7,7 +7,7 @@
 //! said in the next turn of ours, which is somewhere the model does not
 //! write. Every rule here came from a model writing something it had seen.
 
-use super::change::{attr, block_end, blocks, own_name, state_attr};
+use super::change::{attr, block_end, blocks, lines_attr, own_name, state_attr};
 use crate::llm::Turn;
 
 /// A past turn as the model should see it, with the bodies of changes taken
@@ -243,6 +243,16 @@ fn bodies_but(
             }
             Some(true) => "accepted",
             Some(false) => "turned down, and the file is as it was",
+            // Never offered, because it could not be: an edit with no lines
+            // on a file that is there. Said so, or the model asks what became
+            // of it - and asked again, writes the same block again.
+            None if kind == "edit"
+                && attr(head, "after").is_none()
+                && lines_attr(head).is_none()
+                && now.iter().any(|(f, _)| own_name(f) == own_name(&named)) =>
+            {
+                "not made: it named no lines, and the file is there already. Read the file and say which lines"
+            }
             None => "not answered either way yet",
         };
         out.push_str(&text[at..tag]);

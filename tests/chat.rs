@@ -1619,6 +1619,34 @@ fn an_edit_of_no_particular_lines_is_a_write() {
         files: vec![("budget.md".to_string(), &budget[..])],
     };
     assert_eq!(changes[0].replacing(&not).as_deref(), Some(""));
+    // And the model is told why nothing came of it, or it writes the same
+    // block again when asked what became of it.
+    use notes::chat::as_sent;
+    use notes::llm::Turn;
+    let turns = vec![
+        Turn {
+            mine: true,
+            text: "rename it".into(),
+        },
+        Turn {
+            mine: false,
+            text: said.to_string(),
+        },
+        Turn {
+            mine: true,
+            text: "and?".into(),
+        },
+    ];
+    let sent = as_sent(&turns, &[("ages.md".to_string(), "# Ages\n".to_string())]);
+    assert!(sent[2].contains("named no lines"), "{}", sent[2]);
+    assert!(sent[2].contains("Read the file"), "{}", sent[2]);
+    // For a file not there, it is simply not answered yet.
+    let sent = as_sent(&turns, &[]);
+    assert!(
+        sent[2].contains("not answered either way yet"),
+        "{}",
+        sent[2]
+    );
 
     // An edit that does name its lines is still an edit.
     let lined = "<edit file=\"ages.md\" lines=\"2-3\">\nnew text\n</edit>";

@@ -140,7 +140,9 @@ they are looking at.
 with write. Any note in the vault can be read with the read tool; to change one in \
 another project, say they should open it.
 - Lines are inclusive and count from one, as in the margin. Write the replacement \
-without the numbers.
+without the numbers. An edit to a file that is there needs lines or after; count them \
+from the newest copy of the file you have been shown, and if that was long ago, read \
+it first.
 - Change as few lines as the request needs. To add something, use after: the new \
 lines go in below that line and nothing else moves, and after=\"0\" puts them at \
 the top. Not the whole file: rewriting a file to make one addition means copying out \
