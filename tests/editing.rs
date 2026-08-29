@@ -5916,15 +5916,78 @@ fn thinking_in_words_is_kept_out_of_what_is_shown_and_kept() {
         shown.contains("<edit file="),
         "the change is still there: {shown}"
     );
-    // A thought never closed is left alone rather than swallowing an answer
-    // written inside it.
-    let open = "<thinking>\nhmm, the answer is 12.4 weeks";
-    assert_eq!(without_thoughts(open), open);
     // Two thoughts, both gone.
     assert_eq!(
         without_thoughts("<thinking>a</thinking>x<thinking>b</thinking>y"),
         "xy"
     );
+
+    // A thought that reaches for a tool halfway through comes in two halves,
+    // in two passes: an open with no close, then a close with no open. Both
+    // halves are thinking, and both leaked - the first as its own text, the
+    // second as text with a stray tag on the end.
+    let first = "<thinking>\nI need the date for that.\n<tool_call><function=date><parameter=when>today</parameter></function></tool_call>";
+    assert_eq!(without_machinery(first), "");
+    let second = "So it is a Friday.\n</thinking>\n\nIt is Friday.";
+    assert_eq!(without_machinery(second), "It is Friday.");
+
+    // A reply that was thinking to the very end shows its words, with the
+    // marks off, rather than "it did not answer".
+    let only = "<thinking>\nhmm, the answer is 12.4 weeks";
+    assert_eq!(notes::llm::shown(only), "hmm, the answer is 12.4 weeks");
+}
+
+#[test]
+fn nothing_half_typed_is_shown_while_streaming() {
+    use notes::llm::{Ask, Assistant, Backend, Progress, Reply, Turn, Watcher};
+    /// Streams a reply a piece at a time, the way the real one arrives.
+    struct Dribble;
+    impl Backend for Dribble {
+        fn name(&self) -> String {
+            "DRIBBLE".into()
+        }
+        fn edit(&mut self, _ask: &Ask, w: &mut dyn Watcher) -> Reply {
+            let whole = "<thinking>\nplan\n</thinking>\n\nThe bike is red.\n<tool_call>";
+            let mut so_far = String::new();
+            for piece in [
+                "<thin",
+                "king>\nplan\n</thinking>\n\nThe bike ",
+                "is red.\n<tool_c",
+                "all>",
+            ] {
+                so_far.push_str(piece);
+                w.tick(Progress::default(), &so_far);
+                std::thread::sleep(std::time::Duration::from_millis(15));
+            }
+            assert_eq!(so_far, whole);
+            Ok("The bike is red.".into())
+        }
+    }
+    let mut a = Assistant::spawn(Box::new(Dribble));
+    a.ask(Ask {
+        turns: vec![Turn {
+            mine: true,
+            text: "colour?".into(),
+        }],
+        ..Default::default()
+    });
+    // Everything the panel was shown along the way, and none of it a tag.
+    let mut seen = Vec::new();
+    loop {
+        let partial = a.partial().to_string();
+        if !partial.is_empty() && seen.last() != Some(&partial) {
+            seen.push(partial);
+        }
+        if a.poll().is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(!seen.is_empty(), "nothing was shown at all");
+    for shown in &seen {
+        assert!(!shown.contains('<'), "a tag was shown: {shown:?}");
+        assert!(!shown.contains("plan"), "a thought was shown: {shown:?}");
+    }
 }
 
 #[test]

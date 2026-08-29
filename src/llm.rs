@@ -356,15 +356,46 @@ pub const THOUGHT_CLOSE: &str = "</thinking>";
 pub fn without_thoughts(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
+    // A close with no open before it is the tail of a thought begun in an
+    // earlier pass: the model thought, reached for a tool mid-thought, and
+    // finished the thought once the tool had answered. Everything up to it
+    // is thinking.
+    if let Some(end) = rest.find(THOUGHT_CLOSE) {
+        if !rest[..end].contains(THOUGHT_OPEN) {
+            rest = &rest[end + THOUGHT_CLOSE.len()..];
+        }
+    }
     while let Some(at) = rest.find(THOUGHT_OPEN) {
-        let Some(end) = rest[at..].find(THOUGHT_CLOSE) else {
-            break;
-        };
         out.push_str(&rest[..at]);
-        rest = &rest[at + end + THOUGHT_CLOSE.len()..];
+        match rest[at..].find(THOUGHT_CLOSE) {
+            Some(end) => rest = &rest[at + end + THOUGHT_CLOSE.len()..],
+            // Open at the end: the head of a thought the next pass will
+            // finish, or one the model forgot to close. Either way it is a
+            // thought, and it goes. `assembled` puts the words back, without
+            // the marks, if that leaves nothing at all to show.
+            None => {
+                rest = "";
+                break;
+            }
+        }
     }
     out.push_str(rest);
     out.trim().to_string()
+}
+
+/// What of a reply is shown: the machinery off, the thinking off - unless
+/// the thinking was all there was.
+///
+/// A reply that had its answer inside a thought it never closed would come
+/// out as nothing, and "it did not answer" is worse than the working. So a
+/// reply with nothing left once its thoughts are gone shows its thoughts,
+/// with the marks off.
+pub fn shown(said: &str) -> String {
+    let plain = without_machinery(said);
+    if plain.is_empty() && said.contains(THOUGHT_OPEN) {
+        return without_machinery(&said.replace(THOUGHT_OPEN, "").replace(THOUGHT_CLOSE, ""));
+    }
+    plain
 }
 
 impl Dialect {
@@ -959,11 +990,29 @@ impl Watcher for Watching<'_> {
         let said = without_machinery(said);
         // A thought still being written is not shown, and is said to be
         // thinking rather than writing. What comes after the thought is the
-        // answer, and that is shown as it arrives.
-        let (said, thinking) = match said.find(THOUGHT_OPEN) {
+        // answer, and that is shown as it arrives. In any of the spellings a
+        // model thinks in: what is being streamed has not been through the
+        // tidying that takes a finished thought off.
+        let thinking = [
+            THOUGHT_OPEN,
+            "<think>",
+            "<|channel>thought",
+            "<|channel|>analysis",
+        ]
+        .iter()
+        .filter_map(|mark| said.find(mark))
+        .min();
+        let (mut said, thinking) = match thinking {
             Some(at) => (said[..at].trim().to_string(), true),
             None => (said, false),
         };
+        // A tag half typed is not a word. Anything from the last `<` with no
+        // `>` after it is a tag still arriving, and is held back until it has.
+        if let Some(at) = said.rfind('<') {
+            if !said[at..].contains('>') {
+                said.truncate(at);
+            }
+        }
         if thinking && !self.at.deliberating {
             self.at.deliberating = true;
             let _ = self.beat.send(self.at);
@@ -1036,7 +1085,7 @@ fn answer(
         // asked it to stop writing is more use than nothing, and it is what
         // you were looking at when you pressed the button.
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
-            return Ok(assembled(&used, &so_far, &without_machinery(&said)));
+            return Ok(assembled(&used, &so_far, &shown(&said)));
         }
 
         let asked_for = if ask.tools.is_empty() {
@@ -1049,7 +1098,7 @@ fn answer(
             // answer arrives with its working. Anything that looked like a
             // call and was not one comes out here rather than being read as
             // prose: a half-written block is not something to show anybody.
-            return Ok(assembled(&used, &so_far, &without_machinery(&said)));
+            return Ok(assembled(&used, &so_far, &shown(&said)));
         }
         // The ones worth running: not already answered, and not asked twice in
         // the same breath. Both happen, and the second one badly - asked for a
@@ -1112,7 +1161,7 @@ fn answer(
 
 /// Keep the part of a pass that is prose rather than machinery.
 fn keep(so_far: &mut Vec<String>, said: &str) {
-    let plain = without_machinery(said);
+    let plain = shown(said);
     // The same sentence twice is one sentence: a model that repeats its
     // working before each call would otherwise say everything n times.
     if !plain.is_empty() && !so_far.contains(&plain) {
@@ -1142,6 +1191,7 @@ fn assembled(used: &[Used], so_far: &[String], last: &str) -> String {
             "It looked that up but did not say anything about it."
         });
     }
+
     out.push_str(&parts.join("\n\n"));
     out
 }
@@ -1205,7 +1255,7 @@ fn finish(
     // is gone with the tags either way, and handing those back instead was
     // showing somebody the inside of the thing they asked a question of.
     // Better to say plainly that there is no answer, when there is none.
-    let plain = without_machinery(&said);
+    let plain = shown(&said);
     let ending = if plain.is_empty() && so_far.is_empty() {
         "I looked those up but could not put an answer together."
     } else {
