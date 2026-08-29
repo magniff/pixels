@@ -287,7 +287,7 @@ impl Drawn {
         if turn.mine {
             return Self {
                 key,
-                prose: turn.text.clone(),
+                prose: told(&turn.text).1.to_string(),
                 ..Self::default()
             };
         }
@@ -387,10 +387,36 @@ impl Lookup {
 /// that is content: it is the lines it wants to put in the file.
 pub fn copyable(turn: &Turn) -> String {
     if turn.mine {
-        return turn.text.trim().to_string();
+        return told(&turn.text).1.trim().to_string();
     }
     lookups(&turn.text).0.trim().to_string()
 }
+
+/// What a question was told before it was asked, and the question.
+///
+/// A question carries, in front of it, what the model was told at that point:
+/// what its accepted change did to the file, what moved on disk, which lines
+/// of the list of notes are different now. It used to be folded into the
+/// question on its way to the model and never stored, so it was in front of
+/// the model for one question and gone the next - and a file the model had
+/// made was, two questions later, a file it had been told nothing about.
+/// Asked which notes were in the project, it named the one it had been shown
+/// at the start. Kept here, in the turn, between marks the panel does not
+/// draw, it is in front of every question after.
+pub fn told(text: &str) -> (Option<&str>, &str) {
+    let Some(rest) = text.strip_prefix(TOLD_OPEN) else {
+        return (None, text);
+    };
+    let Some(end) = rest.find(TOLD_CLOSE) else {
+        return (None, text);
+    };
+    let told = rest[..end].trim();
+    let question = rest[end + TOLD_CLOSE.len()..].trim_start();
+    (Some(told), question)
+}
+
+pub(super) const TOLD_OPEN: &str = "<told>";
+pub(super) const TOLD_CLOSE: &str = "</told>";
 
 /// Lift the record of what was looked up out of a reply.
 ///
@@ -583,6 +609,23 @@ impl Chat {
         }
         self.draft.clear();
         true
+    }
+
+    /// Put in front of the newest question what the model is told with it.
+    /// See `told`. Once: a question asked again after a tool's answer is the
+    /// same question, and is told the same thing.
+    pub fn tell(&mut self, what: &str) {
+        let Some(last) = self.turns.last_mut().filter(|t| t.mine) else {
+            return;
+        };
+        if what.trim().is_empty() || told(&last.text).0.is_some() {
+            return;
+        }
+        last.text = format!(
+            "{TOLD_OPEN}\n{}\n{TOLD_CLOSE}\n\n{}",
+            what.trim(),
+            last.text
+        );
     }
 
     /// Take what is typed and make it a turn, ready to send.

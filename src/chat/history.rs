@@ -187,13 +187,21 @@ pub fn as_sent(turns: &[Turn], now: &[(String, String)]) -> Vec<String> {
     let mut carry: Vec<String> = Vec::new();
     for (t, turn) in turns.iter().enumerate() {
         if turn.mine {
+            // What it was told first, then what was carried forward from its
+            // own turn, then the question - the order everything has always
+            // arrived in.
+            let (told, question) = super::told(&turn.text);
             let mut text = String::new();
+            if let Some(told) = told {
+                text.push_str(told);
+                text.push_str("\n\n---\n\n");
+            }
             if !carry.is_empty() {
                 text.push_str(&carry.join("\n"));
                 text.push_str("\n\n");
                 carry.clear();
             }
-            text.push_str(&turn.text);
+            text.push_str(question);
             out.push(text);
             continue;
         }

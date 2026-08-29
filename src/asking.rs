@@ -381,6 +381,11 @@ impl Notes {
             .map(|n| (n.filename(), n.buffer.to_text()))
             .collect();
         let (vault, within, since) = talk.context(&digest::vault(&self.notes), &files);
+        // Kept with the question rather than folded into it on the way: see
+        // `chat::told`. What the model is told once it must go on being told.
+        if let Some(since) = &since {
+            talk.tell(since);
+        }
         llm::Ask {
             // What it said, without the bodies of the changes it proposed: a
             // block is a copy of a file, and the file itself is above, once
@@ -393,7 +398,7 @@ impl Notes {
             vault,
             file: self.note().slug(),
             within: Some(within),
-            since,
+            since: None,
             // Only when it has been turned on, and only for a conversation.
             // A tool the model was never offered is one it cannot reach for
             // and cannot mention.

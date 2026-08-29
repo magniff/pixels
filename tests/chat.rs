@@ -2024,6 +2024,47 @@ fn a_lookup_goes_back_as_something_it_was_told() {
 }
 
 #[test]
+fn what_a_question_was_told_stays_in_front_of_it() {
+    use notes::chat::{as_sent, copyable, told, Chat};
+    let mut chat = Chat::new("trip".into(), "zzqqtrip.md".into());
+    chat.draft = "which notes are there?".into();
+    chat.commit();
+    chat.tell("Your write to `budget.md` was accepted. It now says, in full:\n\n   1 | # Budget");
+    // Once: told again for the same question - a tool's answer asks it again
+    // - nothing is added.
+    chat.tell("something else");
+    let turn = chat.turns.last().unwrap();
+    let (what, question) = told(&turn.text);
+    assert_eq!(
+        what.map(|w| w.contains("# Budget")),
+        Some(true),
+        "{}",
+        turn.text
+    );
+    assert!(!what.unwrap().contains("something else"), "{}", turn.text);
+    assert_eq!(question, "which notes are there?");
+    // Not on the screen, and not in the clipboard.
+    assert_eq!(copyable(turn), "which notes are there?");
+    // But in front of the question every time it goes to the model, in the
+    // shape a correction has always arrived in.
+    let sent = as_sent(&chat.turns, &[]);
+    assert!(
+        sent[0].starts_with("Your write to `budget.md` was accepted"),
+        "{}",
+        sent[0]
+    );
+    assert!(
+        sent[0].contains("\n\n---\n\nwhich notes are there?"),
+        "{}",
+        sent[0]
+    );
+    // And it survives the file the conversation is kept in.
+    let read = notes::chat::parse(&chat.to_text());
+    assert_eq!(read.len(), 1);
+    assert_eq!(told(&read[0].text).0, what, "{}", read[0].text);
+}
+
+#[test]
 fn a_grep_whose_lines_have_moved_loses_its_numbers() {
     use notes::chat::as_sent;
     use notes::llm::Turn;

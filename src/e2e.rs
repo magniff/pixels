@@ -2368,6 +2368,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
     for (i, turn) in chat.turns.iter().enumerate() {
         let shown = crate::chat::copyable(turn);
         for mark in [
+            "<told",
             "<thinking",
             "</thinking",
             "<tool_call",
