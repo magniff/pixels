@@ -149,7 +149,7 @@ impl Notes {
         // third line had its fourth line changed. So the block does not go
         // back, and this does. What it is not told, it cannot notice.
         let kind = match &change.what {
-            chat::What::Write { .. } => "write",
+            chat::What::Write { .. } | chat::What::Lay { .. } => "write",
             chat::What::Merge { .. } => "merge",
             _ => "edit",
         };
@@ -181,7 +181,12 @@ impl Notes {
             .position(|n| n.project == here && n.filename() == named);
 
         match &change.what {
-            chat::What::Write { text } => {
+            // A file laid down where one is already: refused, as the panel
+            // refuses it. See `What::Lay`.
+            chat::What::Lay { .. } if found.is_some() => {
+                self.status = "THAT FILE IS ALREADY THERE - SAY WHICH LINES".into();
+            }
+            chat::What::Write { text } | chat::What::Lay { text } => {
                 // Unsaved either way, like anything else the editor makes:
                 // `:w` puts it on disk, `u` takes it back, and until one of
                 // those happens nothing has really happened.

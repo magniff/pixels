@@ -1596,6 +1596,29 @@ fn an_edit_of_no_particular_lines_is_a_write() {
         !prose.contains("<edit"),
         "the block is lifted out: {prose:?}"
     );
+    // Only for a file that is not there yet. Asked to rename one word in a
+    // nine-line budget, a model wrote `<edit file="budget.md">` with the one
+    // line in it, and read as a write it laid that line over the budget.
+    use notes::chat::Folder;
+    let budget: Vec<String> = "# Budget\n\n| food | 150 |"
+        .lines()
+        .map(String::from)
+        .collect();
+    let there = Folder {
+        project: "trip".into(),
+        here: "zzqqtrip.md".into(),
+        files: vec![("ages.md".to_string(), &budget[..])],
+    };
+    assert!(
+        changes[0].replacing(&there).is_none(),
+        "offered over a file that is there"
+    );
+    let not = Folder {
+        project: "trip".into(),
+        here: "zzqqtrip.md".into(),
+        files: vec![("budget.md".to_string(), &budget[..])],
+    };
+    assert_eq!(changes[0].replacing(&not).as_deref(), Some(""));
 
     // An edit that does name its lines is still an edit.
     let lined = "<edit file=\"ages.md\" lines=\"2-3\">\nnew text\n</edit>";

@@ -783,6 +783,9 @@ impl Chat {
                         project.to_uppercase()
                     )
                 }
+                None if matches!(change.what, What::Lay { .. }) => {
+                    format!("{span} - WHICH IS THERE ALREADY, AND NO LINES SAID")
+                }
                 None => format!("{span} - WHICH IS NOT THERE TO CHANGE"),
             };
             ui.draw_text_in(head, &why, th.danger.face, Align::Left);
@@ -790,7 +793,7 @@ impl Chat {
         };
         let tint = match change.what {
             What::Delete => th.danger.face,
-            What::Write { .. } | What::Merge { .. } => th.positive.face,
+            What::Write { .. } | What::Lay { .. } | What::Merge { .. } => th.positive.face,
             What::Edit { .. } | What::Insert { .. } => th.info.hi,
         };
         font::draw_text_styled(ui.canvas, head.x + 4, head.y, &span, tint, true);

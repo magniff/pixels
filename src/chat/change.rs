@@ -118,6 +118,14 @@ pub enum What {
     /// this file says now" covers all three, and a model that has been handed
     /// the whole file reaches for it naturally.
     Write { text: String },
+    /// What a file that is not there yet should say: an `edit` with a file
+    /// named and no lines. Models reach for `edit` as the general word for
+    /// changing something, and a new file has no lines to name - asked to
+    /// make a note of four birthdays, one wrote `<edit file="ages.md">` with
+    /// the whole note in it. For a file that is there it means nothing, and
+    /// is refused: read as a write it laid one line over a nine-line budget,
+    /// when all that was asked was one word in it changed.
+    Lay { text: String },
     /// A file that should not be there any more.
     Delete,
     /// Several files folded into one, and the ones folded in taken away.
@@ -161,7 +169,7 @@ impl Change {
         match &self.what {
             What::Edit { from, to, text } => (count(text), to.saturating_sub(*from) + 1),
             What::Insert { text, .. } => (count(text), 0),
-            What::Write { text } => (count(text), target),
+            What::Write { text } | What::Lay { text } => (count(text), target),
             What::Delete => (0, target),
             // Everything folded in goes away as well as the target being
             // rewritten, so the count says what the project loses, not what
@@ -223,6 +231,8 @@ impl Change {
             // A file being written replaces whatever it said before, which is
             // nothing at all when it is not there yet.
             What::Write { .. } => Some(lines.map(|l| l.join("\n")).unwrap_or_default()),
+            // Only where there is nothing yet. See `What::Lay`.
+            What::Lay { .. } => lines.is_none().then(String::new),
             What::Delete => Some(lines?.join("\n")),
             // A merge that names a file which is not there has nothing to fold
             // in, and is a mistake rather than a change.
@@ -236,9 +246,10 @@ impl Change {
     /// What it would leave behind in place of that.
     pub fn becoming(&self, folder: &Folder) -> String {
         match &self.what {
-            What::Edit { text, .. } | What::Insert { text, .. } | What::Write { text } => {
-                text.clone()
-            }
+            What::Edit { text, .. }
+            | What::Insert { text, .. }
+            | What::Write { text }
+            | What::Lay { text } => text.clone(),
             What::Delete => String::new(),
             What::Merge { from, text } if text.is_empty() => from
                 .iter()
@@ -258,7 +269,7 @@ impl Change {
             What::Edit { from, to, .. } => format!("{named}  LINES {from}-{to}"),
             What::Insert { after: 0, .. } => format!("{named}  AT THE TOP"),
             What::Insert { after, .. } => format!("{named}  AFTER LINE {after}"),
-            What::Write { .. } => format!("WRITE  {named}"),
+            What::Write { .. } | What::Lay { .. } => format!("WRITE  {named}"),
             What::Delete => format!("DELETE  {named}"),
             What::Merge { from, .. } => format!("MERGE  {}  INTO  {named}", from.join(", ")),
         }
@@ -414,18 +425,13 @@ fn every_proposal(reply: &str) -> (String, Vec<Change>) {
                         text: body.clone(),
                     })
                 })
-                // An edit of no particular lines, of a file it has named, is a
-                // write: here is what the file should say. Models reach for
-                // `edit` as the general word for changing something, and a new
-                // file has no lines to name - asked to make a note of four
-                // birthdays, one wrote `<edit file="ages.md">` with the whole
-                // note in it, and the block was dropped on the floor for want
-                // of a `lines`. Nothing was offered and nothing was written.
+                // An edit of no particular lines, of a file it has named, is
+                // what a file not there yet should say. See `What::Lay`.
                 //
                 // Only when a file is named. A bare `<edit>` means the note in
                 // front of you, and reading that as "replace all of it" is too
                 // much to infer from something left out.
-                .or_else(|| named.is_some().then(|| What::Write { text: body.clone() })),
+                .or_else(|| named.is_some().then(|| What::Lay { text: body.clone() })),
             // The rest are about a file by name and none of them means
             // anything without one. `create` as well as `write`, because it is
             // the word a model reaches for and refusing it would be pedantry
@@ -583,7 +589,7 @@ pub fn settle(text: &str, change: &Change, taken: bool) -> String {
         let mine = own.as_ref().is_some_and(|c| {
             place(c) == wanted
                 || match &c.what {
-                    What::Write { .. } | What::Merge { .. } => {
+                    What::Write { .. } | What::Lay { .. } | What::Merge { .. } => {
                         c.file.as_deref().map(own_name) == target && target.is_some()
                     }
                     What::Delete => c
