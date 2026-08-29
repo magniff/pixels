@@ -545,10 +545,21 @@ fn gemma_calls(reply: &str) -> Vec<(String, String)> {
     for piece in reply.split("<|tool_call>").skip(1) {
         let body = piece.split("<tool_call|>").next().unwrap_or(piece).trim();
         let body = body.strip_prefix("call:").unwrap_or(body);
-        let Some((name, rest)) = body.split_once('{') else {
-            continue;
-        };
+        // The name, then the arguments in braces - or, dressed like one of
+        // the change blocks it has in front of it, as an attribute after the
+        // name: `call:read file="barn/hens.md"{}`, and `{}` or nothing after.
+        // Three notes were asked for that way and none was read, because
+        // "read file="barn/hens.md"" is no tool.
+        let brace = body.find('{').unwrap_or(body.len());
+        let (head, rest) = body.split_at(brace);
+        let (name, attrs) = head.split_once(char::is_whitespace).unwrap_or((head, ""));
+        let rest = rest.strip_prefix('{').unwrap_or(rest);
         let inner = rest.rsplit_once('}').map(|(i, _)| i).unwrap_or(rest);
+        let inner = if inner.trim().is_empty() {
+            attrs
+        } else {
+            inner
+        };
         // `{when:"today"}` one time and `{file="garden/harvest.md"}` the next,
         // from the same model in the same run. Whichever comes first is the
         // one dividing the name from the value.

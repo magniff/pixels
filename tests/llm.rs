@@ -1155,6 +1155,27 @@ fn a_call_with_a_name_and_no_body_is_not_an_empty_block() {
 }
 
 #[test]
+fn gemma_may_write_the_argument_as_an_attribute_after_the_name() {
+    use notes::llm::{calls, without_machinery};
+    // Word for word, three at once, dressed like the change blocks.
+    let said = "<|tool_call>call:read file=\"barn/hens.md\"<tool_call|><|tool_call>call:read file=\"barn/goats.md\"{}<tool_call|>";
+    assert_eq!(
+        calls(said),
+        vec![
+            ("read".to_string(), "barn/hens.md".to_string()),
+            ("read".to_string(), "barn/goats.md".to_string()),
+        ]
+    );
+    assert_eq!(without_machinery(said), "");
+    // The usual shape still.
+    let said = "<|tool_call>call:calc{expression:<|\"|>384 * 517<|\"|>}<tool_call|>";
+    assert_eq!(
+        calls(said),
+        vec![("calc".to_string(), "384 * 517".to_string())]
+    );
+}
+
+#[test]
 fn a_closing_mark_after_the_thought_is_done_is_not_shown() {
     use notes::llm::without_thoughts;
     // Word for word: the thought, the answer, the mark again, the answer again.
