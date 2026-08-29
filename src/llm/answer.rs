@@ -369,15 +369,19 @@ fn finish(
         sent: 0,
         at: Progress::default(),
     };
+    // The tools stay declared. Taking them away changed the first line of
+    // the prompt, and everything after it - the whole conversation - was
+    // read again from cold to ask for one last answer. Whatever it calls
+    // now is not run: it was told not to, and the call comes off with the
+    // tags below.
     let said = to_ascii(&backend.edit(
         &Ask {
             turns,
-            // Nothing to reach for, so the only thing left is the answer.
-            tools: Vec::new(),
             ..ask.clone()
         },
         &mut watch,
     )?);
+    jotted(&format!("REPLY, finishing ({} chars)", said.len()), &said);
     // There were no tools to call on this pass, so anything shaped like a call
     // was not one - it was the model carrying on out of habit. What it wrote
     // is gone with the tags either way, and handing those back instead was

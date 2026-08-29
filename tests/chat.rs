@@ -2065,6 +2065,49 @@ fn what_a_question_was_told_stays_in_front_of_it() {
 }
 
 #[test]
+fn deleting_the_note_in_front_of_you_stays_in_its_project() {
+    use notes::chat::{Change, Chat, What};
+    let dir = std::env::temp_dir().join(format!("notes-stay-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("garden")).expect("a vault");
+    std::fs::create_dir_all(dir.join("kitchen")).expect("a vault");
+    std::fs::write(dir.join("garden/beds.md"), "# Beds\n").expect("a note");
+    std::fs::write(dir.join("garden/tasks.md"), "# Tasks\n").expect("a note");
+    std::fs::write(dir.join("kitchen/recipes.md"), "# Recipes\n").expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "beds.md")
+        .expect("there");
+    let mut chat = Chat::new("garden".into(), "beds.md".into());
+    // Word for word: the note the conversation was looking at is deleted,
+    // and the editor fell back on whatever came before it in the drawer -
+    // a note in the kitchen. The conversation was then told the garden was
+    // gone and the kitchen was new.
+    let gone = Change {
+        file: Some("beds.md".into()),
+        what: What::Delete,
+        state: None,
+    };
+    app.apply_change_in(&gone, "garden", "beds.md");
+    assert_eq!(
+        app.notes[app.current].project, "garden",
+        "fell out of the project"
+    );
+    app.took_up_for_test(&gone, &mut chat);
+    let ask = app.chat_ask_for_test(&mut chat);
+    assert_eq!(chat.focus, "tasks.md", "looks at what is left");
+    assert_eq!(ask.file, "garden/tasks.md");
+    assert!(
+        !ask.within.as_deref().unwrap_or("").contains("recipes"),
+        "{:?}",
+        ask.within
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_second_edit_in_the_same_reply_is_moved_along_by_the_first() {
     use notes::chat::{proposals, rebased, settle, Chat};
     // Word for word: a row put in below line 5, and line 7 changed - both

@@ -552,8 +552,13 @@ fn a_question_that_runs_out_of_lookups_still_gets_answered() {
             "GREEDY".into()
         }
         fn edit(&mut self, ask: &Ask, _w: &mut dyn Watcher) -> Reply {
-            // Tools taken away is the signal to answer, and it does.
-            if ask.tools.is_empty() {
+            // Told to answer now is the signal to answer, and it does. The
+            // tools stay declared, so the prompt's front stays cached.
+            let told = ask
+                .turns
+                .last()
+                .is_some_and(|t| t.mine && t.text.contains("Answer now"));
+            if told {
                 return Ok("Here is the table, from what I looked up.".into());
             }
             let n = self

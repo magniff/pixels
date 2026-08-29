@@ -94,6 +94,11 @@ impl Notes {
         self.took_up(change, talk);
     }
 
+    #[doc(hidden)]
+    pub fn chat_ask_for_test(&mut self, talk: &mut chat::Chat) -> llm::Ask {
+        self.chat_ask(talk)
+    }
+
     /// Tell the conversation what the files say now that it has been applied.
     ///
     /// Only the files this change touched, and only what they say here: the
@@ -101,17 +106,14 @@ impl Notes {
     /// back as news. Everything else is still measured the usual way, so an
     /// edit made somewhere else still arrives at the end of the next question.
     pub(crate) fn took_up(&mut self, change: &chat::Change, talk: &mut chat::Chat) {
-        let named = change
-            .file
-            .clone()
-            .unwrap_or_else(|| self.note().filename());
+        let named = change.file.clone().unwrap_or_else(|| talk.focus.clone());
         let named = bare(&named);
         // In this project. A note is known by its name within its folder,
         // and the same name can be in two: the vault has an `ideas.md` at the
         // top, and a model that made `trip/ideas.md` was told its new note
         // said what the old one did - a checklist about preview panes - and
         // then, at the next question, that the note had changed on disk.
-        let here = self.note().project.clone();
+        let here = talk.project.clone();
         let says = |app: &Self, want: &str| {
             app.notes
                 .iter()
@@ -181,11 +183,18 @@ impl Notes {
     }
 
     pub fn apply_change(&mut self, change: &chat::Change) {
-        let here = self.note().project.clone();
+        let (project, here) = (self.note().project.clone(), self.note().filename());
+        self.apply_change_in(change, &project, &here);
+    }
+
+    /// A change made in one project, looked at from one of its notes: the
+    /// conversation's, not the editor's. See `folder_of`.
+    pub fn apply_change_in(&mut self, change: &chat::Change, project: &str, focus: &str) {
+        let here = project.to_string();
         // Only this project. The panel does not offer a change aimed at
         // another, and this is the same rule at the other door, so nothing
         // that reaches here by another road can get past it either.
-        if let Some(project) = change.misplaced(&self.folder()) {
+        if let Some(project) = change.misplaced(&self.folder_of(project, focus)) {
             self.status =
                 format!("THAT NOTE IS IN {project} - OPEN IT TO CHANGE IT").to_uppercase();
             return;
@@ -194,7 +203,7 @@ impl Notes {
             .file
             .as_deref()
             .map(bare)
-            .unwrap_or_else(|| self.note().filename());
+            .unwrap_or_else(|| focus.to_string());
         let found = self
             .notes
             .iter()
@@ -262,21 +271,29 @@ impl Notes {
                 } else {
                     text.clone()
                 };
-                self.apply_change(&chat::Change {
-                    file: change.file.clone(),
-                    what: chat::What::Write { text: body },
-                    state: None,
-                });
+                self.apply_change_in(
+                    &chat::Change {
+                        file: change.file.clone(),
+                        what: chat::What::Write { text: body },
+                        state: None,
+                    },
+                    project,
+                    focus,
+                );
                 for name in from {
                     // Not the one being merged into, when it is one of them.
                     if *name == named {
                         continue;
                     }
-                    self.apply_change(&chat::Change {
-                        file: Some(name.clone()),
-                        what: chat::What::Delete,
-                        state: None,
-                    });
+                    self.apply_change_in(
+                        &chat::Change {
+                            file: Some(name.clone()),
+                            what: chat::What::Delete,
+                            state: None,
+                        },
+                        project,
+                        focus,
+                    );
                 }
                 self.status = format!("MERGED INTO {named}").to_uppercase();
                 if let Some(i) = self.find_note(&named) {
@@ -295,9 +312,20 @@ impl Notes {
                 }
                 self.notes.remove(i);
                 if self.notes.is_empty() {
-                    self.notes.push(Note::blank(here));
+                    self.notes.push(Note::blank(here.clone()));
                 }
-                self.current = self.current.min(self.notes.len() - 1);
+                // Onto the note before it, as deleting from the drawer does -
+                // and within the project, or the editor falls out of it: with
+                // the first note of the garden gone it landed in the kitchen,
+                // and the conversation was told the garden was gone.
+                if self.current >= i {
+                    self.current = self.current.saturating_sub(1).min(self.notes.len() - 1);
+                }
+                if self.notes[self.current].project != here {
+                    if let Some(j) = self.notes.iter().position(|n| n.project == here) {
+                        self.current = j;
+                    }
+                }
                 self.scroll = 0;
                 self.status = format!("DELETED {named}").to_uppercase();
             }
@@ -362,14 +390,25 @@ impl Notes {
 
     /// The project a conversation is about, as it is right now.
     pub fn folder(&self) -> chat::Folder<'_> {
-        let here = self.note().project.clone();
+        self.folder_of(&self.note().project.clone(), &self.note().filename())
+    }
+
+    /// A project as it is right now, looked at from one of its notes.
+    ///
+    /// A conversation is about its project, wherever the editor has gone
+    /// since: with a note in the kitchen open, a conversation about the
+    /// garden was handed the kitchen as its project, told the garden's notes
+    /// were gone, and refused a change to them. It happens without anybody
+    /// going anywhere - the note the conversation was looking at was
+    /// deleted, and the editor fell back on whatever came before it.
+    pub fn folder_of(&self, project: &str, here: &str) -> chat::Folder<'_> {
         chat::Folder {
-            project: here.clone(),
-            here: self.note().filename(),
+            project: project.to_string(),
+            here: here.to_string(),
             files: self
                 .notes
                 .iter()
-                .filter(|n| n.project == here)
+                .filter(|n| n.project == project)
                 .map(|n| (n.filename(), n.buffer.lines()))
                 .collect(),
         }
@@ -393,13 +432,29 @@ impl Notes {
         // what is merely waiting to be saved here should not be mistaken for
         // work in danger, which is what `settle` is for.
         self.before_asking();
-        let here = self.note().project.clone();
+        // The conversation's project, wherever the editor is. Its focus
+        // follows the editor while the editor is in that project, and when
+        // the note it was looking at is gone it looks at the first that is
+        // left. See `folder_of`.
+        let here = talk.project.clone();
         let files: Vec<(String, String)> = self
             .notes
             .iter()
             .filter(|n| n.project == here)
             .map(|n| (n.filename(), n.buffer.to_text()))
             .collect();
+        if self.note().project == here {
+            talk.focus = self.note().filename();
+        } else if !files.iter().any(|(n, _)| *n == talk.focus) {
+            if let Some((first, _)) = files.first() {
+                talk.focus = first.clone();
+            }
+        }
+        let slug = if here.is_empty() {
+            talk.focus.clone()
+        } else {
+            format!("{here}/{}", talk.focus)
+        };
         let (vault, within, since) = talk.context(&digest::vault(&self.notes), &files);
         // Kept with the question rather than folded into it on the way: see
         // `chat::told`. What the model is told once it must go on being told.
@@ -416,7 +471,7 @@ impl Notes {
                 .map(|(text, t)| llm::Turn { mine: t.mine, text })
                 .collect(),
             vault,
-            file: self.note().slug(),
+            file: slug,
             within: Some(within),
             since: None,
             // Only when it has been turned on, and only for a conversation.

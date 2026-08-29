@@ -462,7 +462,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
         }
     }
     if let Some(mut talk) = app.chat.take() {
-        let folder = app.folder();
+        let folder = app.folder_of(&talk.project, &talk.focus);
         match talk.show(ui, &folder) {
             chat::Outcome::None => app.chat = Some(talk),
             chat::Outcome::Ask => {
@@ -498,7 +498,7 @@ pub fn frame(ui: &mut Ui, app: &mut Notes) {
                 app.chat = Some(talk);
             }
             chat::Outcome::Apply(change) => {
-                app.apply_change(&change);
+                app.apply_change_in(&change, &talk.project, &talk.focus);
                 app.took_up(&change, &mut talk);
                 // The chat has already written the decision into its own
                 // transcript; this is what puts that on disk.
