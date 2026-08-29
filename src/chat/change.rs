@@ -190,9 +190,14 @@ impl Change {
         match &self.what {
             // Below a line that is there, or at the top, and nothing is
             // replaced. Where the file is looked for is as for an edit.
+            // "Below line 9" of an eight-line file is below the line that is
+            // not there yet, which is the end: the same tolerance an edit one
+            // past the end gets, for the same reason. Asked for a row in an
+            // eight-line table a model wrote after="9", meaning the row would
+            // be the ninth line, and was refused for it.
             What::Insert { after, .. } => {
                 let lines = lines?;
-                (*after <= lines.len()).then(String::new)
+                (*after <= lines.len() + 1).then(String::new)
             }
             What::Edit { from, to, .. } => {
                 // A name that matches nothing is a file that is not there,

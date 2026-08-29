@@ -1456,6 +1456,17 @@ fn an_edit_one_past_the_end_adds_a_line() {
     assert_eq!(edit(4).replacing(&folder).as_deref(), Some(""));
     // Line five is not the next line; it is nowhere.
     assert!(edit(5).replacing(&folder).is_none());
+    // Below line four is the same place, and offered; below five is nowhere.
+    let below = |after: usize| Change {
+        file: Some("shop.md".into()),
+        what: What::Insert {
+            after,
+            text: "- Bread - 1.80".into(),
+        },
+        state: None,
+    };
+    assert_eq!(below(4).replacing(&folder).as_deref(), Some(""));
+    assert!(below(5).replacing(&folder).is_none());
 
     // And applied, it lands after the last line.
     let dir = std::env::temp_dir().join(format!("notes-append-{}", std::process::id()));
@@ -1473,6 +1484,20 @@ fn an_edit_one_past_the_end_adds_a_line() {
     assert_eq!(
         text.trim_end(),
         "# Shop\n\n- Milk - 2.50\n- Bread - 1.80",
+        "{text:?}"
+    );
+    // And below the line that is not there yet, the same.
+    app.apply_change(&Change {
+        file: Some("shop.md".into()),
+        what: What::Insert {
+            after: 5,
+            text: "- Eggs - 3.00".into(),
+        },
+        state: None,
+    });
+    let text = app.notes[app.current].buffer.to_text();
+    assert!(
+        text.trim_end().ends_with("- Bread - 1.80\n- Eggs - 3.00"),
         "{text:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);

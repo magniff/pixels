@@ -294,14 +294,16 @@ impl Notes {
                     return;
                 };
                 let buf = &mut self.notes[i].buffer;
-                if *after > buf.line_count() {
+                // One past the end is the end: see `Change::replacing`.
+                if *after > buf.line_count() + 1 {
                     self.status = "THAT LINE IS NOT THERE".into();
                     return;
                 }
+                let after = (*after).min(buf.line_count());
                 let fresh: Vec<String> = text.split('\n').map(str::to_string).collect();
                 buf.checkpoint();
-                buf.insert_lines(*after, &fresh);
-                buf.cursor = text::Cursor::new(*after, 0);
+                buf.insert_lines(after, &fresh);
+                buf.cursor = text::Cursor::new(after, 0);
                 buf.clamp_cursor(false);
                 self.current = i;
                 self.status = "APPLIED".into();
