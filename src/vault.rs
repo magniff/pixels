@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::text::Buffer;
 use crate::vim::Vim;
-use crate::*;
+use crate::{assistant, chat, llm, markdown, panels, settings, showcase, Notes, Pane, Pick};
 
 /// One open note.
 pub struct Note {

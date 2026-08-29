@@ -5,7 +5,7 @@ use crate::text::Buffer;
 use crate::vault::bare;
 use crate::view::selected_range;
 use crate::vim::Mode;
-use crate::*;
+use crate::{assist, chat, digest, llm, settings, text, tools, Note, Notes};
 
 impl Notes {
     /// Write the settings down and start an assistant that matches them.

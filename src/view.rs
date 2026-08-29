@@ -10,7 +10,10 @@ use crate::markdown::Tok;
 use crate::text::Buffer;
 use crate::vault::slug;
 use crate::vim::Mode;
-use crate::*;
+use crate::{
+    assist, chat, fetch, finder, markdown, panels, projects, render, settings, syntax, text, vim,
+    Context, Note, Notes, Pane, Renaming, LOOK, SETTLED,
+};
 
 /// Room for a three-digit line number plus a little breathing space.
 ///

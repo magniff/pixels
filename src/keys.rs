@@ -6,7 +6,7 @@ use crate::dialog::{DialogKind, FileDialog};
 use crate::vault::slug;
 use crate::view::open_externally;
 use crate::vim::{Mode, VimEvent};
-use crate::*;
+use crate::{external_scheme, finder, Note, Notes, Pane};
 
 impl Notes {
     /// Run a `:` command.
