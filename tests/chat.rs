@@ -2404,6 +2404,19 @@ fn a_patch_is_applied_by_the_lines_it_quotes_not_the_numbers_it_gives() {
     let err = apply(note, wrong).unwrap_err();
     assert!(err.starts_with("hunk 1 does not fit"), "{err}");
     assert!(apply(note, "no hunks here").is_err());
+    // Without hunk headers, and with a space after each marker - which is
+    // what both models wrote the first time they were asked for a patch.
+    // Each removal after an addition is a change of its own.
+    let bare = "- - milk 2.50\n+ - milk 2.20\n- - cheese 4.00\n+ - cheese 3.50";
+    let after = apply(note, bare).unwrap();
+    assert!(
+        after.contains("- milk 2.20") && after.contains("- cheese 3.50"),
+        "{after}"
+    );
+    assert!(
+        after.contains("- bread 1.80") && after.contains("- tofu 3.20"),
+        "{after}"
+    );
     // Both files' worth of lines are needed for a hunk that fits in two
     // places: the nearer of the two to where it says is the one.
     let twice = "# T\n\n- x\n- y\n- x\n- y\n";

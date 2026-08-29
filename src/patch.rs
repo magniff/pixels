@@ -27,7 +27,28 @@ struct Hunk {
 fn hunks(patch: &str) -> Result<Vec<Hunk>, String> {
     let mut out: Vec<Hunk> = Vec::new();
     let mut current: Option<Hunk> = None;
+    // Written without hunk headers, which both models did the first time
+    // asked: lines marked - and + and nothing else. Each run of removals
+    // that follows a run of additions is a change of its own, found by its
+    // own lines - two changes ten lines apart cannot be one hunk, because
+    // one hunk's lines have to sit together in the note.
+    let headerless = !patch.lines().any(|l| l.starts_with("@@"));
+    let mut adding = false;
     for line in patch.lines() {
+        if headerless {
+            let starts_change = line.starts_with('-') && adding;
+            if current.is_none() || starts_change {
+                if let Some(h) = current.take() {
+                    out.push(h);
+                }
+                current = Some(Hunk {
+                    at: 1,
+                    old: Vec::new(),
+                    new: Vec::new(),
+                });
+            }
+            adding = line.starts_with('+');
+        }
         if let Some(rest) = line.strip_prefix("@@") {
             if let Some(h) = current.take() {
                 out.push(h);
@@ -74,6 +95,19 @@ fn hunks(patch: &str) -> Result<Vec<Hunk>, String> {
     }
     if let Some(h) = current.take() {
         out.push(h);
+    }
+    // A space after the marker - `- text`, `+ text` - is a habit models have
+    // from lists, and it is not part of the line. When every marked line in
+    // a hunk has it, it goes; when only some do, they are what they say.
+    for h in &mut out {
+        let marked: Vec<&String> = h.old.iter().chain(h.new.iter()).collect();
+        if !marked.is_empty() && marked.iter().all(|l| l.starts_with(' ') || l.is_empty()) {
+            for l in h.old.iter_mut().chain(h.new.iter_mut()) {
+                if let Some(rest) = l.strip_prefix(' ') {
+                    *l = rest.to_string();
+                }
+            }
+        }
     }
     // Trailing blank context that the model added for air and the file does
     // not have is not something to insist on.

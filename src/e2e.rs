@@ -2031,7 +2031,7 @@ fn a_note_found_by_part_of_its_name(app: &mut App) -> Result<(), String> {
     fresh_chat(app)?;
     asking(
         app,
-        "which notes have 'rose' in their name? list their paths.",
+        "which notes have 'rose' in their name? list each one's path and how many lines it has.",
     )?;
     let used = looked_with(app, "find");
     let answer = last_answer(app).to_lowercase();
@@ -2079,7 +2079,7 @@ fn where_a_word_is_said(app: &mut App) -> Result<(), String> {
     }
     looking_at(app, "new-one", "zzqqseed")?;
     fresh_chat(app)?;
-    asking(app, "which notes mention pelargoniums? name each note.")?;
+    asking(app, "which notes mention a pelargonium? name each note.")?;
     let used = looked_with(app, "grep");
     let answer = last_answer(app).to_lowercase();
     if !answer.contains("beds.md") || !answer.contains("sills.md") {
