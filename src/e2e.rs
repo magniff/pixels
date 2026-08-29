@@ -2282,6 +2282,7 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
 
     let began = Instant::now();
     let mut times = Vec::new();
+    let mut wrong: Vec<String> = Vec::new();
     for (i, s) in steps.iter().enumerate() {
         if i == 39 {
             // Closed and opened again, in the middle of it all.
@@ -2300,18 +2301,26 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
             Then::Reject => {
                 app.scroll_to_end();
                 if app.click("REJECT").is_err() {
-                    return Err(format!(
-                        "{WRONG}step {}: nothing was proposed to turn down",
-                        i + 1
-                    ));
+                    wrong.push(format!("step {}: nothing was proposed to turn down", i + 1));
+                } else {
+                    app.steps(6);
+                    app.saved();
                 }
-                app.steps(6);
-                app.saved();
             }
         }
         times.push(at.elapsed().as_secs_f32());
         let answer = last_answer(app);
-        (s.check)(&answer, &read).map_err(|e| format!("step {}: {e}", i + 1))?;
+        // A wrong answer is written down and the conversation goes on, as it
+        // would: one miscounted day at step sixteen must not hide the
+        // thirty-four steps after it. Anything that is not the model's
+        // doing stops it here.
+        match (s.check)(&answer, &read) {
+            Ok(()) => {}
+            Err(why) if why.starts_with(WRONG) => {
+                wrong.push(format!("step {}: {}", i + 1, why.trim_start_matches(WRONG)));
+            }
+            Err(why) => return Err(format!("step {}: {why}", i + 1)),
+        }
     }
     println!(
         "\n      fifty steps in {:.0}s; slowest {:.1}s, median {:.1}s, first ten {:.1}s, last ten {:.1}s",
@@ -2367,7 +2376,15 @@ fn a_long_session(app: &mut App) -> Result<(), String> {
             back.len()
         ));
     }
-    Ok(())
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{WRONG}{} of fifty steps went wrong:\n        {}",
+            wrong.len(),
+            wrong.join("\n        ")
+        ))
+    }
 }
 
 /// The conversation is on disk afterwards, and it is the conversation.
