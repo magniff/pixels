@@ -568,6 +568,16 @@ fn with_parameters(reply: &str) -> String {
         // Everything from the opening tag onwards was the block; what came
         // before it is whatever the model said first.
         let before = out.split(&open).next().unwrap_or("").to_string();
+        // A name and no body is a call that was answered "write is not a
+        // tool", not a proposal - the model went on to write the block
+        // properly in the next pass. Mended into an empty block, it sat in
+        // front of the real one as a second write of the same file, and two
+        // writes are not a merge: a write and two deletes were offered one
+        // at a time, and the deletes went first.
+        if body.is_empty() && kind != "delete" {
+            out = before;
+            continue;
+        }
         out = format!("{before}<{kind} file=\"{named}\">\n{body}\n</{kind}>");
     }
     out
@@ -796,7 +806,7 @@ fn asked_to_read(reply: &str) -> Vec<(String, String)> {
 /// half a transcript, and the half that was missing is the one that matters
 /// when a question comes back empty - there was no way to tell whether the
 /// model had written nothing or had written something nothing understood.
-pub(crate) fn jotted(head: &str, body: &str) {
+pub fn jotted(head: &str, body: &str) {
     let Some(where_to) = std::env::var_os("PIXUI_PROMPT") else {
         return;
     };

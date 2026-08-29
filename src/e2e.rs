@@ -1533,7 +1533,18 @@ fn two_notes_folded_into_one(app: &mut App) -> Result<(), String> {
         "merge monday.md and tuesday.md into one note called week.md, keeping both lists",
     )?;
     taken(app)?;
-    let (_, week) = on_disk(app, "week.md")?;
+    let (_, week) = on_disk(app, "week.md").map_err(|e| {
+        let notes: Vec<String> = app
+            .app
+            .notes
+            .iter()
+            .map(|n| format!("{}{}", n.filename(), if n.buffer.dirty { "*" } else { "" }))
+            .collect();
+        format!(
+            "{e}\n      in memory: {notes:?}, status: {:?}",
+            app.app.status
+        )
+    })?;
     if !week.contains("Swim") || !week.contains("Climb") {
         return Err(format!("{WRONG}week.md is missing a list: {week:?}"));
     }

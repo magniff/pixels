@@ -5980,6 +5980,33 @@ fn deciding_a_change_marks_every_block_it_came_from() {
 }
 
 #[test]
+fn a_call_with_a_name_and_no_body_is_not_an_empty_block() {
+    use notes::chat::{proposals, What};
+    use notes::llm::unfused;
+    // The first pass: write called as a tool, with a name and nothing else.
+    let call = "Then I will delete the originals.\n\n<tool_call>\n<function=write>\n<parameter=file>\nweek.md\n</parameter>\n</function>\n</tool_call>";
+    let mended = unfused(call);
+    assert!(
+        !mended.contains("<write"),
+        "an empty block was made: {mended}"
+    );
+    // Kept in front of the real reply, as it is, it must not be a second
+    // write - two writes are not a merge, and the deletes went first.
+    let turn = format!(
+        "{}\n\n<write file=\"week.md\"># Week\n</write>\n<delete file=\"monday.md\"></delete>\n<delete file=\"tuesday.md\"></delete>",
+        notes::llm::without_machinery(call)
+    );
+    let (_, changes) = proposals(&turn);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(matches!(changes[0].what, What::Merge { .. }), "{changes:?}");
+    // And even with an empty draft left standing, drafts collapse first.
+    let drafts = "<write file=\"week.md\">\n\n</write>\n<write file=\"week.md\"># Week\n</write>\n<delete file=\"monday.md\"></delete>";
+    let (_, changes) = proposals(drafts);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(matches!(changes[0].what, What::Merge { .. }), "{changes:?}");
+}
+
+#[test]
 fn a_write_with_deletes_beside_it_is_the_merge_it_is() {
     use notes::chat::{proposals, What};
     // Word for word, after the tool it tried first had been answered.
