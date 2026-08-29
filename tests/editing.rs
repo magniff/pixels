@@ -5888,6 +5888,29 @@ fn a_tool_call_is_heard_in_every_dialect() {
 }
 
 #[test]
+fn thinking_in_words_is_kept_out_of_what_is_shown_and_kept() {
+    use notes::llm::{without_machinery, without_thoughts};
+    let said = "<thinking>\nThe file has three lines. Line 3 is the milk. I should use after=\"3\".\n</thinking>\n\nAdded.\n<edit file=\"shop.md\" after=\"3\">- bread 1.80</edit>";
+    let shown = without_machinery(said);
+    assert!(!shown.contains("thinking"), "{shown}");
+    assert!(!shown.contains("three lines"), "{shown}");
+    assert!(shown.starts_with("Added."), "{shown}");
+    assert!(
+        shown.contains("<edit file="),
+        "the change is still there: {shown}"
+    );
+    // A thought never closed is left alone rather than swallowing an answer
+    // written inside it.
+    let open = "<thinking>\nhmm, the answer is 12.4 weeks";
+    assert_eq!(without_thoughts(open), open);
+    // Two thoughts, both gone.
+    assert_eq!(
+        without_thoughts("<thinking>a</thinking>x<thinking>b</thinking>y"),
+        "xy"
+    );
+}
+
+#[test]
 fn a_call_with_the_argument_left_out_is_still_a_call() {
     use notes::llm::calls;
     // Word for word: asked for a number of days in weeks, it wrote the call

@@ -1041,13 +1041,17 @@ impl Local {
             // caught by the next token.
             let tail = String::from_utf8_lossy(&out[out.len().saturating_sub(64)..]).to_string();
             if !report.deliberating
-                && (tail.contains("<|channel|>analysis") || tail.contains("<think>"))
+                && (tail.contains("<|channel|>analysis")
+                    || tail.contains("<think>")
+                    || tail.contains(super::THOUGHT_OPEN))
             {
                 report.deliberating = true;
                 report.written = 0;
                 writing_since = std::time::Instant::now();
             } else if report.deliberating
-                && (tail.contains("<|channel|>final") || tail.contains("</think>"))
+                && (tail.contains("<|channel|>final")
+                    || tail.contains("</think>")
+                    || tail.contains(super::THOUGHT_CLOSE))
             {
                 report.deliberating = false;
                 report.written = 0;

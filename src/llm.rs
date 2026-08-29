@@ -334,7 +334,38 @@ pub fn fitted(turns: &[Turn], limit: usize, measure: impl Fn(&[Turn]) -> usize) 
 /// Its own thinking channel was tried as well and lost on both: Qwen
 /// overran the room it was given and came back twenty of twenty-seven;
 /// Gemma held its score and took two to four times as long.
-pub const THINK_FIRST: &str = "Think it through carefully before you reply.";
+pub const THINK_FIRST: &str =
+    "Think it through carefully first, between <thinking> and </thinking>, \
+then reply.";
+
+/// The marks a model puts its thinking between when asked to think in words.
+///
+/// Its own thinking channel lost on accuracy; thinking in words won and was a
+/// wall of it in the panel before every answer. So the words go between marks
+/// of ours, and what is between them is treated the way the channel would
+/// have been: the panel says THINKING while it is being written, and neither
+/// what is shown nor what is kept has it. The answer is what follows.
+pub const THOUGHT_OPEN: &str = "<thinking>";
+pub const THOUGHT_CLOSE: &str = "</thinking>";
+
+/// A reply without the thinking it was asked to do in words.
+///
+/// Finished thoughts go; one still open is left alone, so an answer written
+/// inside a thought the model forgot to close is not lost. While it is being
+/// written the open one is hidden separately - see `Watching::tick`.
+pub fn without_thoughts(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(THOUGHT_OPEN) {
+        let Some(end) = rest[at..].find(THOUGHT_CLOSE) else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        rest = &rest[at + end + THOUGHT_CLOSE.len()..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
+}
 
 impl Dialect {
     /// Whether this family answers better for being asked to think first.
@@ -483,7 +514,7 @@ pub fn without_machinery(said: &str) -> String {
     for stray in STRAYS {
         out = out.replace(stray, "");
     }
-    out.trim().to_string()
+    without_thoughts(&out)
 }
 
 /// What a model writes to begin reaching for a tool.
@@ -923,6 +954,17 @@ impl Watcher for Watching<'_> {
         // that trims, so the text never ends in the space that would have said
         // a word had finished.
         let said = without_machinery(said);
+        // A thought still being written is not shown, and is said to be
+        // thinking rather than writing. What comes after the thought is the
+        // answer, and that is shown as it arrives.
+        let (said, thinking) = match said.find(THOUGHT_OPEN) {
+            Some(at) => (said[..at].trim().to_string(), true),
+            None => (said, false),
+        };
+        if thinking && !self.at.deliberating {
+            self.at.deliberating = true;
+            let _ = self.beat.send(self.at);
+        }
         let words = said.split_whitespace().count();
         if words > self.sent {
             self.sent = words;
