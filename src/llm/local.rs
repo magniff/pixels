@@ -514,7 +514,11 @@ fn render(
     dialect: super::Dialect,
 ) -> Result<String, String> {
     if dialect == super::Dialect::Gemma {
-        return Ok(gemma_turns(system, ask));
+        let mut out = gemma_turns(system, ask);
+        if let Some(prefill) = &ask.prefill {
+            out.push_str(prefill);
+        }
+        return Ok(out);
     }
     let template = model
         .chat_template(None)
@@ -567,7 +571,9 @@ fn render(
     // them, and the sums it did in its head were wrong. A turn that starts
     // with the mark open is one it has to finish, and the mark is put back
     // on the front of what it says so the thought is read as one.
-    if ask.talking()
+    if let Some(prefill) = &ask.prefill {
+        out.push_str(prefill);
+    } else if ask.talking()
         && dialect.thinks_first()
         && ask
             .turns
@@ -580,11 +586,14 @@ fn render(
     Ok(out)
 }
 
-/// What a prompt ends with when the thought has been begun for the model.
-fn begun(prompt: &str) -> Option<&'static str> {
-    prompt
-        .ends_with(&format!("{}\n", super::reply::THOUGHT_OPEN))
-        .then_some(super::reply::THOUGHT_OPEN)
+/// What a prompt ends with that the model is carrying on from: whatever was
+/// asked for, or the thought begun for it.
+fn begun(ask: &Ask, prompt: &str) -> Option<String> {
+    if let Some(prefill) = &ask.prefill {
+        return Some(prefill.clone());
+    }
+    let open = format!("{}\n", super::reply::THOUGHT_OPEN);
+    prompt.ends_with(&open).then_some(open)
 }
 
 /// Gemma 4's turns, written out by hand.
@@ -1019,8 +1028,8 @@ impl Local {
             LlamaSampler::dist(0x5EED),
         ]);
         // Begun with whatever was begun for it: see `render`.
-        let mut out: Vec<u8> = begun(&text)
-            .map(|open| format!("{open}\n").into_bytes())
+        let mut out: Vec<u8> = begun(ask, &text)
+            .map(String::into_bytes)
             .unwrap_or_default();
         let mut pos = tokens.len() as i32;
         let ceiling = pos + RESERVE as i32;

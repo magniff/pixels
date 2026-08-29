@@ -1155,6 +1155,55 @@ fn a_call_with_a_name_and_no_body_is_not_an_empty_block() {
 }
 
 #[test]
+fn a_reply_that_stopped_after_its_thought_is_carried_on_from_it() {
+    use notes::llm::{Ask, Assistant, Backend, Reply, Turn, Watcher};
+    /// A model that closed its thought and ended the turn - which happens -
+    /// and, handed the thought to carry on from, finishes.
+    struct Stalled(std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>);
+    impl Backend for Stalled {
+        fn name(&self) -> String {
+            "STALLED".into()
+        }
+        fn edit(&mut self, ask: &Ask, _w: &mut dyn Watcher) -> Reply {
+            let mut seen = self.0.lock().unwrap();
+            seen.push(ask.prefill.clone());
+            Ok(match ask.prefill.as_deref() {
+                None => "<thinking>\nRename line 8.\n</thinking>".into(),
+                Some(prefill) => format!("{prefill}<edit lines=\"8\">| museum | 45 |</edit>"),
+            })
+        }
+    }
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = Assistant::spawn(Box::new(Stalled(seen.clone())));
+    a.ask(Ask {
+        turns: vec![Turn {
+            mine: true,
+            text: "rename it".into(),
+        }],
+        ..Default::default()
+    });
+    let said = loop {
+        if let Some(r) = a.poll() {
+            break r.expect("an answer");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "asked once more, carrying on: {seen:?}");
+    assert!(
+        seen[1]
+            .as_deref()
+            .is_some_and(|p| p.contains("Rename line 8.") && p.ends_with("\n\n")),
+        "{seen:?}"
+    );
+    assert!(said.contains("<edit lines=\"8\">"), "{said:?}");
+    assert!(
+        !said.contains("<thinking>"),
+        "the thought is not shown: {said:?}"
+    );
+}
+
+#[test]
 fn every_part_of_a_multi_step_answer_is_kept() {
     use notes::llm::{Ask, Assistant, Backend, Reply, Tool, Turn, Watcher};
     /// A model answering a three-part question the way they do: a part, then

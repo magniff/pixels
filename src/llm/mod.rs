@@ -78,6 +78,11 @@ pub struct Ask {
     /// has a switch. A refusal that does not mention the switch is
     /// indistinguishable from a broken feature.
     pub web_off: bool,
+    /// The start of the reply, written for the model: it carries on from
+    /// here. A reply that closed its thought and stopped is asked to go on
+    /// from the thought, rather than asked again from nothing - which, with
+    /// the same seed, would be the same nothing.
+    pub prefill: Option<String>,
 }
 
 impl Ask {

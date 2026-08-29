@@ -6,7 +6,7 @@
 
 use std::sync::mpsc::Sender;
 
-use super::reply::{calls, shown, to_ascii, without_machinery, THOUGHT_OPEN};
+use super::reply::{calls, shown, to_ascii, without_machinery, THOUGHT_CLOSE, THOUGHT_OPEN};
 use super::{jotted, Ask, Backend, Progress, Reply, Turn, Used, Watcher};
 
 /// As much of a conversation as fits, counted from the newest turn back.
@@ -167,6 +167,12 @@ pub(super) fn answer(
     // conversation showed "3. 120 days until the next 25 December" and
     // nothing else. The first two answers had been written and thrown away.
     let mut so_far: Vec<String> = Vec::new();
+    // Once, a reply that was a thought and nothing after it is carried on
+    // from the thought. It happens: the thought closed, and the turn ended
+    // with the answer unwritten. Asked again from nothing it would think the
+    // same thought, with the same seed, and stop in the same place.
+    let mut carried_on = false;
+    let mut prefill: Option<String> = None;
     loop {
         let mut watch = Watching {
             beat,
@@ -181,6 +187,7 @@ pub(super) fn answer(
         };
         let asked = Ask {
             turns: turns.clone(),
+            prefill: prefill.take(),
             ..ask.clone()
         };
         let said = to_ascii(&backend.edit(&asked, &mut watch)?);
@@ -198,6 +205,16 @@ pub(super) fn answer(
         } else {
             calls(&said)
         };
+        if asked_for.is_empty()
+            && !carried_on
+            && without_machinery(&said).is_empty()
+            && said.contains(THOUGHT_CLOSE)
+            && !stop.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            carried_on = true;
+            prefill = Some(format!("{}\n\n", said.trim_end()));
+            continue;
+        }
         if asked_for.is_empty() {
             // Whatever it looked up goes in front of what it said, so the
             // answer arrives with its working. Anything that looked like a
