@@ -316,10 +316,14 @@ fn knowing_the_day_needs_no_permission_to_leave_the_machine() {
     assert!(offline.contains(&"calc"));
     // And reading a note, which is the vault rather than the network.
     assert!(offline.contains(&"read"));
+    // And the three that look through the vault without changing it.
+    for want in ["find", "grep", "diff"] {
+        assert!(offline.contains(&want), "{offline:?}");
+    }
     assert_eq!(
         offline.len(),
-        3,
-        "these are the three that need nobody's permission: {offline:?}"
+        6,
+        "these are the six that need nobody's permission: {offline:?}"
     );
 }
 
@@ -493,4 +497,82 @@ fn a_list_is_corrected_by_the_lines_that_moved() {
     let all = "- `x.md` \"X\": something else entirely\n- `y.md` \"Y\": and another";
     let said = relisted(was, all).expect("something moved");
     assert!(said.contains("It is now:"), "{said}");
+}
+
+#[test]
+fn the_vault_can_be_searched_read_only() {
+    use notes::tools::{diff_in, find_in, grep_in};
+    let dir = std::env::temp_dir().join(format!("notes-vaulttools-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("aquarium")).expect("a project");
+    std::fs::write(
+        dir.join("aquarium/stock.md"),
+        "# Stock\n\n- 12 ember tetras\n- 3 otocinclus\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("aquarium/water.md"),
+        "# Water\n\nNitrate under 20.\n",
+    )
+    .unwrap();
+    // Long enough that what differs is said as a diff rather than the file.
+    let room = "A line about the tank that does not change.\n".repeat(20);
+    std::fs::write(
+        dir.join("draft.md"),
+        format!("# Plan\n\n{room}Buy tetras.\nFeed them.\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("final.md"),
+        format!("# Plan\n\n{room}Buy tetras.\nFeed them twice.\n"),
+    )
+    .unwrap();
+
+    // find: by part of a name or a folder, without .md, case not minded.
+    let found = find_in(&dir, "STOCK").unwrap();
+    assert!(found.contains("`aquarium/stock.md` \"Stock\""), "{found}");
+    assert!(!found.contains("water"), "{found}");
+    let folder = find_in(&dir, "aquarium/").unwrap();
+    assert!(
+        folder.contains("stock.md") && folder.contains("water.md"),
+        "{folder}"
+    );
+    assert!(find_in(&dir, "nothing-like-this")
+        .unwrap()
+        .starts_with("no note"));
+
+    // grep: every line, with where it is, and a word off the first line found.
+    let hits = grep_in(&dir, "tetras").unwrap();
+    assert!(
+        hits.contains("aquarium/stock.md:3: - 12 ember tetras"),
+        "{hits}"
+    );
+    assert!(hits.contains("draft.md:23: Buy tetras."), "{hits}");
+    assert!(hits.starts_with("3 lines say that"), "{hits}");
+    assert!(grep_in(&dir, "zebra")
+        .unwrap()
+        .starts_with("nothing in the vault"));
+    assert!(grep_in(&dir, "  ").is_err());
+
+    // diff: the lines that differ, as a diff, first to second.
+    let d = diff_in(&dir, "draft.md final.md").unwrap();
+    assert!(
+        d.contains("-Feed them.") && d.contains("+Feed them twice."),
+        "{d}"
+    );
+    assert!(!d.contains("# Plan"), "the whole note came: {d}");
+    let same = diff_in(&dir, "draft.md, draft.md").unwrap();
+    assert!(same.contains("say the same thing"), "{same}");
+    assert!(diff_in(&dir, "draft.md").is_err());
+    assert!(diff_in(&dir, "draft.md missing.md").is_err());
+
+    // And they are on offer, always: nothing here leaves the machine.
+    let names: Vec<&str> = notes::tools::available(false)
+        .iter()
+        .map(|t| t.name)
+        .collect();
+    for want in ["find", "grep", "diff"] {
+        assert!(names.contains(&want), "{names:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
