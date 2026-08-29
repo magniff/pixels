@@ -1286,6 +1286,51 @@ fn a_delete_written_as_a_lone_tag_is_a_delete() {
 }
 
 #[test]
+fn an_edit_to_a_file_the_model_made_is_answered_with_the_whole_file() {
+    use notes::chat::Chat;
+    let mut chat = Chat::new("trip".into(), "zzqqtrip.md".into());
+    let front = vec![("zzqqtrip.md".to_string(), "# Trip\n".to_string())];
+    chat.context("- `zzqqtrip.md`", &front);
+
+    // The model wrote a note and then put a row into it. The note is not at
+    // the front, so what it has of it is its own write, with no numbers in
+    // the margin. A diff on top of that had it editing the wrong line; the
+    // whole file, numbered, is what it needs.
+    let wrote = "# Budget\n\n| Item | Cost |\n|---|---|\n| flights | 420 |\n| hotel | 610 |\n";
+    chat.wrote("budget.md", Some(wrote));
+    let edited = "# Budget\n\n| Item | Cost |\n|---|---|\n| food | 150 |\n| flights | 420 |\n| hotel | 610 |\n";
+    chat.did("budget.md", wrote, edited);
+    chat.wrote("budget.md", Some(edited));
+    let mut now = front.clone();
+    now.push(("budget.md".to_string(), edited.to_string()));
+    let (_, _, moved) = chat.context("- `zzqqtrip.md`\n- `budget.md`", &now);
+    let said = moved.expect("what the edit did is said");
+    assert!(
+        said.contains("Your edit to `budget.md` was applied"),
+        "{said}"
+    );
+    assert!(said.contains("in full"), "{said}");
+    assert!(said.contains("   7 | | hotel | 610 |"), "numbered: {said}");
+    assert!(!said.contains("@@"), "not a diff: {said}");
+
+    // A file at the front still gets the diff: it has numbers already. Long
+    // enough that the diff is a diff and not the file.
+    let room = "a line about the journey\n".repeat(30);
+    let (was, is) = (
+        format!("# Trip\n\n{room}"),
+        format!("# Trip\n\n{room}Off we go.\n"),
+    );
+    chat.wrote("zzqqtrip.md", Some(&was));
+    chat.did("zzqqtrip.md", &was, &is);
+    now[0].1 = is;
+    chat.wrote("zzqqtrip.md", Some(&now[0].1));
+    let (_, _, moved) = chat.context("- `zzqqtrip.md`\n- `budget.md`", &now);
+    let said = moved.expect("said");
+    assert!(said.contains("@@"), "{said}");
+    assert!(!said.contains("in full"), "{said}");
+}
+
+#[test]
 fn an_edit_undone_by_hand_is_seen_as_a_change() {
     use notes::chat::Chat;
     let file = |t: &str| vec![("door.md".to_string(), t.to_string())];

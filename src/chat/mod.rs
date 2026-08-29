@@ -518,14 +518,30 @@ impl Chat {
     /// known as it is, so that somebody undoing the change by hand is seen as
     /// a change, which for a while it was not - the file was still known as
     /// it was before the edit, and going back to that looked like nothing.
+    ///
+    /// A file that is not at the front - one the model made in this
+    /// conversation - is shown whole instead, with its lines numbered. The
+    /// only copy it has of such a file is its own write, which has no numbers
+    /// in the margin, and a diff on top of that is a sum to do: having put a
+    /// row below line 4 and another below line 7, it changed line 6 to correct
+    /// the hotel, which had been line 6 when it wrote the file and was line 7
+    /// now. The flights went instead. A file it made is small and new, and the
+    /// whole of it, numbered, costs less than one wrong line.
     pub fn did(&mut self, file: &str, before: &str, after: &str) {
         if before == after {
             return;
         }
-        self.done.push(format!(
-            "Your edit to `{file}` was applied. {}",
+        let at_front = self.front.iter().any(|(n, _)| n == file);
+        let what = if at_front {
             crate::digest::changed(before, after)
-        ));
+        } else {
+            format!(
+                "It now says, in full:\n\n{}",
+                crate::digest::numbered(after)
+            )
+        };
+        self.done
+            .push(format!("Your edit to `{file}` was applied. {what}"));
     }
 
     /// Run a `/` command, and say whether it was one.
