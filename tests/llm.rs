@@ -1176,6 +1176,26 @@ fn gemma_may_write_the_argument_as_an_attribute_after_the_name() {
 }
 
 #[test]
+fn a_merge_written_as_a_call_is_mended_into_a_merge() {
+    use notes::chat::{proposals, What};
+    use notes::llm::without_machinery;
+    let said = "<tool_call>\n<function=merge>\n         <parameter=into>\ngarden/beds.md\n</parameter>\n         <parameter=from>\ngarden/tasks.md\n</parameter>\n         <parameter=content>\n# Beds\n\n- [ ] water\n</parameter>\n</function>\n</tool_call>";
+    let shown = without_machinery(said);
+    assert!(!shown.contains("<parameter="), "{shown:?}");
+    let (prose, changes) = proposals(&shown);
+    assert!(prose.trim().is_empty(), "{prose:?}");
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].file.as_deref(), Some("garden/beds.md"));
+    match &changes[0].what {
+        What::Merge { from, text } => {
+            assert_eq!(from, &vec!["garden/tasks.md".to_string()]);
+            assert!(text.contains("- [ ] water"), "{text:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn a_block_that_is_nothing_but_parameters_is_taken_away() {
     use notes::chat::proposals;
     use notes::llm::without_machinery;

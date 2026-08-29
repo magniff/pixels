@@ -157,6 +157,26 @@ impl Notes {
             Some(before) => talk.did(kind, &named, &before, &now),
             None => talk.made(kind, &named, &now),
         }
+        // The changes still waiting about this file, from the same reply,
+        // were written against the file before this one moved its lines.
+        let count = |t: &str| {
+            if t.is_empty() {
+                0
+            } else {
+                t.lines().count() as isize
+            }
+        };
+        match &change.what {
+            chat::What::Edit { from, to, text } => {
+                talk.rebase(
+                    &named,
+                    *to,
+                    count(text) - (*to as isize - *from as isize + 1),
+                );
+            }
+            chat::What::Insert { after, text } => talk.rebase(&named, *after, count(text)),
+            _ => {}
+        }
         talk.wrote(&named, Some(&now));
     }
 
@@ -341,7 +361,7 @@ impl Notes {
     }
 
     /// The project a conversation is about, as it is right now.
-    pub(crate) fn folder(&self) -> chat::Folder<'_> {
+    pub fn folder(&self) -> chat::Folder<'_> {
         let here = self.note().project.clone();
         chat::Folder {
             project: here.clone(),

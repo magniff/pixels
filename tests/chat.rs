@@ -1315,7 +1315,7 @@ fn an_edit_to_a_file_the_model_made_is_answered_with_the_whole_file() {
 
     // A file at the front still gets the diff: it has numbers already. Long
     // enough that the diff is a diff and not the file.
-    let room = "a line about the journey\n".repeat(30);
+    let room = "a line about the journey\n".repeat(45);
     let (was, is) = (
         format!("# Trip\n\n{room}"),
         format!("# Trip\n\n{room}Off we go.\n"),
@@ -2062,6 +2062,94 @@ fn what_a_question_was_told_stays_in_front_of_it() {
     let read = notes::chat::parse(&chat.to_text());
     assert_eq!(read.len(), 1);
     assert_eq!(told(&read[0].text).0, what, "{}", read[0].text);
+}
+
+#[test]
+fn a_second_edit_in_the_same_reply_is_moved_along_by_the_first() {
+    use notes::chat::{proposals, rebased, settle, Chat};
+    // Word for word: a row put in below line 5, and line 7 changed - both
+    // against the file as the model saw it. Applied one after the other, the
+    // second landed on what had been line 6.
+    let said = "<edit file=\"invoice.md\" after=\"5\">| 2026-05-02 | newsletter | 180 |</edit>\n<edit file=\"invoice.md\" lines=\"7\">**Total: 1380**</edit>";
+    let (_, changes) = proposals(said);
+    assert_eq!(changes.len(), 2);
+    // The first is applied: everything below line 5 is one line further down.
+    let settled = settle(said, &changes[0], true);
+    let moved = rebased(&settled, "invoice.md", 5, 1);
+    assert!(moved.contains("lines=\"8-8\""), "{moved}");
+    // The one already applied is left as it was, and one above the change
+    // would be too.
+    assert!(moved.contains("after=\"5\" state=\"applied\""), "{moved}");
+    let above = "<edit file=\"invoice.md\" lines=\"3\">x</edit><edit file=\"other.md\" lines=\"9\">y</edit>";
+    assert_eq!(rebased(above, "invoice.md", 5, 1), above);
+    // Through the conversation, as the panel does it.
+    let dir = std::env::temp_dir().join(format!("notes-rebase-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a vault");
+    std::fs::write(
+        dir.join("invoice.md"),
+        "# Invoice\n\n| Date | Item | Amount |\n| --- | --- | --- |\n| 2026-02-03 | website | 1200 |\n\n**Total: 1200**\n",
+    )
+    .expect("a note");
+    let mut app = notes::Notes::open(dir.clone());
+    app.current = app
+        .notes
+        .iter()
+        .position(|n| n.filename() == "invoice.md")
+        .expect("there");
+    let mut chat = Chat::new(String::new(), "invoice.md".into());
+    chat.context(
+        "- `invoice.md`",
+        &[(
+            "invoice.md".to_string(),
+            app.notes[app.current].buffer.to_text(),
+        )],
+    );
+    chat.answered(Ok(said.into()), &dir);
+    for _ in 0..2 {
+        let i = chat.turns.len() - 1;
+        let (_, changes) = proposals(&chat.turns[i].text);
+        let next = changes
+            .into_iter()
+            .find(|c| c.state.is_none())
+            .expect("one waiting");
+        chat.turns[i].text = settle(&chat.turns[i].text, &next, true);
+        app.apply_change(&next);
+        app.took_up_for_test(&next, &mut chat);
+    }
+    let text = app.notes[app.current].buffer.to_text();
+    assert!(text.contains("| newsletter | 180 |"), "{text:?}");
+    assert!(text.contains("**Total: 1380**"), "{text:?}");
+    assert!(
+        !text.contains("**Total: 1200**"),
+        "the old total is still there: {text:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_short_file_whose_lines_moved_is_told_whole() {
+    use notes::chat::Chat;
+    let file = |t: &str| vec![("ledger.md".to_string(), t.to_string())];
+    let before = "# Ledger\n\n| a |\n| b |\n| hosting |\n| c |\n";
+    let after = "# Ledger\n\n| a |\n| b |\n| c |\n";
+    let mut chat = Chat::new(String::new(), "ledger.md".into());
+    chat.context("- `ledger.md`", &file(before));
+    chat.did("edit", "ledger.md", before, after);
+    chat.wrote("ledger.md", Some(after));
+    let (_, _, moved) = chat.context("- `ledger.md`", &file(after));
+    let said = moved.expect("said");
+    // A row taken out of a short file at the front: the whole file, numbered,
+    // so the next edit counts from the right numbers.
+    assert!(said.contains("in full"), "{said}");
+    assert!(said.contains("   5 | | c |"), "{said}");
+    // The same lines changed in place: a diff, as before.
+    let changed = "# Ledger\n\n| a |\n| B |\n| c |\n";
+    chat.did("edit", "ledger.md", after, changed);
+    chat.wrote("ledger.md", Some(changed));
+    let (_, _, moved) = chat.context("- `ledger.md`", &file(changed));
+    let said = moved.expect("said");
+    assert!(!said.contains("It now says"), "{said}");
 }
 
 #[test]

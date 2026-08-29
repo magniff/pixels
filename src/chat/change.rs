@@ -613,6 +613,59 @@ pub fn settle(text: &str, change: &Change, taken: bool) -> String {
     out
 }
 
+/// The line numbers of every unanswered block about this file moved along
+/// by what a change to it just did, so that they still name the lines they
+/// named.
+///
+/// Two edits to one file in one reply are both against the file as the
+/// model saw it: a row put in below line 5, and line 7 changed. Applied one
+/// after the other, the second landed on what had been line 6 - the row put
+/// in had moved everything under it down by one, and the total went on a
+/// blank line with the old total still under it. Whatever sits below the
+/// change moves by as many lines as the change added or took away; what
+/// sits above it, or at it, stays.
+pub fn rebased(text: &str, file: &str, pivot: usize, delta: isize) -> String {
+    if delta == 0 {
+        return text.to_string();
+    }
+    let shift = |n: usize| -> usize { (n as isize + delta).max(1) as usize };
+    let mut out = String::new();
+    let mut at = 0;
+    for (kind, tag, open, _) in blocks(text) {
+        let head = &text[tag..open];
+        let about = attr(head, "file").map(|f| own_name(&f) == own_name(file));
+        if kind != "edit" || about != Some(true) || state_attr(head).is_some() {
+            continue;
+        }
+        let mended = match (attr(head, "after"), lines_attr(head)) {
+            (Some(after), _) => match after.trim().parse::<usize>() {
+                Ok(n) if n > pivot => Some(head.replacen(
+                    &format!("after=\"{}\"", after.trim()),
+                    &format!("after=\"{}\"", shift(n)),
+                    1,
+                )),
+                _ => None,
+            },
+            (None, Some((from, to))) if from > pivot => {
+                let was = attr(head, "lines").unwrap_or_default();
+                Some(head.replacen(
+                    &format!("lines=\"{was}\""),
+                    &format!("lines=\"{}-{}\"", shift(from), shift(to)),
+                    1,
+                ))
+            }
+            _ => None,
+        };
+        if let Some(mended) = mended {
+            out.push_str(&text[at..tag]);
+            out.push_str(&mended);
+            at = open;
+        }
+    }
+    out.push_str(&text[at..]);
+    out
+}
+
 /// The tag without any decision already written into it.
 pub(super) fn strip_state(tag: &str) -> String {
     let Some(at) = tag.find("state") else {

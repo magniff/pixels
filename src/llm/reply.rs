@@ -189,20 +189,27 @@ const STRAYS: &[&str] = &[
 /// what happened: the change was never offered and nothing was written.
 fn with_parameters(reply: &str) -> String {
     let mut out = reply.to_string();
-    for kind in ["edit", "write", "create", "delete", "merge"] {
-        let open = format!("<{kind}>");
-        if !out.contains(&open) || !out.contains("<parameter=file>") {
-            continue;
-        }
-        let Some(named) = out
-            .split("<parameter=file>")
+    // The value of one parameter, up to the next tag.
+    let param = |text: &str, name: &str| -> Option<String> {
+        text.split(&format!("<parameter={name}>"))
             .nth(1)
             .and_then(|rest| rest.split('<').next())
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty())
-        else {
+    };
+    for kind in ["edit", "write", "create", "delete", "merge"] {
+        let open = format!("<{kind}>");
+        if !out.contains(&open) {
+            continue;
+        }
+        // A merge names the file it folds into, and the ones it folds in:
+        // `<parameter=into>` and `<parameter=from>`. Written that way, as a
+        // call, it was mended into a merge tag with no names and a body
+        // spilling out after it - shown as prose, parameters and all.
+        let Some(named) = param(&out, "file").or_else(|| param(&out, "into")) else {
             continue;
         };
+        let from = param(&out, "from");
         let body = out
             .split("<parameter=content>")
             .nth(1)
@@ -222,7 +229,12 @@ fn with_parameters(reply: &str) -> String {
             out = before;
             continue;
         }
-        out = format!("{before}<{kind} file=\"{named}\">\n{body}\n</{kind}>");
+        out = match from {
+            Some(from) if kind == "merge" => {
+                format!("{before}<merge into=\"{named}\" from=\"{from}\">\n{body}\n</merge>")
+            }
+            _ => format!("{before}<{kind} file=\"{named}\">\n{body}\n</{kind}>"),
+        };
     }
     out
 }

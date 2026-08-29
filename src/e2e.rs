@@ -450,6 +450,21 @@ fn refusal(app: &App) -> String {
 
 fn asking(app: &mut App, question: &str) -> Result<(), String> {
     chatting(app)?;
+    // Typed into the box, or not at all: with no box on screen the question
+    // goes into the note, which fails later and says nothing about why.
+    if app.ui.find("chat-field").is_none() {
+        let folder = app.app.folder();
+        let (waiting, held) = app
+            .app
+            .chat
+            .as_ref()
+            .map(|c| (c.waiting, c.pending(&folder)))
+            .unwrap_or((false, false));
+        return Err(format!(
+            "no box to type into: waiting {waiting}, a change held {held}. on screen: {:?}",
+            app.on_screen()
+        ));
+    }
     let before = app.app.chat.as_ref().map(|c| c.turns.len()).unwrap_or(0);
     app.typed(question);
     app.key(Key::Enter);
@@ -2659,7 +2674,7 @@ fn a_long_session_of_bookkeeping(app: &mut App) -> Result<(), String> {
         // A note written from the figures, and kept right.
         step("write a note called invoice.md for Bloom: their entries and their total", Then::Accept, file_has("invoice.md", &["bloom", "website", "1200"])),
         step("what does invoice.md say the total is?", Then::Nothing, number(1200.0, 0.0)),
-        step("add an entry: 2026-05-02, Bloom, newsletter, 180", Then::Accept, file_has("ledger.md", &["newsletter", "180"])),
+        step("add a ledger entry: 2026-05-02, Bloom, newsletter, 180", Then::Accept, file_has("ledger.md", &["newsletter", "180"])),
         step("update invoice.md to match", Then::Accept, file_has("invoice.md", &["newsletter", "1380"])),
         step("what is the ledger total now?", Then::Nothing, number(2590.0, 0.0)),
         // Changed from outside.

@@ -25,7 +25,7 @@ mod history;
 mod panel;
 
 use change::{attr, undecided};
-pub use change::{elsewhere, own_name, proposals, settle, Change, Folder, What};
+pub use change::{elsewhere, own_name, proposals, rebased, settle, Change, Folder, What};
 pub use history::{as_sent, without_bodies};
 pub use panel::{doing, Picked, Picker};
 
@@ -558,7 +558,15 @@ impl Chat {
             return;
         }
         let at_front = self.front.iter().any(|(n, _)| n == file);
-        let what = if at_front {
+        // A short file whose lines have moved - a row put in, a row taken
+        // out - is shown whole, numbered, even at the front. A diff says
+        // what changed and leaves the counting to the model, and asked to
+        // rename a client in three rows after one row had gone, it wrote the
+        // line numbers from before: the row below the last one went instead.
+        // Forty lines is cheap; the wrong line is not.
+        let moved = before.lines().count() != after.lines().count();
+        let short = after.lines().count() <= 40;
+        let what = if at_front && !(moved && short) {
             crate::digest::changed(before, after)
         } else {
             format!(
@@ -568,6 +576,14 @@ impl Chat {
         };
         self.done
             .push(format!("Your {kind} to `{file}` was applied. {what}"));
+    }
+
+    /// Move the line numbers of the changes still waiting about this file
+    /// along by what one just applied did to it. See `change::rebased`.
+    pub fn rebase(&mut self, file: &str, pivot: usize, delta: isize) {
+        for turn in self.turns.iter_mut().filter(|t| !t.mine) {
+            turn.text = rebased(&turn.text, file, pivot, delta);
+        }
     }
 
     /// Say, once, what a file the model has just made says - numbered.
