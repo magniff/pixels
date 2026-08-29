@@ -151,6 +151,9 @@ pub struct Chat {
     /// known by the first thing that was asked in it.
     pub name: Option<String>,
     pub turns: Vec<Turn>,
+    /// Each turn as the panel draws it, worked out once per text rather than
+    /// once per frame. See `Drawn`.
+    pub(crate) drawn: Vec<Drawn>,
     /// What is being typed.
     pub draft: String,
     /// True while an answer is on its way.
@@ -253,7 +256,70 @@ pub enum Outcome {
     Close,
 }
 
+/// A turn as the panel draws it: the prose, what was looked up, what was
+/// offered.
+///
+/// Reading a turn is not free - the blocks are found, drafts collapsed, a
+/// write and its deletes folded into a merge - and the panel was doing all of
+/// it for every turn on every frame, sixty times a second, for as long as a
+/// conversation was open. Once per text is enough: the key is a hash of the
+/// text, and a turn whose text has not changed is drawn from what was worked
+/// out last time.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Drawn {
+    pub(crate) key: u64,
+    pub(crate) prose: String,
+    pub(crate) looked: Vec<Lookup>,
+    pub(crate) edits: Vec<Change>,
+}
+
+impl Drawn {
+    /// The hash a turn's text is known by.
+    pub(crate) fn key_of(turn: &Turn) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        turn.text.hash(&mut h);
+        h.finish()
+    }
+
+    fn of(turn: &Turn) -> Self {
+        let key = Self::key_of(turn);
+        if turn.mine {
+            return Self {
+                key,
+                prose: turn.text.clone(),
+                ..Self::default()
+            };
+        }
+        let (said, looked) = lookups(&turn.text);
+        let (prose, edits) = proposals(&said);
+        Self {
+            key,
+            prose,
+            looked,
+            edits,
+        }
+    }
+}
+
+impl Chat {
+    /// Bring the drawn turns up to date with the turns, touching only the
+    /// ones whose text has changed since they were last drawn.
+    pub(crate) fn redraw_turns(&mut self) {
+        self.drawn.truncate(self.turns.len());
+        for (i, turn) in self.turns.iter().enumerate() {
+            let key = Drawn::key_of(turn);
+            match self.drawn.get(i) {
+                Some(d) if d.key == key => {}
+                Some(_) => self.drawn[i] = Drawn::of(turn),
+                None => self.drawn.push(Drawn::of(turn)),
+            }
+        }
+    }
+}
+
 /// Something the conversation looked up, and what came back.
+#[derive(Clone, Debug)]
 pub struct Lookup {
     pub tool: String,
     pub arg: String,
@@ -364,6 +430,7 @@ impl Chat {
             focus,
             name: None,
             turns: Vec::new(),
+            drawn: Vec::new(),
             draft: String::new(),
             waiting: false,
             progress: crate::llm::Progress::default(),
@@ -399,6 +466,7 @@ impl Chat {
         Self {
             path: Some(path.to_path_buf()),
             turns: parse(&text),
+            drawn: Vec::new(),
             name,
             ..Self::new(project, focus)
         }

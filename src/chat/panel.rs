@@ -7,8 +7,8 @@ use pixui::{font, Align, Key, Rect, Ui};
 
 use super::change::{proposals, settle, Change, Folder, What};
 use super::{
-    ago, called, complete, completions, copyable, lookups, one_line, round, Chat, Filed, Outcome,
-    ROWS,
+    ago, called, complete, completions, copyable, lookups, one_line, round, Chat, Drawn, Filed,
+    Outcome, ROWS,
 };
 use crate::markdown;
 use crate::render;
@@ -444,6 +444,7 @@ impl Chat {
         let width = body.w - Ui::SCROLL_GUTTER - 8;
         let mut state = self.scroll;
         let mut answered = None;
+        self.redraw_turns();
         ui.scroll_area_with(body, "chat-scroll", &mut state, |ui| {
             if self.turns.is_empty() {
                 ui.space(4);
@@ -484,18 +485,14 @@ impl Chat {
                 // What it said, and separately what it offered to do. The
                 // blocks are lifted out so the reply reads as a sentence
                 // rather than as a sentence with machinery in the middle.
-                let (said, looked) = if turn.mine {
-                    (turn.text.clone(), Vec::new())
-                } else {
-                    lookups(&turn.text)
-                };
-                let (prose, edits) = if turn.mine {
-                    (said, Vec::new())
-                } else {
-                    proposals(&said)
-                };
+                let Drawn {
+                    prose,
+                    looked,
+                    edits,
+                    ..
+                } = &self.drawn[i];
                 // What it went and found, before what it made of it.
-                for look in &looked {
+                for look in looked {
                     let row = ui.alloc(line_h);
                     let head = look.said();
                     font::draw_text_styled(ui.canvas, row.x + 4, row.y, &head, th.info.hi, true);
@@ -675,12 +672,26 @@ impl Chat {
     /// gone is not something anybody can accept or reject, and letting one of
     /// those hold the field would be a conversation nobody can get out of.
     pub fn pending(&self, folder: &Folder) -> bool {
-        self.turns.iter().filter(|t| !t.mine).any(|turn| {
-            proposals(&turn.text)
-                .1
-                .iter()
-                .any(|c| c.state.is_none() && c.replacing(folder).is_some())
-        })
+        self.turns
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.mine)
+            .any(|(i, turn)| {
+                // From the drawn turn when it is current, and read afresh when
+                // it is not - this is asked with the conversation borrowed, so it
+                // cannot bring the drawn turns up to date itself.
+                let fresh;
+                let edits = match self.drawn.get(i) {
+                    Some(d) if d.key == Drawn::key_of(turn) => &d.edits,
+                    _ => {
+                        fresh = proposals(&lookups(&turn.text).0).1;
+                        &fresh
+                    }
+                };
+                edits
+                    .iter()
+                    .any(|c| c.state.is_none() && c.replacing(folder).is_some())
+            })
     }
 
     /// How much context this conversation is carrying, said in tokens.
