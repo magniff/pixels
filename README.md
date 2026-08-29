@@ -143,7 +143,7 @@ the shape of the whole app rather than overflowing it.
 
 ## Built on pixui
 
-`pixui/` is the toolkit underneath: a software rasteriser, a 5x7 bitmap font,
+[pixui](https://github.com/magniff/pixui) is the toolkit underneath: a software rasteriser, a 5x7 bitmap font,
 an immediate-mode widget set, floating layers, and a swappable presenter with
 CPU (softbuffer) and GPU (wgpu) backends. It draws a frame when there is a
 reason to and not otherwise: a spring in flight or a blinking caret keeps a
@@ -159,8 +159,12 @@ through the same work. It is given up once and not taken back, because a window
 softbuffer has drawn on never accepts wgpu again — every acquire after that
 comes back occluded, which looks exactly like a hang.
 
-It is a path dependency of this app rather than the point of the repo, and
-`pixui/README.md` covers it properly.
+It is its own repo, checked out beside this one as `../pixui` and used as a
+path dependency, and its README covers it properly:
+
+```sh
+git clone git@github.com:magniff/pixui.git ../pixui
+```
 
 ```sh
 cargo run --release -- --shots      # regenerate screenshots/

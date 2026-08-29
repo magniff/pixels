@@ -1,6 +1,6 @@
 # The note editor is the root package: `cargo run` at the top of this repo
-# starts it. `pixui`, the toolkit it is drawn with, is a path dependency —
-# an implementation detail of this app rather than the point of the repo.
+# starts it. `pixui`, the toolkit it is drawn with, is its own repo beside
+# this one - github.com/magniff/pixui - checked out as a sibling directory.
 [package]
 name = "notes"
 description = "A markdown note editor with vim keys, drawn one pixel at a time."
@@ -17,7 +17,7 @@ default = ["llm"]
 llm = ["dep:llama-cpp-2"]
 
 [dependencies]
-pixui = { path = "pixui", features = ["gpu"] }
+pixui = { path = "../pixui", features = ["gpu"] }
 
 # llama.cpp, for running a quantised model on the machine in front of you.
 # Metal on Apple silicon, plain CPU elsewhere.
@@ -34,7 +34,6 @@ features = ["parsing", "default-syntaxes", "regex-fancy"]
 
 [workspace]
 resolver = "2"
-members = ["pixui"]
 
 [workspace.package]
 version = "0.1.0"
